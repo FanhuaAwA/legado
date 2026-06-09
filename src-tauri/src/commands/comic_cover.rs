@@ -18,6 +18,21 @@ fn unsupported(feature: &str) -> CommandError {
 #[tauri::command] pub async fn comic_download_images() -> CommandResult<()> { Err(unsupported("漫画图片下载")) }
 #[tauri::command] pub async fn comic_get_cached_page() -> CommandResult<()> { Err(unsupported("漫画缓存页")) }
 
+/// 获取漫画各页的 [width, height]。漫画缓存系统未实现，返回空数组。
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+pub struct ComicGetPageSizesRequest {
+    pub file_name: String,
+    pub book_url: String,
+    pub book_name: String,
+    pub chapter_index: i32,
+}
+#[tauri::command]
+pub async fn comic_get_page_sizes(_req: ComicGetPageSizesRequest) -> CommandResult<Vec<Option<[u32; 2]>>> {
+    Ok(Vec::new())
+}
+
 // ── 封面缓存 ──────────────────────────────────────────────
 #[tauri::command] pub async fn cover_cache_clear() -> CommandResult<()> { Err(unsupported("封面缓存清理")) }
 #[tauri::command] pub async fn cover_cache_size() -> CommandResult<()> { Err(unsupported("封面缓存大小")) }

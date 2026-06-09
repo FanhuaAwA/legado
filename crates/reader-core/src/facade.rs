@@ -404,7 +404,10 @@ impl ReaderCore {
         step_filter: Option<&str>,
         timeout_secs: Option<i32>,
     ) -> Result<Value, ReaderCoreError> {
-        let _ = timeout_secs;
+        let timeout_dur = timeout_secs
+            .filter(|&t| t > 0)
+            .map(|t| std::time::Duration::from_secs(t as u64));
+
         #[derive(Serialize)]
         struct TestStep {
             name: String,
@@ -430,9 +433,26 @@ impl ReaderCore {
         if self.is_legado_file(file_name, source_dir) {
             let source = self.require_legado_source(file_name).await?;
             let mut steps = Vec::new();
+            // Chain context: carry URLs between steps
+            let mut book_url: Option<String> = None;
+            let mut toc_url: Option<String> = None;
+            let mut chapter_url: Option<String> = None;
 
             for step_name in &enabled {
                 let start = std::time::Instant::now();
+
+                // Check timeout before each step
+                if let Some(ref dur) = timeout_dur {
+                    if start.elapsed() > *dur {
+                        steps.push(TestStep {
+                            name: step_name.clone(), status: "timeout".into(),
+                            elapsed_ms: start.elapsed().as_millis() as u64,
+                            error: Some("整体超时".into()), sample_count: None, output_preview: None,
+                        });
+                        break;
+                    }
+                }
+
                 match step_name.as_str() {
                     "search" => {
                         if source.rule_search.is_none() {
@@ -445,6 +465,9 @@ impl ReaderCore {
                         }
                         match self.search(file_name, "测试", 1, source_dir).await {
                             Ok(items) => {
+                                if let Some(first) = items.first() {
+                                    book_url = Some(first.book_url.clone());
+                                }
                                 let preview = items.first().map(|i| format!("{} - {}", i.name, i.author));
                                 steps.push(TestStep {
                                     name: "search".into(), status: "passed".into(),
@@ -464,6 +487,9 @@ impl ReaderCore {
                         }
                     }
                     "bookInfo" => {
+                        let target_url = book_url.as_deref().unwrap_or(
+                            if source.book_source_url.is_empty() { "https://example.com" } else { &source.book_source_url }
+                        );
                         if source.rule_book_info.is_none() {
                             steps.push(TestStep {
                                 name: "bookInfo".into(), status: "skipped".into(),
@@ -472,13 +498,12 @@ impl ReaderCore {
                             });
                             continue;
                         }
-                        let dummy_url = if source.book_source_url.is_empty() {
-                            "https://example.com".to_string()
-                        } else {
-                            source.book_source_url.clone()
-                        };
-                        match self.book_info(file_name, &dummy_url, source_dir).await {
+                        match self.book_info(file_name, target_url, source_dir).await {
                             Ok(detail) => {
+                                if let Some(ref tu) = detail.toc_url {
+                                    if !tu.is_empty() { toc_url = Some(tu.clone()); }
+                                }
+                                if toc_url.is_none() { toc_url = book_url.clone(); }
                                 steps.push(TestStep {
                                     name: "bookInfo".into(), status: "passed".into(),
                                     elapsed_ms: start.elapsed().as_millis() as u64,
@@ -497,6 +522,9 @@ impl ReaderCore {
                         }
                     }
                     "toc" => {
+                        let target_url = toc_url.as_deref().or(book_url.as_deref()).unwrap_or(
+                            if source.book_source_url.is_empty() { "https://example.com" } else { &source.book_source_url }
+                        );
                         if source.rule_toc.is_none() {
                             steps.push(TestStep {
                                 name: "toc".into(), status: "skipped".into(),
@@ -505,13 +533,11 @@ impl ReaderCore {
                             });
                             continue;
                         }
-                        let dummy_url = if source.book_source_url.is_empty() {
-                            "https://example.com".to_string()
-                        } else {
-                            source.book_source_url.clone()
-                        };
-                        match self.chapter_list(file_name, &dummy_url, source_dir).await {
+                        match self.chapter_list(file_name, target_url, source_dir).await {
                             Ok(chapters) => {
+                                if let Some(first) = chapters.first() {
+                                    chapter_url = Some(first.url.clone());
+                                }
                                 let count = chapters.len();
                                 let preview = chapters.first().map(|c| c.name.clone());
                                 steps.push(TestStep {
@@ -532,6 +558,7 @@ impl ReaderCore {
                         }
                     }
                     "content" => {
+                        let target_url = chapter_url.as_deref().unwrap_or("https://example.com");
                         if source.rule_content.is_none() {
                             steps.push(TestStep {
                                 name: "content".into(), status: "skipped".into(),
@@ -540,12 +567,7 @@ impl ReaderCore {
                             });
                             continue;
                         }
-                        let dummy_url = if source.book_source_url.is_empty() {
-                            "https://example.com".to_string()
-                        } else {
-                            source.book_source_url.clone()
-                        };
-                        match self.chapter_content(file_name, &dummy_url, source_dir).await {
+                        match self.chapter_content(file_name, target_url, source_dir).await {
                             Ok(text) => {
                                 let trimmed: String = text.chars().take(100).collect();
                                 steps.push(TestStep {

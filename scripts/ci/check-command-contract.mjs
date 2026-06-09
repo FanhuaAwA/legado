@@ -41,8 +41,8 @@ function collectFrontendCommands() {
     try {
       const content = readFileSync(filePath, "utf-8");
       // 统一模式: 匹配 invokeWithTimeout("...") 或 invoke("...")
-      // 处理可选的 TypeScript 泛型参数 e.g. invokeWithTimeout<ShelfBook[]>("cmd", ...)
-      const re = /(?:invokeWithTimeout|(?<!\.)\binvoke)(?:<[^>]*>)?\s*\(\s*["']([^"']+)["']/g;
+      // 使用非贪婪 .+? 处理嵌套泛型 e.g. invokeWithTimeout<Array<[number,number]|null>>("cmd")
+      const re = /(?:invokeWithTimeout|(?<!\.)\binvoke)(?:<.+?>)?\s*\(\s*["']([^"']+)["']/g;
       let match;
       while ((match = re.exec(content)) !== null) {
         const name = match[1];

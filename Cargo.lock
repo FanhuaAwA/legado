@@ -2489,6 +2489,7 @@ name = "legado-tauri"
 version = "0.8.0"
 dependencies = [
  "base64 0.22.1",
+ "chrono",
  "reader-core",
  "serde",
  "serde_json",

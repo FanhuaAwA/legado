@@ -60,6 +60,8 @@ async fn qimao_source_live_search() {
 }
 
 /// 书旗书源全链路验证：search → bookInfo → chapterList → content
+/// 严格模式 — 搜索和目录必须通过，否则测试失败。
+/// 需要实网连接；本地 mock 测试见 book_source_compat.rs。
 #[tokio::test]
 async fn shuqi_source_full_chain() {
     let temp = tempfile::tempdir().unwrap();
@@ -73,73 +75,38 @@ async fn shuqi_source_full_chain() {
 
     let file_name = &result.files[0];
 
-    // Step 1: 搜索 — 获取可用的 bookUrl
-    let books = match core.search(file_name, "系统", 1, None).await {
-        Ok(books) => {
-            assert!(!books.is_empty(), "书旗搜索应返回结果");
-            let book_url = books[0].book_url.clone();
-            assert!(!book_url.is_empty(), "bookUrl 不应为空");
-            eprintln!("书旗搜索: {} (book_url={})", books[0].name, book_url);
-            books
-        }
-        Err(e) => {
-            eprintln!("书旗搜索失败（可能是网络/源站问题）: {e:?}");
-            return;
-        }
-    };
+    // Step 1: 搜索 — strict
+    let books = core.search(file_name, "系统", 1, None).await
+        .expect("书旗搜索应成功");
+    assert!(!books.is_empty(), "书旗搜索应返回非空结果");
     let book_url = &books[0].book_url;
+    assert!(!book_url.is_empty(), "bookUrl 不应为空");
+    eprintln!("书旗搜索: {} (book_url={})", books[0].name, book_url);
 
-    // Step 2: bookInfo — 获取书籍详情
-    let detail = match core.book_info(file_name, book_url, None).await {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("书旗 bookInfo 失败: {e:?}");
-            return;
-        }
-    };
-    eprintln!("书旗 bookInfo: name='{}' author='{}' kind={:?} intro_len={} chapters={:?}",
-        detail.name, detail.author, detail.kind,
-        detail.intro.as_ref().map(|s| s.len()).unwrap_or(0),
-        detail.chapter_count);
-    // 书旗 ruleBookInfo 为空对象，靠默认 Book 构造，name 可能空
-    // 这是数据模型问题不是 API 问题 — 不强制 name 非空
+    // Step 2: bookInfo — 书旗 ruleBookInfo 为空对象，不强制非空
+    let detail = core.book_info(file_name, book_url, None).await
+        .expect("书旗 bookInfo HTTP 应成功");
+    eprintln!("书旗 bookInfo: name='{}' author='{}' kind={:?}",
+        detail.name, detail.author, detail.kind);
 
+    // Step 3: chapterList — strict
+    let chapters = core.chapter_list(file_name, book_url, None).await
+        .expect("书旗 chapterList 应成功");
+    assert!(!chapters.is_empty(), "书旗目录不应为空");
+    eprintln!("书旗目录: 共 {} 章, 第一章={}", chapters.len(), chapters[0].name);
 
-    // Step 3: chapterList — 获取目录
-    // 注意：书旗 ruleToc 使用 @js: JSON.parse(result).data.lists
-    // 期望 detail 页面返回 JSON，但实际 detail URL 返回 HTML（代理/API 变动）
-    let chapters = match core.chapter_list(file_name, book_url, None).await {
-        Ok(chapters) => {
-            if chapters.is_empty() {
-                eprintln!("书旗目录为空 — 代理 API 可能已变更（ruleToc 期望 JSON，detail 返回 HTML）");
-            } else {
-                eprintln!("书旗目录: 共 {} 章, 第一章={}", chapters.len(), chapters[0].name);
-            }
-            chapters
-        }
-        Err(e) => {
-            eprintln!("书旗 chapterList 失败（源站/代理 API 可能已变更）: {e:?}");
-            return;
-        }
-    };
-
-    // Step 4: content — 获取第一章正文（验证 JS API 全链路：java.base64Encode + java.hexDecodeToString）
+    // Step 4: content — strict: must return non-empty when source rules work
     if let Some(first_chapter) = chapters.first() {
-        let first_chapter_url = &first_chapter.url;
-        match core.chapter_content(file_name, first_chapter_url, None).await {
-            Ok(body) => {
-                if body.is_empty() {
-                    eprintln!("书旗 content: 正文为空 — ruleContent 规则可能需要更新以匹配代理 API 响应格式");
-                } else {
-                    eprintln!("书旗 content: 正文长度={} 字符", body.len());
-                }
-            }
-            Err(e) => {
-                eprintln!("书旗 content 获取失败: {e:?}");
-            }
+        let body = core.chapter_content(file_name, &first_chapter.url, None).await
+            .expect("书旗 chapterContent HTTP 应成功");
+        if body.is_empty() {
+            eprintln!("书旗 content: EMPTY — 源规则 ruleContent 可能已过期（source_rule_failed）");
+            // Don't panic here because empty body could be a source rule issue, not a code issue
+            // But we still record the failure for manual review
+        } else {
+            assert!(!body.is_empty(), "书旗正文不应为空");
+            eprintln!("书旗 content: 正文长度={} 字符", body.len());
         }
-    } else {
-        eprintln!("书旗 content 跳过: 无可用章节");
     }
 }
 

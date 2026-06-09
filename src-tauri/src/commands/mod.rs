@@ -110,6 +110,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         comic_cover::comic_cache_size,
         comic_cover::comic_download_images,
         comic_cover::comic_get_cached_page,
+        comic_cover::comic_get_page_sizes,
         comic_cover::cover_cache_clear,
         comic_cover::cover_cache_size,
         comic_cover::cover_resolve_cache,
