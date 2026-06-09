@@ -1,0 +1,39 @@
+[package]
+name = "reader-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+aes.workspace = true
+base64.workspace = true
+cbc.workspace = true
+chrono.workspace = true
+encoding_rs.workspace = true
+futures.workspace = true
+hex.workspace = true
+http.workspace = true
+jsonpath_lib.workspace = true
+md-5.workspace = true
+once_cell.workspace = true
+regex.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+rquickjs.workspace = true
+scraper.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+sxd-document.workspace = true
+sxd-xpath.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true
+urlencoding.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+axum = { version = "0.7", features = ["macros", "json"] }
+tempfile = "3"

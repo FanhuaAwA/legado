@@ -1,0 +1,207 @@
+use axum::{response::Json, routing::get, Router};
+use reader_core::parser::js::eval_js;
+use reader_core::{ReaderCore, ReaderCoreOptions};
+use serde_json::json;
+
+#[test]
+fn java_aes_base64_decode_to_string_decrypts_legado_paths() {
+    let encrypted = "UhQTfQq/qXGCKPd5D+cjxB7Y0AzwiFMYBmcN5nIm2PboUavKiWEIVaAPIhDXbkox";
+    let result = eval_js(
+        r#"java.aesBase64DecodeToString(result, "f041c49714d39908", "AES/CBC/PKCS5Padding", "0123456789abcdef")"#,
+        encrypted,
+        "http://api.jmlldsc.com",
+    )
+    .unwrap();
+
+    assert_eq!(result, "http://api.lemiyigou.com/655/655791/70398.json");
+}
+
+async fn js_search() -> Json<serde_json::Value> {
+    Json(json!({
+        "list": [{
+            "name": "JS Route B Book",
+            "author": "Codex",
+            "bookUrl": "/book/1",
+            "intro": "A JS source fixture."
+        }]
+    }))
+}
+
+async fn js_book() -> Json<serde_json::Value> {
+    Json(json!({
+        "name": "JS Route B Book",
+        "author": "Codex",
+        "intro": "A JS source fixture.",
+        "tocUrl": "/book/1/toc"
+    }))
+}
+
+async fn js_toc() -> Json<serde_json::Value> {
+    Json(json!({
+        "chapters": [{
+            "name": "第一章 JS 原生路线",
+            "url": "/chapter/1"
+        }]
+    }))
+}
+
+async fn js_content() -> Json<serde_json::Value> {
+    Json(json!({ "content": "这是 JS 书源的第一章正文。" }))
+}
+
+#[tokio::test]
+async fn js_source_runtime_runs_main_reader_chain() {
+    let app = Router::new()
+        .route("/api/search", get(js_search))
+        .route("/book/1", get(js_book))
+        .route("/book/1/toc", get(js_toc))
+        .route("/chapter/1", get(js_content));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let base = format!("http://{}", addr);
+
+    let temp = tempfile::tempdir().unwrap();
+    let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
+        .await
+        .unwrap();
+    let source = format!(
+        r#"// @name        JS Fixture
+// @url         {base}
+// @enabled     true
+
+const BASE_URL = '{base}';
+
+async function search(key, page) {{
+  const resp = await legado.http.get(`${{BASE_URL}}/api/search?keyword=${{encodeURIComponent(key)}}&page=${{page}}`);
+  const json = JSON.parse(resp);
+  return json.list.map(book => ({{
+    name: book.name,
+    author: book.author,
+    bookUrl: BASE_URL + book.bookUrl,
+    intro: book.intro,
+  }}));
+}}
+
+async function bookInfo(bookUrl) {{
+  const resp = await legado.http.get(bookUrl);
+  const json = JSON.parse(resp);
+  return {{
+    name: json.name,
+    author: json.author,
+    intro: json.intro,
+    bookUrl,
+    tocUrl: BASE_URL + json.tocUrl,
+  }};
+}}
+
+async function chapterList(tocUrl) {{
+  const resp = await legado.http.get(tocUrl);
+  const json = JSON.parse(resp);
+  return json.chapters.map(ch => ({{
+    name: ch.name,
+    url: BASE_URL + ch.url,
+  }}));
+}}
+
+async function chapterContent(chapterUrl) {{
+  const resp = await legado.http.get(chapterUrl);
+  return JSON.parse(resp).content;
+}}
+"#
+    );
+    core.save_js_source("js-fixture.js", &source, None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        core.eval_source_capabilities("js-fixture.js", None)
+            .await
+            .unwrap(),
+        "search,bookInfo,toc,chapterList,content,chapterContent"
+    );
+
+    let books = core
+        .search("js-fixture.js", "Route", 1, None)
+        .await
+        .unwrap();
+    assert_eq!(books.len(), 1);
+    assert_eq!(books[0].name, "JS Route B Book");
+
+    let detail = core
+        .book_info("js-fixture.js", &books[0].book_url, None)
+        .await
+        .unwrap();
+    assert_eq!(detail.name, "JS Route B Book");
+
+    let chapters = core
+        .chapter_list("js-fixture.js", detail.toc_url.as_deref().unwrap(), None)
+        .await
+        .unwrap();
+    assert_eq!(chapters[0].name, "第一章 JS 原生路线");
+
+    let content = core
+        .chapter_content("js-fixture.js", &chapters[0].url, None)
+        .await
+        .unwrap();
+    assert!(content.contains("JS 书源"));
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn external_js_source_dirs_are_persisted_and_scanned() {
+    let temp = tempfile::tempdir().unwrap();
+    let external = tempfile::tempdir().unwrap();
+    let external_source = external.path().join("external-fixture.js");
+    tokio::fs::write(
+        &external_source,
+        r#"// @name        External JS Fixture
+// @url         https://example.invalid
+// @enabled     true
+
+async function search() {
+  return [];
+}
+"#,
+    )
+    .await
+    .unwrap();
+
+    let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
+        .await
+        .unwrap();
+    core.add_source_dir(external.path().to_str().unwrap())
+        .await
+        .unwrap();
+
+    let dirs = core.source_dirs().await.unwrap();
+    assert!(dirs
+        .iter()
+        .any(|dir| dir == &external.path().to_string_lossy()));
+
+    let sources = core.list_sources().await.unwrap();
+    assert!(sources.iter().any(|source| {
+        source.file_name == "external-fixture.js"
+            && source.name == "External JS Fixture"
+            && source.source_dir == external.path().to_string_lossy()
+    }));
+
+    let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
+        .await
+        .unwrap();
+    let sources = core.list_sources().await.unwrap();
+    assert!(sources
+        .iter()
+        .any(|source| source.file_name == "external-fixture.js"));
+
+    core.remove_source_dir(external.path().to_str().unwrap())
+        .await
+        .unwrap();
+    let sources = core.list_sources().await.unwrap();
+    assert!(!sources
+        .iter()
+        .any(|source| source.file_name == "external-fixture.js"));
+}

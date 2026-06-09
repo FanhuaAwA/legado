@@ -1,0 +1,164 @@
+# GitHub Actions 工作流名称：构建适合 TrollStore 安装的 iOS IPA
+#
+# 说明：
+# - 这个工作流不使用 Apple 开发者证书、不导入 p12、不安装 mobileprovision。
+# - 产物目标是 TrollStore 使用的 IPA，而不是 App Store / TestFlight / 普通真机签名 IPA。
+# - TrollStore 依赖设备系统版本和 TrollStore 支持情况；构建成功不代表所有 iOS 设备都能安装。
+name: Build iOS IPA for TrollStore
+
+# 触发方式：
+# 1. 手动触发：在 GitHub Actions 页面点击 Run workflow
+# 2. 推送 v* 标签触发：例如 v0.8.0
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-ios-trollstore:
+    # iOS 构建必须运行在 macOS，因为需要 Xcode、xcodebuild、iOS SDK 等 Apple 工具链
+    runs-on: macos-15
+
+    steps:
+      # 拉取仓库代码
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 安装 Node.js；版本与 package.json engines.node 保持一致
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # 安装 pnpm。
+      # package.json 已通过 packageManager 固定 pnpm 版本，
+      # 这里不要再写 version，否则 pnpm/action-setup 会报 Multiple versions of pnpm specified。
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      # 安装前端依赖；使用 frozen-lockfile 保证 CI 与 pnpm-lock.yaml 完全一致
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      # 安装 Rust stable，并添加 iOS 真机架构目标
+      # TrollStore 安装到真机，因此这里使用 aarch64-apple-ios，而不是模拟器 target
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      # 校验 Tauri 后端目录是否存在。
+      # 如果缺少 src-tauri，说明当前仓库还不是完整 Tauri 项目，无法构建 iOS App。
+      - name: Check Tauri project files
+        shell: bash
+        run: |
+          test -f src-tauri/tauri.conf.json || {
+            echo "::error::缺少 src-tauri/tauri.conf.json。请先提交 Tauri 后端目录，并在 macOS 上执行 pnpm tauri ios init 初始化 iOS 工程。"
+            exit 1
+          }
+
+      # 如果仓库还没有生成 Tauri iOS 工程，可以尝试自动初始化。
+      # 已初始化过时，Tauri CLI 通常会复用现有 src-tauri/gen/apple 工程。
+      - name: Ensure Tauri iOS project exists
+        shell: bash
+        run: |
+          if [ ! -d "src-tauri/gen/apple" ]; then
+            echo "src-tauri/gen/apple 不存在，尝试执行 Tauri iOS 初始化..."
+            pnpm tauri ios init
+          fi
+
+      # 构建前端静态资源。
+      # 后面的 Xcode 构建会把这些资源打进 iOS App。
+      - name: Build web assets
+        run: pnpm run build
+
+      # 尝试使用 Tauri CLI 构建 iOS 真机 App。
+      # 这里不配置任何 Apple 证书或描述文件，目标是产出 .app 后再手动打包为 TrollStore IPA。
+      # 如果你的 Tauri / Xcode 工程仍强制签名，可在 src-tauri/gen/apple 中关闭自动签名或改用自定义 xcodebuild 参数。
+      - name: Build iOS app without Apple certificate
+        shell: bash
+        run: |
+          set -e
+          pnpm tauri ios build --debug || {
+            echo "::warning::Tauri CLI 构建失败，尝试用 xcodebuild 禁用签名直接构建 .app。"
+
+            XCODEPROJ=$(find src-tauri/gen/apple -name "*.xcodeproj" | head -n 1)
+            WORKSPACE=$(find src-tauri/gen/apple -name "*.xcworkspace" | head -n 1)
+            SCHEME=$(find src-tauri/gen/apple -name "*.xcodeproj" -exec basename {} .xcodeproj \; | head -n 1)
+
+            if [ -z "$SCHEME" ]; then
+              echo "::error::未找到 Xcode scheme，请确认 Tauri iOS 工程是否已生成。"
+              exit 1
+            fi
+
+            if [ -n "$WORKSPACE" ]; then
+              xcodebuild \
+                -workspace "$WORKSPACE" \
+                -scheme "$SCHEME" \
+                -configuration Debug \
+                -sdk iphoneos \
+                -derivedDataPath build/ios-derived-data \
+                CODE_SIGNING_ALLOWED=NO \
+                CODE_SIGNING_REQUIRED=NO \
+                CODE_SIGN_IDENTITY="" \
+                build
+            elif [ -n "$XCODEPROJ" ]; then
+              xcodebuild \
+                -project "$XCODEPROJ" \
+                -scheme "$SCHEME" \
+                -configuration Debug \
+                -sdk iphoneos \
+                -derivedDataPath build/ios-derived-data \
+                CODE_SIGNING_ALLOWED=NO \
+                CODE_SIGNING_REQUIRED=NO \
+                CODE_SIGN_IDENTITY="" \
+                build
+            else
+              echo "::error::未找到 .xcodeproj 或 .xcworkspace，无法构建 iOS App。"
+              exit 1
+            fi
+          }
+
+      # 将 .app 打包成 TrollStore 可尝试安装的 IPA。
+      # IPA 本质是 zip，内部结构必须是 Payload/xxx.app。
+      # 这里会删除可能残留的嵌入式描述文件和签名目录，避免普通 Apple 签名信息干扰 TrollStore 安装。
+      - name: Package unsigned IPA for TrollStore
+        id: package_ipa
+        shell: bash
+        run: |
+          set -e
+
+          APP_PATH=$(find src-tauri build -name "*.app" -type d 2>/dev/null | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            APP_PATH=$(find . -path "*/Build/Products/*-iphoneos/*.app" -type d 2>/dev/null | head -n 1)
+          fi
+
+          if [ -z "$APP_PATH" ]; then
+            echo "::error::未找到 .app 产物，请检查 Tauri / Xcode 构建日志。"
+            exit 1
+          fi
+
+          echo "Found app: $APP_PATH"
+
+          rm -rf build/trollstore-ipa
+          mkdir -p build/trollstore-ipa/Payload
+          cp -R "$APP_PATH" build/trollstore-ipa/Payload/
+
+          # 清理可能存在的签名和描述文件；TrollStore 不需要 Apple 官方证书签名。
+          find build/trollstore-ipa/Payload -name "_CodeSignature" -type d -prune -exec rm -rf {} \;
+          find build/trollstore-ipa/Payload -name "embedded.mobileprovision" -type f -delete
+
+          IPA_PATH="$PWD/build/Legado-Tauri-TrollStore.ipa"
+          (cd build/trollstore-ipa && zip -qry "$IPA_PATH" Payload)
+
+          echo "ipa_path=$IPA_PATH" >> "$GITHUB_OUTPUT"
+          echo "Created TrollStore IPA: $IPA_PATH"
+
+      # 上传 IPA 到 GitHub Actions Artifacts。
+      # 构建完成后可在本次 workflow run 的 Artifacts 区域下载，再通过 TrollStore 安装。
+      - name: Upload TrollStore IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-trollstore-ipa
+          path: ${{ steps.package_ipa.outputs.ipa_path }}

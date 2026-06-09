@@ -1,0 +1,1351 @@
+name: Build Legado Tauri (Full Auto)
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  prepare:
+    name: Prepare Version
+    runs-on: ubuntu-latest
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag_name: ${{ steps.version.outputs.tag_name }}
+      release_name: ${{ steps.version.outputs.release_name }}
+
+    steps:
+      - name: Setup Git Auth
+        shell: bash
+        run: |
+          git config --global url."https://${{ secrets.TOKEN_MGZ }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Clone Source
+        shell: bash
+        run: |
+          git clone https://github.com/mgz0227/Legado-Tauri.git Source
+
+      - name: Generate version metadata
+        id: version
+        shell: bash
+        run: |
+          set -e
+
+          VERSION="$(grep -m1 '^version[[:space:]]*=' Source/src-tauri/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+
+          if [ -z "$VERSION" ]; then
+            echo "Failed to detect version from Source/src-tauri/Cargo.toml"
+            exit 1
+          fi
+
+          TIME="$(TZ='Asia/Shanghai' date +'%Y%m%d%H')"
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG_NAME="${GITHUB_REF_NAME}"
+            RELEASE_NAME="Beta-${VERSION}-${TIME}"
+          else
+            TAG_NAME="Beta-${VERSION}-${TIME}"
+            RELEASE_NAME="$TAG_NAME"
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "release_name=$RELEASE_NAME" >> "$GITHUB_OUTPUT"
+
+          echo "VERSION=$VERSION"
+          echo "TAG_NAME=$TAG_NAME"
+          echo "RELEASE_NAME=$RELEASE_NAME"
+
+  build-linux:
+    name: Build Linux
+    needs:
+      - prepare
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+
+      - name: Setup Git Auth
+        shell: bash
+        run: |
+          git config --global url."https://${{ secrets.TOKEN_MGZ }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Clone Source
+        shell: bash
+        run: |
+          git clone https://github.com/mgz0227/Legado-Tauri.git Source
+
+      - name: Move Project
+        shell: bash
+        run: |
+          mkdir build
+          cp -r Source/* build/
+
+      - name: Write pnpm workspace policy
+        shell: bash
+        run: |
+          cat > build/pnpm-workspace.yaml <<'EOF'
+          packages:
+            - '.'
+          strictDepBuilds: false
+          allowBuilds:
+            esbuild: true
+            vue-demi: true
+            core-js: true
+            es5-ext: true
+            unplugin-auto-import: true
+            unplugin-vue-components: true
+          onlyBuiltDependencies:
+            - esbuild
+            - vue-demi
+            - core-js
+            - es5-ext
+            - unplugin-auto-import
+            - unplugin-vue-components
+          ignoredBuiltDependencies: []
+          EOF
+          cat > build/.npmrc <<'EOF'
+          strict-dep-builds=false
+          ignore-scripts=false
+          EOF
+          echo "===== build/pnpm-workspace.yaml ====="
+          cat build/pnpm-workspace.yaml
+          echo "===== build/.npmrc ====="
+          cat build/.npmrc
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@master
+        with:
+          run_install: false
+          package_json_file: build/package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@main
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: build/pnpm-lock.yaml
+
+      - name: Show versions
+        shell: bash
+        run: |
+          node -v
+          pnpm -v
+
+      - name: Install Dependencies
+        shell: bash
+        run: |
+          cd build
+
+          set -e
+          pnpm install --no-frozen-lockfile --config.strict-dep-builds=false || {
+            echo "pnpm install reported ignored build scripts; approving pending builds and retrying"
+            pnpm approve-builds --all || pnpm approve-builds core-js es5-ext esbuild vue-demi unplugin-auto-import unplugin-vue-components || true
+            pnpm install --no-frozen-lockfile --config.strict-dep-builds=false
+          }
+
+      # - name: Type Check Frontend
+      #   shell: bash
+      #  run: |
+      #     cd build
+      #    pnpm vue-tsc --noEmit
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux dependencies
+        shell: bash
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            pkg-config \
+            libglib2.0-dev \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            libspeechd-dev \
+            librsvg2-dev
+
+          pkg-config --modversion glib-2.0
+          pkg-config --cflags glib-2.0
+          pkg-config --libs glib-2.0
+
+      - name: Build Tauri App
+        shell: bash
+        env:
+          RUSTFLAGS: -C debuginfo=0
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: "3"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
+          CARGO_PROFILE_RELEASE_LTO: "thin"
+          CARGO_PROFILE_RELEASE_INCREMENTAL: "false"
+          CARGO_PROFILE_RELEASE_DEBUG: "false"
+          CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "false"
+          CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: "false"
+          CARGO_PROFILE_RELEASE_STRIP: "symbols"
+        run: |
+          cd build
+          pnpm tauri build
+
+      - name: Pack binary with dist
+        shell: bash
+        run: |
+          mkdir -p package/legado_tauri
+          cp build/src-tauri/target/release/legado_tauri package/legado_tauri/
+          cp -r build/dist package/legado_tauri/dist
+          cd package
+          zip -r Legado-Linux-with-dist.zip legado_tauri
+
+      - name: Upload Binary With Dist Artifact
+        uses: actions/upload-artifact@main
+        with:
+          name: Legado-Linux-with-dist
+          path: package/Legado-Linux-with-dist.zip
+
+      - name: Upload Dist Artifact
+        uses: actions/upload-artifact@main
+        with:
+          name: Legado-dist
+          path: |
+            build/dist/**
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@main
+        with:
+          name: legado-ubuntu-latest
+          path: |
+            build/src-tauri/target/release/bundle/appimage/*.AppImage
+            build/src-tauri/target/release/bundle/deb/*.deb
+            build/src-tauri/target/release/bundle/rpm/*.rpm
+  build-windows:
+    name: Build Windows
+    needs:
+      - prepare
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+
+      - name: Setup Git Auth
+        shell: bash
+        run: |
+          git config --global url."https://${{ secrets.TOKEN_MGZ }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Clone Source
+        shell: bash
+        run: |
+          git clone https://github.com/mgz0227/Legado-Tauri.git Source
+
+      - name: Move Project
+        shell: bash
+        run: |
+          mkdir build
+          cp -r Source/* build/
+
+      - name: Write pnpm workspace policy
+        shell: bash
+        run: |
+          cat > build/pnpm-workspace.yaml <<'EOF'
+          packages:
+            - '.'
+          strictDepBuilds: false
+          allowBuilds:
+            esbuild: true
+            vue-demi: true
+            core-js: true
+            es5-ext: true
+            unplugin-auto-import: true
+            unplugin-vue-components: true
+          onlyBuiltDependencies:
+            - esbuild
+            - vue-demi
+            - core-js
+            - es5-ext
+            - unplugin-auto-import
+            - unplugin-vue-components
+          ignoredBuiltDependencies: []
+          EOF
+          cat > build/.npmrc <<'EOF'
+          strict-dep-builds=false
+          ignore-scripts=false
+          EOF
+          echo "===== build/pnpm-workspace.yaml ====="
+          cat build/pnpm-workspace.yaml
+          echo "===== build/.npmrc ====="
+          cat build/.npmrc
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@master
+        with:
+          run_install: false
+          package_json_file: build/package.json
+
+      - name: Configure pnpm store
+        shell: bash
+        run: |
+          mkdir -p "${GITHUB_WORKSPACE}/build/.pnpm-store"
+          pnpm config set store-dir "${GITHUB_WORKSPACE}/build/.pnpm-store"
+          echo "pnpm store path:"
+          pnpm store path
+
+      - name: Setup Node
+        uses: actions/setup-node@main
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: build/pnpm-lock.yaml
+
+      - name: Show versions
+        shell: bash
+        run: |
+          node -v
+          pnpm -v
+
+      - name: Install Dependencies
+        shell: bash
+        run: |
+          cd build
+          set -e
+          pnpm install --no-frozen-lockfile --config.strict-dep-builds=false || {
+            echo "pnpm install reported ignored build scripts; approving pending builds and retrying"
+            pnpm approve-builds --all || pnpm approve-builds core-js es5-ext esbuild vue-demi unplugin-auto-import unplugin-vue-components || true
+            pnpm install --no-frozen-lockfile --config.strict-dep-builds=false
+          }
+
+      #  - name: Type Check Frontend
+      #    shell: bash
+      #    run: |
+      #     cd build
+      #    pnpm vue-tsc --noEmit
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Debug Cargo profile
+        shell: bash
+        run: |
+          echo "===== build/src-tauri/Cargo.toml ====="
+          cat build/src-tauri/Cargo.toml
+
+      - name: Build Tauri App
+        shell: bash
+        env:
+          RUSTFLAGS: -C debuginfo=0
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: "3"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
+          CARGO_PROFILE_RELEASE_LTO: "thin"
+          CARGO_PROFILE_RELEASE_INCREMENTAL: "false"
+          CARGO_PROFILE_RELEASE_DEBUG: "false"
+          CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "false"
+          CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: "false"
+          CARGO_PROFILE_RELEASE_STRIP: "symbols"
+        run: |
+          cd build
+          pnpm tauri build
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@main
+        with:
+          name: legado-windows-latest
+          path: |
+            build/src-tauri/target/release/bundle/nsis/*.exe
+            build/src-tauri/target/release/bundle/msi/*.msi
+
+  build-macos:
+    name: Build macOS (${{ matrix.os }})
+    needs:
+      - prepare
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - macos-26-intel
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+
+      - name: Setup Git Auth
+        shell: bash
+        run: |
+          git config --global url."https://${{ secrets.TOKEN_MGZ }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Clone Source
+        shell: bash
+        run: |
+          git clone https://github.com/mgz0227/Legado-Tauri.git Source
+
+      - name: Move Project
+        shell: bash
+        run: |
+          mkdir build
+          cp -r Source/* build/
+
+      - name: Write pnpm workspace policy
+        shell: bash
+        run: |
+          cat > build/pnpm-workspace.yaml <<'EOF'
+          packages:
+            - '.'
+          strictDepBuilds: false
+          allowBuilds:
+            esbuild: true
+            vue-demi: true
+            core-js: true
+            es5-ext: true
+            unplugin-auto-import: true
+            unplugin-vue-components: true
+          onlyBuiltDependencies:
+            - esbuild
+            - vue-demi
+            - core-js
+            - es5-ext
+            - unplugin-auto-import
+            - unplugin-vue-components
+          ignoredBuiltDependencies: []
+          EOF
+          cat > build/.npmrc <<'EOF'
+          strict-dep-builds=false
+          ignore-scripts=false
+          EOF
+          echo "===== build/pnpm-workspace.yaml ====="
+          cat build/pnpm-workspace.yaml
+          echo "===== build/.npmrc ====="
+          cat build/.npmrc
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@master
+        with:
+          run_install: false
+          package_json_file: build/package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@main
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: build/pnpm-lock.yaml
+
+      - name: Show versions
+        shell: bash
+        run: |
+          node -v
+          pnpm -v
+
+      - name: Install Dependencies
+        shell: bash
+        run: |
+          cd build
+
+          set -e
+          pnpm install --no-frozen-lockfile --config.strict-dep-builds=false || {
+            echo "pnpm install reported ignored build scripts; approving pending builds and retrying"
+            pnpm approve-builds --all || pnpm approve-builds core-js es5-ext esbuild vue-demi unplugin-auto-import unplugin-vue-components || true
+            pnpm install --no-frozen-lockfile --config.strict-dep-builds=false
+          }
+
+      #  - name: Type Check Frontend
+      #   shell: bash
+      #  run: |
+      #   cd build
+      #  pnpm vue-tsc --noEmit
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Tauri App
+        shell: bash
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+          RUSTFLAGS: -C debuginfo=0
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: "3"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
+          CARGO_PROFILE_RELEASE_LTO: "thin"
+          CARGO_PROFILE_RELEASE_INCREMENTAL: "false"
+          CARGO_PROFILE_RELEASE_DEBUG: "false"
+          CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "false"
+          CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: "false"
+          CARGO_PROFILE_RELEASE_STRIP: "symbols"
+        run: |
+          cd build
+          pnpm tauri build
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@main
+        with:
+          name: legado-${{ matrix.os }}
+          path: |
+            build/src-tauri/target/release/bundle/dmg/*.dmg
+  build-android:
+    name: Build Android
+    needs:
+      - prepare
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+
+      - name: Setup Git Auth
+        shell: bash
+        run: |
+          git config --global url."https://${{ secrets.TOKEN_MGZ }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Clone Source
+        shell: bash
+        run: |
+          git clone https://github.com/mgz0227/Legado-Tauri.git Source
+
+      - name: Move Project
+        shell: bash
+        run: |
+          mkdir build
+          cp -r Source/* build/
+
+      - name: Write pnpm workspace policy
+        shell: bash
+        run: |
+          cat > build/pnpm-workspace.yaml <<'EOF'
+          packages:
+            - '.'
+          strictDepBuilds: false
+          allowBuilds:
+            esbuild: true
+            vue-demi: true
+            core-js: true
+            es5-ext: true
+            unplugin-auto-import: true
+            unplugin-vue-components: true
+          onlyBuiltDependencies:
+            - esbuild
+            - vue-demi
+            - core-js
+            - es5-ext
+            - unplugin-auto-import
+            - unplugin-vue-components
+          ignoredBuiltDependencies: []
+          EOF
+          cat > build/.npmrc <<'EOF'
+          strict-dep-builds=false
+          ignore-scripts=false
+          EOF
+          echo "===== build/pnpm-workspace.yaml ====="
+          cat build/pnpm-workspace.yaml
+          echo "===== build/.npmrc ====="
+          cat build/.npmrc
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@master
+        with:
+          run_install: false
+          package_json_file: build/package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@main
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: build/pnpm-lock.yaml
+
+      - name: Setup Java
+        uses: actions/setup-java@main
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@main
+        with:
+          packages: >-
+            platform-tools
+            build-tools;35.0.0
+            platforms;android-35
+            ndk;27.0.12077973
+            cmdline-tools;latest
+
+      - name: Show versions
+        shell: bash
+        run: |
+          node -v
+          pnpm -v
+          java -version
+          sdkmanager --list | head -n 40 || true
+
+      - name: Install Dependencies
+        shell: bash
+        run: |
+          cd build
+
+          set -e
+          pnpm install --no-frozen-lockfile --config.strict-dep-builds=false || {
+            echo "pnpm install reported ignored build scripts; approving pending builds and retrying"
+            pnpm approve-builds --all || pnpm approve-builds core-js es5-ext esbuild vue-demi unplugin-auto-import unplugin-vue-components || true
+            pnpm install --no-frozen-lockfile --config.strict-dep-builds=false
+          }
+
+      # - name: Type Check Frontend
+      #   shell: bash
+      #   run: |
+      #     cd build
+      #     pnpm vue-tsc --noEmit
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add Rust Android targets
+        shell: bash
+        run: |
+          rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+
+      - name: Set Android env
+        shell: bash
+        run: |
+          echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=/usr/local/lib/android/sdk" >> $GITHUB_ENV
+          NDK_VERSION=$(ls -1 /usr/local/lib/android/sdk/ndk | sort -V | tail -n 1)
+          echo "NDK_HOME=/usr/local/lib/android/sdk/ndk/$NDK_VERSION" >> $GITHUB_ENV
+          echo "JAVA_HOME=$JAVA_HOME" >> $GITHUB_ENV
+          echo "BUILD_TOOLS_DIR=/usr/local/lib/android/sdk/build-tools/35.0.0" >> $GITHUB_ENV
+
+      - name: Fix Gradle Java home
+        shell: bash
+        run: |
+          set -e
+
+          echo "JAVA_HOME=$JAVA_HOME"
+          java -version
+
+          while IFS= read -r file; do
+            echo "Patching $file"
+            sed -i '/^[[:space:]]*org\.gradle\.java\.home[[:space:]]*=/d' "$file"
+          done < <(find build "$HOME/.gradle" -name "gradle.properties" -type f 2>/dev/null || true)
+
+          echo "Check remaining org.gradle.java.home:"
+          grep -R "org.gradle.java.home" build "$HOME/.gradle" || true
+
+      - name: Debug Android env
+        shell: bash
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          echo "NDK_HOME=$NDK_HOME"
+          echo "BUILD_TOOLS_DIR=$BUILD_TOOLS_DIR"
+          test -d "$ANDROID_HOME"
+          test -d "$NDK_HOME"
+          test -f "$BUILD_TOOLS_DIR/apksigner"
+
+      - name: Decode Android keystore
+        shell: bash
+        run: |
+          echo "${{ secrets.APK_RELEASE_KEY_STORE }}" | base64 --decode > /tmp/key.jks
+          test -s /tmp/key.jks
+
+      - name: Write key.properties
+        shell: bash
+        run: |
+          cat > build/src-tauri/gen/android/key.properties <<EOF
+          keyAlias=${{ secrets.APK_RELEASE_KEY_ALIAS }}
+          keyPassword=${{ secrets.APK_RELEASE_KEY_PASSWORD }}
+          storeFile=/tmp/key.jks
+          storePassword=${{ secrets.APK_RELEASE_STORE_PASSWORD }}
+          EOF
+
+      - name: Build Android APK
+        shell: bash
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+          RUSTFLAGS: -C debuginfo=0
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: "3"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
+          CARGO_PROFILE_RELEASE_LTO: "thin"
+          CARGO_PROFILE_RELEASE_INCREMENTAL: "false"
+          CARGO_PROFILE_RELEASE_DEBUG: "false"
+          CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "false"
+          CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: "false"
+          CARGO_PROFILE_RELEASE_STRIP: "symbols"
+        run: |
+          cd build
+          pnpm tauri android build --apk --target aarch64
+
+      - name: Check APK output
+        shell: bash
+        run: |
+          find build/src-tauri/gen/android/app/build/outputs/apk -type f -name "*.apk"
+          test -n "$(find build/src-tauri/gen/android/app/build/outputs/apk -type f -name '*.apk' -print -quit)"
+
+      - name: Verify APK signature
+        shell: bash
+        run: |
+          set -e
+
+          find build/src-tauri/gen/android/app/build/outputs/apk -type f -name "*.apk" -print0 | while IFS= read -r -d '' apk; do
+            "$BUILD_TOOLS_DIR/apksigner" verify --verbose "$apk"
+          done
+
+      - name: Upload Android Artifact
+        uses: actions/upload-artifact@main
+        with:
+          name: legado-android
+          path: |
+            build/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+
+  build-Harmony:
+    name: Build Harmony
+    needs:
+      - prepare
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+
+      - name: Setup Git Auth
+        shell: bash
+        run: |
+          git config --global url."https://${{ secrets.TOKEN_MGZ }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Clone Source
+        shell: bash
+        run: |
+          git clone https://github.com/mgz0227/Legado-Tauri.git Source
+
+      - name: Move Project
+        shell: bash
+        run: |
+          mkdir build
+          cp -r Source/* build/
+
+      - name: Write pnpm workspace policy
+        shell: bash
+        run: |
+          cat > build/pnpm-workspace.yaml <<'EOF'
+          packages:
+            - '.'
+          strictDepBuilds: false
+          allowBuilds:
+            esbuild: true
+            vue-demi: true
+            core-js: true
+            es5-ext: true
+            unplugin-auto-import: true
+            unplugin-vue-components: true
+          onlyBuiltDependencies:
+            - esbuild
+            - vue-demi
+            - core-js
+            - es5-ext
+            - unplugin-auto-import
+            - unplugin-vue-components
+          ignoredBuiltDependencies: []
+          EOF
+          cat > build/.npmrc <<'EOF'
+          strict-dep-builds=false
+          ignore-scripts=false
+          EOF
+          echo "===== build/pnpm-workspace.yaml ====="
+          cat build/pnpm-workspace.yaml
+          echo "===== build/.npmrc ====="
+          cat build/.npmrc
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@master
+        with:
+          run_install: false
+          package_json_file: build/package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@main
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: build/pnpm-lock.yaml
+
+      - name: Show versions
+        shell: bash
+        run: |
+          node -v
+          pnpm -v
+
+      - name: Install Dependencies
+        shell: bash
+        run: |
+          cd build
+
+          set -e
+          pnpm install --no-frozen-lockfile --config.strict-dep-builds=false || {
+            echo "pnpm install reported ignored build scripts; approving pending builds and retrying"
+            pnpm approve-builds --all || pnpm approve-builds core-js es5-ext esbuild vue-demi unplugin-auto-import unplugin-vue-components || true
+            pnpm install --no-frozen-lockfile --config.strict-dep-builds=false
+          }
+
+      # - name: Type Check Frontend
+      #   shell: bash
+      #  run: |
+      #     cd build
+      #    pnpm vue-tsc --noEmit
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux dependencies
+        shell: bash
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            pkg-config \
+            libglib2.0-dev \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            libspeechd-dev \
+            librsvg2-dev
+
+          pkg-config --modversion glib-2.0
+          pkg-config --cflags glib-2.0
+          pkg-config --libs glib-2.0
+
+      - name: Build Tauri App
+        shell: bash
+        env:
+          RUSTFLAGS: -C debuginfo=0
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: "3"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
+          CARGO_PROFILE_RELEASE_LTO: "thin"
+          CARGO_PROFILE_RELEASE_INCREMENTAL: "false"
+          CARGO_PROFILE_RELEASE_DEBUG: "false"
+          CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "false"
+          CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: "false"
+          CARGO_PROFILE_RELEASE_STRIP: "symbols"
+        run: |
+          cd build
+          #在主项目根目录
+          pnpm build:harmony
+
+      - name: Pack binary with dist
+        shell: bash
+        run: |
+          mkdir -p package/legado_Harmony
+          cp -r build/dist package/legado_Harmony/dist
+          cd package
+          zip -r Legado-Harmony-with-dist.zip legado_Harmony
+
+      - name: Upload Binary With Dist Artifact
+        uses: actions/upload-artifact@main
+        with:
+          name: Legado-Harmony-with-dist
+          path: package/Legado-Harmony-with-dist.zip
+
+      - name: Upload Dist Artifact
+        uses: actions/upload-artifact@main
+        with:
+          name: Legado-dist
+          path: |
+            build/dist/**
+
+  build-ios:
+    name: Build iOS IPA Unsigned
+    needs:
+      - prepare
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+
+      - name: Setup Git Auth
+        shell: bash
+        run: |
+          git config --global url."https://${{ secrets.TOKEN_MGZ }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Clone Source
+        shell: bash
+        run: |
+          git clone https://github.com/mgz0227/Legado-Tauri.git Source
+
+      - name: Move Project
+        shell: bash
+        run: |
+          mkdir build
+          cp -r Source/* build/
+
+      - name: Write pnpm workspace policy
+        shell: bash
+        run: |
+          cat > build/pnpm-workspace.yaml <<'EOF'
+          packages:
+            - '.'
+          strictDepBuilds: false
+          allowBuilds:
+            esbuild: true
+            vue-demi: true
+            core-js: true
+            es5-ext: true
+            unplugin-auto-import: true
+            unplugin-vue-components: true
+          onlyBuiltDependencies:
+            - esbuild
+            - vue-demi
+            - core-js
+            - es5-ext
+            - unplugin-auto-import
+            - unplugin-vue-components
+          ignoredBuiltDependencies: []
+          EOF
+          cat > build/.npmrc <<'EOF'
+          strict-dep-builds=false
+          ignore-scripts=false
+          EOF
+          echo "===== build/pnpm-workspace.yaml ====="
+          cat build/pnpm-workspace.yaml
+          echo "===== build/.npmrc ====="
+          cat build/.npmrc
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@master
+        with:
+          run_install: false
+          package_json_file: build/package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@main
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: build/pnpm-lock.yaml
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add Rust iOS target
+        shell: bash
+        run: |
+          rustup target add aarch64-apple-ios
+
+      - name: Select Xcode
+        shell: bash
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+
+      - name: Show versions
+        shell: bash
+        run: |
+          node -v
+          pnpm -v
+          rustc -V
+          cargo -V
+          xcodebuild -version
+
+      - name: Install Dependencies
+        shell: bash
+        run: |
+          cd build
+
+          cargo install tauri-cli --locked || true
+          set -e
+          pnpm install --no-frozen-lockfile --config.strict-dep-builds=false || {
+            echo "pnpm install reported ignored build scripts; approving pending builds and retrying"
+            pnpm approve-builds --all || pnpm approve-builds core-js es5-ext esbuild vue-demi unplugin-auto-import unplugin-vue-components || true
+            pnpm install --no-frozen-lockfile --config.strict-dep-builds=false
+          }
+
+      # Signing disabled: no Apple API key, no Team ID, no export method.
+      # Keep this block only as a reminder for future signed builds.
+      # - name: Decode Apple API key
+      #   shell: bash
+      #   run: |
+      #     mkdir -p "$RUNNER_TEMP/apple-private-keys"
+      #     echo "${{ secrets.APPLE_API_PRIVATE_KEY_BASE64 }}" | base64 --decode > "$RUNNER_TEMP/apple-private-keys/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8"
+      #     test -s "$RUNNER_TEMP/apple-private-keys/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8"
+
+      - name: Build unsigned iOS app and package IPA
+        shell: bash
+        env:
+          CI: true
+          TAURI_ENV_PLATFORM: ios
+          TAURI_ENV_PLATFORM_VERSION: ios
+          NODE_OPTIONS: --max-old-space-size=6144
+          RUSTFLAGS: -C debuginfo=0
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: "3"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
+          CARGO_PROFILE_RELEASE_LTO: "thin"
+          CARGO_PROFILE_RELEASE_INCREMENTAL: "false"
+          CARGO_PROFILE_RELEASE_DEBUG: "false"
+          CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "false"
+          CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: "false"
+          CARGO_PROFILE_RELEASE_STRIP: "symbols"
+          # Signing env is intentionally disabled.
+          # APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          # APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
+          # APPLE_API_KEY_PATH: ${{ runner.temp }}/apple-private-keys/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          # IOS_EXPORT_METHOD: app-store-connect
+        run: |
+          cd build
+
+          export CI=true
+          export TAURI_ENV_PLATFORM=ios
+          export TAURI_ENV_PLATFORM_VERSION=ios
+
+          # Do not call xcodebuild directly here.
+          # Tauri must start its own build context before the Xcode "Build Rust Code" phase runs.
+          pnpm tauri ios build \
+            --ci \
+            -v \
+            --target aarch64 \
+            --no-sign
+
+          test -n "$(find src-tauri/gen/apple/build -type f -name '*.ipa' -print -quit)"
+
+      - name: Check IPA output
+        shell: bash
+        run: |
+          find build/src-tauri/gen/apple/build -type f -name "*.ipa"
+          test -n "$(find build/src-tauri/gen/apple/build -type f -name '*.ipa' -print -quit)"
+
+      - name: Upload iOS Artifact
+        uses: actions/upload-artifact@main
+        with:
+          name: legado-ios-unsigned
+          path: |
+            build/src-tauri/gen/apple/build/**/*.ipa
+
+  release:
+    name: Release
+    needs:
+      - prepare
+      - build-linux
+      - build-windows
+      - build-macos
+      - build-android
+      - build-ios
+      - build-Harmony
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.TOKEN_MGZ }}
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@main
+
+      - name: Rename Android and iOS assets
+        shell: bash
+        run: |
+          set -e
+
+          VERSION="${{ needs.prepare.outputs.version }}"
+
+          find . -type f -name "*.apk" -print0 | while IFS= read -r -d '' file; do
+            dir="$(dirname "$file")"
+            name="$(basename "$file")"
+
+            case "$name" in
+              *universal*)
+                arch="universal"
+                ;;
+              *arm64-v8a*|*aarch64*)
+                arch="aarch64"
+                ;;
+              *armeabi-v7a*|*armv7*)
+                arch="armv7"
+                ;;
+              *x86_64*)
+                arch="x86_64"
+                ;;
+              *x86*)
+                arch="x86"
+                ;;
+              *)
+                arch="universal"
+                ;;
+            esac
+
+            new="${dir}/Legado-tauri-${VERSION}-${arch}.apk"
+            echo "Rename APK: $file -> $new"
+            mv "$file" "$new"
+          done
+
+          find . -type f -name "*.ipa" -print0 | while IFS= read -r -d '' file; do
+            dir="$(dirname "$file")"
+            arch="aarch64"
+
+            new="${dir}/Legado-tauri-${VERSION}-${arch}.ipa"
+            echo "Rename IPA: $file -> $new"
+            mv "$file" "$new"
+          done
+
+          echo "===== renamed mobile assets ====="
+          find . -type f \( -name "*.apk" -o -name "*.ipa" \) | sort
+
+      - name: Create Git tag when no tag input
+        if: github.ref_type != 'tag'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git rev-parse "${{ needs.prepare.outputs.tag_name }}" >/dev/null 2>&1; then
+            echo "Tag already exists: ${{ needs.prepare.outputs.tag_name }}"
+          else
+            git tag "${{ needs.prepare.outputs.tag_name }}"
+            git push origin "${{ needs.prepare.outputs.tag_name }}"
+          fi
+
+      - name: Generate release body with download table
+        shell: bash
+        run: |
+          set -e
+
+          export REPO="${{ github.repository }}"
+          export TAG="${{ needs.prepare.outputs.tag_name }}"
+          export BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
+
+          if [ ! -f release.txt ]; then
+            echo "release.txt not found"
+            exit 1
+          fi
+
+          python3 <<'PY' >> release.txt
+          import os
+          import urllib.parse
+          from pathlib import Path
+
+          BASE_URL = os.environ["BASE_URL"]
+
+          ASSET_EXTS = (
+              ".apk",
+              ".ipa",
+              ".appimage",
+              ".deb",
+              ".rpm",
+              ".dmg",
+              ".exe",
+              ".msi",
+          )
+
+          ASSET_NAMES = {
+              "Legado-Linux-with-dist.zip",
+              "Legado-Harmony-with-dist.zip",
+          }
+
+          assets = []
+          for p in Path(".").rglob("*"):
+              if not p.is_file():
+                  continue
+
+              name = p.name
+              lower = name.lower()
+
+              if name in ASSET_NAMES or lower.endswith(ASSET_EXTS):
+                  assets.append(p)
+
+          assets = sorted(assets, key=lambda x: x.name.lower())
+
+          def asset_url(path: Path) -> str:
+              encoded = urllib.parse.quote(path.name, safe="")
+              return f"{BASE_URL}/{encoded}"
+
+          def md_link(label: str, path: Path) -> str:
+              return f"[{label}]({asset_url(path)})"
+
+          def has_word(name: str, words) -> bool:
+              name = name.lower()
+              return any(w in name for w in words)
+
+          def find_asset(*, suffix=None, include=(), exclude=()):
+              for p in assets:
+                  name = p.name.lower()
+
+                  if suffix and not name.endswith(suffix.lower()):
+                      continue
+
+                  if include and not all(x.lower() in name for x in include):
+                      continue
+
+                  if exclude and any(x.lower() in name for x in exclude):
+                      continue
+
+                  return p
+
+              return None
+
+          def find_arch_asset(suffix, arch, *, include=(), exclude=()):
+              arch_words = {
+                  "x64": ("x64", "x86_64", "amd64"),
+                  "arm64": ("arm64", "aarch64", "arm64-v8a"),
+                  "armv7": ("armv7", "armv7l", "armhf", "armeabi-v7a"),
+                  "x86": ("x86", "i686"),
+                  "universal": ("universal",),
+              }[arch]
+
+              for p in assets:
+                  name = p.name.lower()
+
+                  if suffix and not name.endswith(suffix.lower()):
+                      continue
+
+                  if include and not all(x.lower() in name for x in include):
+                      continue
+
+                  if exclude and any(x.lower() in name for x in exclude):
+                      continue
+
+                  if has_word(name, arch_words):
+                      return p
+
+              return None
+
+          rows = []
+
+          def add_row(platform, file_type, arch, path, note):
+              if path:
+                  rows.append([
+                      platform,
+                      file_type,
+                      arch,
+                      md_link("下载", path),
+                      note,
+                  ])
+
+          # Windows
+          win_x64_exe = find_arch_asset(".exe", "x64", exclude=("webview", "webview2"))
+          win_x64_msi = find_arch_asset(".msi", "x64", exclude=("webview", "webview2"))
+          win_arm64_exe = find_arch_asset(".exe", "arm64", exclude=("webview", "webview2"))
+          win_arm64_msi = find_arch_asset(".msi", "arm64", exclude=("webview", "webview2"))
+
+          add_row("Windows", ".exe", "64位", win_x64_exe, "推荐，常用安装包")
+          add_row("Windows", ".msi", "64位", win_x64_msi, "Windows 安装包")
+          add_row("Windows", ".exe", "ARM64", win_arm64_exe, "ARM64 设备使用")
+          add_row("Windows", ".msi", "ARM64", win_arm64_msi, "ARM64 设备使用")
+
+          # macOS
+          mac_arm64 = find_arch_asset(".dmg", "arm64")
+          mac_x64 = find_arch_asset(".dmg", "x64")
+
+          add_row("macOS", ".dmg", "Apple M 芯片", mac_arm64, "适用于 Apple Silicon")
+          add_row("macOS", ".dmg", "Intel 芯片", mac_x64, "适用于 Intel Mac")
+
+          # Linux
+          app_x64 = find_arch_asset(".appimage", "x64")
+          app_arm64 = find_arch_asset(".appimage", "arm64")
+          app_armv7 = find_arch_asset(".appimage", "armv7")
+
+          deb_x64 = find_arch_asset(".deb", "x64")
+          deb_arm64 = find_arch_asset(".deb", "arm64")
+          deb_armv7 = find_arch_asset(".deb", "armv7")
+
+          rpm_x64 = find_arch_asset(".rpm", "x64")
+          rpm_arm64 = find_arch_asset(".rpm", "arm64")
+          rpm_armv7 = find_arch_asset(".rpm", "armv7")
+
+          add_row("通用 Linux", ".AppImage", "64位", app_x64, "下载后添加执行权限即可运行")
+          add_row("通用 Linux", ".AppImage", "ARM64", app_arm64, "下载后添加执行权限即可运行")
+          add_row("通用 Linux", ".AppImage", "ARMv7", app_armv7, "下载后添加执行权限即可运行")
+
+          add_row("Debian / Ubuntu 系 Linux", ".deb", "64位", deb_x64, "适用于 Debian、Ubuntu 等发行版")
+          add_row("Debian / Ubuntu 系 Linux", ".deb", "ARM64", deb_arm64, "适用于 Debian、Ubuntu 等发行版")
+          add_row("Debian / Ubuntu 系 Linux", ".deb", "ARMv7", deb_armv7, "适用于 Debian、Ubuntu 等发行版")
+
+          add_row("Red Hat / Fedora 系 Linux", ".rpm", "64位", rpm_x64, "适用于 Red Hat、Fedora、CentOS 等发行版")
+          add_row("Red Hat / Fedora 系 Linux", ".rpm", "ARM64", rpm_arm64, "适用于 Red Hat、Fedora、CentOS 等发行版")
+          add_row("Red Hat / Fedora 系 Linux", ".rpm", "ARMv7", rpm_armv7, "适用于 Red Hat、Fedora、CentOS 等发行版")
+
+          # Android
+          apk_universal = find_arch_asset(".apk", "universal")
+          apk_arm64 = find_arch_asset(".apk", "arm64")
+          apk_armv7 = find_arch_asset(".apk", "armv7")
+          apk_x64 = find_arch_asset(".apk", "x64")
+          apk_x86 = find_arch_asset(".apk", "x86", exclude=("x86_64",))
+
+          add_row("Android", ".apk", "通用版", apk_universal, "安卓安装包，推荐优先下载")
+          add_row("Android", ".apk", "ARM64", apk_arm64, "适用于 ARM64 设备")
+          add_row("Android", ".apk", "ARMv7", apk_armv7, "适用于 ARMv7 设备")
+          add_row("Android", ".apk", "x64", apk_x64, "适用于 x86_64 设备")
+          add_row("Android", ".apk", "x86", apk_x86, "适用于 x86 设备")
+
+          # iOS
+          ipa_arm64 = find_arch_asset(".ipa", "arm64")
+          ipa_any = find_asset(suffix=".ipa")
+
+          add_row("iOS", ".ipa", "ARM64", ipa_arm64 or ipa_any, "未签名 IPA，需要自行签名")
+
+          # Frontend dist
+          harmony_dist = find_asset(include=("legado-harmony-with-dist.zip",))
+          linux_dist = find_asset(include=("legado-linux-with-dist.zip",))
+
+          add_row("Harmony 前端文件", "Harmony-with-dist", "-", harmony_dist, "前端文件")
+          add_row("Linux 前端文件", "Linux-with-dist", "-", linux_dist, "前端文件")
+
+          print()
+          print("## 下载地址")
+          print()
+          print("| 平台 | 文件类型 | 架构 / 版本 | 下载链接 | 说明 |")
+          print("|---|---|---|---|---|")
+
+          for row in rows:
+              print("| " + " | ".join(row) + " |")
+
+          print()
+          PY
+
+          echo "===== release.txt ====="
+          cat release.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@master
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag_name }}
+          body_path: release.txt
+          name: ${{ needs.prepare.outputs.release_name }}
+          files: |
+            **/Legado-Linux-with-dist.zip
+            **/Legado-Harmony-with-dist.zip
+            **/*.apk
+            **/*.ipa
+            **/*.AppImage
+            **/*.deb
+            **/*.rpm
+            **/*.dmg
+            **/*.exe
+            **/*.msi
+        env:
+          GITHUB_TOKEN: ${{ secrets.TOKEN_MGZ }}
+
+      - name: Delete workflow runs
+        uses: mgz0227/delete-workflow-runs@main
+        continue-on-error: true
+        with:
+          token: ${{ secrets.TOKEN_MGZ }}
+          retain_days: 100
+          keep_minimum_runs: 0
+
+      - name: Remove old Releases
+        uses: mgz0227/delete-older-releases@master
+        continue-on-error: true
+        if: env.UPLOAD_FIRMWARE_FOR_RELEASE == 'true' && !cancelled()
+        with:
+          keep_latest: 15
+          delete_tags: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.TOKEN_MGZ }}

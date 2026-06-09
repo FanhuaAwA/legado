@@ -1,0 +1,166 @@
+<script setup lang="ts">
+import { computed } from "vue";
+import type { BookItem } from "@/stores";
+import type { TaggedBookItem, AggregatedBook } from "./types";
+export type { TaggedBookItem, AggregatedBook };
+import AppEmpty from "../base/AppEmpty.vue";
+import StackedBookCard from "./StackedBookCard.vue";
+
+const props = defineProps<{
+  keyword: string;
+  results: TaggedBookItem[];
+  showCovers?: boolean;
+  loading?: boolean;
+  emptyDescription?: string;
+}>();
+
+const emit = defineEmits<{
+  (e: "select", book: BookItem, fileName: string, sourceDir?: string): void;
+}>();
+
+// ── 文字相似度（Dice 系数，基于 bigram） ─────────────────────────────────
+function bigrams(str: string): Set<string> {
+  const s = str.toLowerCase().replace(/\s+/g, "");
+  const set = new Set<string>();
+  for (let i = 0; i < s.length - 1; i++) {
+    set.add(s.substring(i, i + 2));
+  }
+  return set;
+}
+
+function diceSimilarity(a: string, b: string): number {
+  if (!a || !b) {
+    return 0;
+  }
+  const na = a.toLowerCase().replace(/\s+/g, "");
+  const nb = b.toLowerCase().replace(/\s+/g, "");
+  if (na === nb) {
+    return 1;
+  }
+  if (na.length < 2 || nb.length < 2) {
+    // 单字符退化为包含判断
+    return na.includes(nb) || nb.includes(na) ? 0.8 : 0;
+  }
+  const bg1 = bigrams(a);
+  const bg2 = bigrams(b);
+  let intersection = 0;
+  bg1.forEach((g) => {
+    if (bg2.has(g)) {
+      intersection++;
+    }
+  });
+  return (2 * intersection) / (bg1.size + bg2.size);
+}
+
+/** 判断两本书是否为同一本（名称相似度高） */
+function isSameBook(a: BookItem, b: BookItem): boolean {
+  const nameA = a.name.toLowerCase().replace(/\s+/g, "");
+  const nameB = b.name.toLowerCase().replace(/\s+/g, "");
+  if (nameA === nameB) {
+    return true;
+  }
+  // 名称相似度 >= 0.8 且 作者相同(如果都有) → 视为同一本书
+  const sim = diceSimilarity(a.name, b.name);
+  if (sim >= 0.85) {
+    return true;
+  }
+  if (sim >= 0.7 && a.author && b.author && a.author.trim() === b.author.trim()) {
+    return true;
+  }
+  return false;
+}
+
+/** 聚合 & 排序 */
+const aggregatedBooks = computed<AggregatedBook[]>(() => {
+  const kw = props.keyword.trim();
+  if (!kw || !props.results.length) {
+    return [];
+  }
+
+  // 1. 按名称聚合
+  const groups: AggregatedBook[] = [];
+  for (const item of props.results) {
+    let matched = false;
+    for (const group of groups) {
+      if (isSameBook(group.primary.book, item.book)) {
+        group.sources.push(item);
+        // 如果新条目封面更全，替换主条目
+        if (!group.primary.book.coverUrl && item.book.coverUrl) {
+          group.primary = item;
+        }
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) {
+      groups.push({
+        primary: item,
+        sources: [item],
+        similarity: diceSimilarity(item.book.name, kw),
+      });
+    }
+  }
+
+  // 2. 重新计算每组的最高相似度
+  for (const g of groups) {
+    let maxSim = 0;
+    for (const s of g.sources) {
+      const sim = diceSimilarity(s.book.name, kw);
+      if (sim > maxSim) {
+        maxSim = sim;
+      }
+    }
+    g.similarity = maxSim;
+  }
+
+  // 3. 按相似度降序排列
+  groups.sort((a, b) => b.similarity - a.similarity);
+  return groups;
+});
+</script>
+
+<template>
+  <div class="agg-results">
+    <!-- 加载中提示 -->
+    <div v-if="loading" class="agg-results__loading">
+      <n-spin size="small" />
+      <span>搜索中…</span>
+    </div>
+
+    <!-- 结果网格 -->
+    <div v-if="aggregatedBooks.length" class="agg-results__grid">
+      <StackedBookCard
+        v-for="(group, idx) in aggregatedBooks"
+        :key="idx"
+        :group="group"
+        :show-cover="showCovers ?? true"
+        @select="(book, fileName, sourceDir) => emit('select', book, fileName, sourceDir)"
+      />
+    </div>
+
+    <!-- 空状态 -->
+    <AppEmpty v-else-if="!loading" :title="emptyDescription ?? '暂无搜索结果'" />
+  </div>
+</template>
+
+<style scoped>
+.agg-results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.agg-results__loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-8);
+  font-size: var(--fs-14);
+  color: var(--color-text-muted);
+}
+.agg-results__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--book-card-col-min, 220px), 1fr));
+  gap: 10px;
+}
+</style>

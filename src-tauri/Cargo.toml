@@ -1,0 +1,37 @@
+[package]
+name = "legado-tauri"
+version = "0.8.0"
+description = "Legado Tauri reader shell"
+authors = ["Legado Tauri"]
+license = ""
+repository = ""
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "legado_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "legado-tauri"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+reader-core = { path = "../crates/reader-core" }
+serde.workspace = true
+serde_json.workspace = true
+tauri.workspace = true
+tauri-plugin-deep-link.workspace = true
+tauri-plugin-dialog.workspace = true
+tauri-plugin-fs.workspace = true
+tauri-plugin-opener.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
