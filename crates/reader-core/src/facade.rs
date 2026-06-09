@@ -404,9 +404,11 @@ impl ReaderCore {
         step_filter: Option<&str>,
         timeout_secs: Option<i32>,
     ) -> Result<Value, ReaderCoreError> {
-        let timeout_dur = timeout_secs
+        let step_timeout = timeout_secs
             .filter(|&t| t > 0)
-            .map(|t| std::time::Duration::from_secs(t as u64));
+            .map(|t| std::time::Duration::from_secs(t as u64))
+            .unwrap_or(std::time::Duration::from_secs(60));
+        let overall_deadline = tokio::time::Instant::now() + step_timeout;
 
         #[derive(Serialize)]
         struct TestStep {
@@ -438,19 +440,28 @@ impl ReaderCore {
             let mut toc_url: Option<String> = None;
             let mut chapter_url: Option<String> = None;
 
+            // Helper: run a step future with timeout
+            let time_limit = step_timeout;
+            async fn timed_step<F, T>(fut: F, limit: std::time::Duration, label: &str) -> Result<T, ReaderCoreError>
+            where F: std::future::Future<Output = Result<T, ReaderCoreError>> + Send,
+                  T: Send
+            {
+                match tokio::time::timeout(limit, fut).await {
+                    Ok(result) => result,
+                    Err(_elapsed) => Err(ReaderCoreError::Message(format!("{label} 超时 ({limit:?})"))),
+                }
+            }
+
             for step_name in &enabled {
                 let start = std::time::Instant::now();
 
-                // Check timeout before each step
-                if let Some(ref dur) = timeout_dur {
-                    if start.elapsed() > *dur {
-                        steps.push(TestStep {
-                            name: step_name.clone(), status: "timeout".into(),
-                            elapsed_ms: start.elapsed().as_millis() as u64,
-                            error: Some("整体超时".into()), sample_count: None, output_preview: None,
-                        });
-                        break;
-                    }
+                if tokio::time::Instant::now() > overall_deadline {
+                    steps.push(TestStep {
+                        name: step_name.clone(), status: "timeout".into(),
+                        elapsed_ms: start.elapsed().as_millis() as u64,
+                        error: Some("整体超时".into()), sample_count: None, output_preview: None,
+                    });
+                    break;
                 }
 
                 match step_name.as_str() {
@@ -463,7 +474,8 @@ impl ReaderCore {
                             });
                             continue;
                         }
-                        match self.search(file_name, "测试", 1, source_dir).await {
+                        let fut = self.search(file_name, "测试", 1, source_dir);
+                        match timed_step(fut, time_limit, "search").await {
                             Ok(items) => {
                                 if let Some(first) = items.first() {
                                     book_url = Some(first.book_url.clone());
@@ -498,7 +510,8 @@ impl ReaderCore {
                             });
                             continue;
                         }
-                        match self.book_info(file_name, target_url, source_dir).await {
+                        let fut = self.book_info(file_name, target_url, source_dir);
+                        match timed_step(fut, time_limit, "bookInfo").await {
                             Ok(detail) => {
                                 if let Some(ref tu) = detail.toc_url {
                                     if !tu.is_empty() { toc_url = Some(tu.clone()); }
@@ -533,7 +546,8 @@ impl ReaderCore {
                             });
                             continue;
                         }
-                        match self.chapter_list(file_name, target_url, source_dir).await {
+                        let fut = self.chapter_list(file_name, target_url, source_dir);
+                        match timed_step(fut, time_limit, "chapterList").await {
                             Ok(chapters) => {
                                 if let Some(first) = chapters.first() {
                                     chapter_url = Some(first.url.clone());
@@ -567,7 +581,8 @@ impl ReaderCore {
                             });
                             continue;
                         }
-                        match self.chapter_content(file_name, target_url, source_dir).await {
+                        let fut = self.chapter_content(file_name, target_url, source_dir);
+                        match timed_step(fut, time_limit, "chapterContent").await {
                             Ok(text) => {
                                 let trimmed: String = text.chars().take(100).collect();
                                 steps.push(TestStep {

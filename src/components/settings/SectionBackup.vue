@@ -37,7 +37,7 @@ const exporting = ref(false);
 // ── 导入端 ──────────────────────────────────────────────
 const peekLoading = ref(false);
 const peekReport = ref<BackupPeekReport | null>(null);
-const peekZipPath = ref("");
+const peekJsonPath = ref("");
 const peekZipBase64 = ref("");
 const importSelected = ref<Set<BackupCategoryId>>(new Set());
 const importing = ref(false);
@@ -69,7 +69,7 @@ function pad(n: number, w = 2) {
 
 function defaultBackupName(): string {
   const d = new Date();
-  return `legado-backup-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.zip`;
+  return `legado-backup-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.json`;
 }
 
 const exportTotal = computed(() => {
@@ -156,7 +156,7 @@ async function chooseSavePath(name = defaultBackupName()): Promise<string | null
     const { save } = await import("@tauri-apps/plugin-dialog");
     const target = await save({
       defaultPath: name,
-      filters: [{ name: "ZIP 备份", extensions: ["zip"] }],
+      filters: [{ name: "JSON 备份", extensions: ["json"] }],
     });
     return target ? String(target) : null;
   }
@@ -164,7 +164,7 @@ async function chooseSavePath(name = defaultBackupName()): Promise<string | null
     const { invokeWithTimeout } = await import("@/composables/useInvoke");
     const target = await invokeWithTimeout<string | null>(
       "bookshelf_pick_save_path",
-      { defaultName: name, filterName: "ZIP 备份", filterExts: ["zip"] },
+      { defaultName: name, filterName: "JSON 备份", filterExts: ["zip"] },
       60_000,
     );
     return target ?? null;
@@ -178,7 +178,7 @@ async function chooseOpenPath(): Promise<string | null> {
     const target = await open({
       multiple: false,
       directory: false,
-      filters: [{ name: "ZIP 备份", extensions: ["zip"] }],
+      filters: [{ name: "JSON 备份", extensions: ["json"] }],
     });
     if (Array.isArray(target)) {
       return target[0] ?? null;
@@ -244,11 +244,11 @@ async function handlePickAndPeek() {
       report = await peekBackup(path);
     }
     peekReport.value = report;
-    peekZipPath.value = path;
+    peekJsonPath.value = path;
     importSelected.value = new Set(report.manifest.categories.map((c) => c.id));
   } catch (e) {
     peekReport.value = null;
-    peekZipPath.value = "";
+    peekJsonPath.value = "";
     peekZipBase64.value = "";
     message.error(`读取备份失败: ${e}`);
   } finally {
@@ -276,7 +276,7 @@ async function handleImport() {
   if (importing.value) {
     return;
   }
-  if (!peekZipPath.value || !peekReport.value) {
+  if (!peekJsonPath.value || !peekReport.value) {
     message.warning("请先选择备份文件");
     return;
   }
@@ -293,7 +293,7 @@ async function handleImport() {
     const selected = [...importSelected.value];
     const res = isTauriMobile.value
       ? await restoreBackupData(peekZipBase64.value, selected)
-      : await restoreBackup(peekZipPath.value, selected);
+      : await restoreBackup(peekJsonPath.value, selected);
     const restoredCount = res.restored.reduce((s, c) => s + c.itemCount, 0);
     message.success(`已还原 ${res.restored.length} 类 / ${restoredCount} 项`);
     if (res.skipped.length > 0) {
@@ -332,7 +332,7 @@ onMounted(() => {
 <template>
   <div class="settings-backup">
     <SettingSection title="导出备份">
-      <p class="hint">勾选要导出的内容；导出为单个 ZIP 文件，可在新设备上选择性还原。</p>
+      <p class="hint">勾选要导出的内容；导出为单个 JSON 文件，可在新设备上选择性还原。</p>
 
       <NSpin :show="inspectLoading">
         <div v-if="!transportReady" class="empty">
@@ -370,7 +370,7 @@ onMounted(() => {
 
     <SettingSection title="从备份还原">
       <p class="hint">
-        选择 ZIP 备份后，将列出备份中包含的类别，可逐项勾选还原。还原为合并写入，不会删除现有数据。
+        选择 JSON 备份后，将列出备份中包含的类别，可逐项勾选还原。还原为合并写入，不会删除现有数据。
       </p>
 
       <NSpace class="actions">
@@ -379,7 +379,7 @@ onMounted(() => {
 
       <div v-if="peekReport" class="peek">
         <div class="peek-meta">
-          来源: {{ peekZipPath }}<br />
+          来源: {{ peekJsonPath }}<br />
           创建时间:
           {{ new Date(peekReport.manifest.createdAt).toLocaleString() }} · 来源版本:
           {{ peekReport.manifest.appVersion }}

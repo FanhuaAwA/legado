@@ -100,8 +100,8 @@ export async function createBackupData(
   );
 }
 
-export async function peekBackup(zipPath: string): Promise<BackupPeekReport> {
-  return await invokeWithTimeout<BackupPeekReport>("backup_peek", { zipPath }, 60_000);
+export async function peekBackup(jsonPath: string): Promise<BackupPeekReport> {
+  return await invokeWithTimeout<BackupPeekReport>("backup_peek", { jsonPath }, 60_000);
 }
 
 export async function peekBackupData(base64: string): Promise<BackupPeekReport> {
@@ -109,12 +109,12 @@ export async function peekBackupData(base64: string): Promise<BackupPeekReport> 
 }
 
 export async function restoreBackup(
-  zipPath: string,
+  jsonPath: string,
   categories: BackupCategoryId[],
 ): Promise<BackupRestoreResult> {
   return await invokeWithTimeout<BackupRestoreResult>(
     "backup_restore",
-    { zipPath, categories },
+    { jsonPath, categories },
     10 * 60_000,
   );
 }

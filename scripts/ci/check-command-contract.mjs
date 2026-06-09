@@ -1,18 +1,15 @@
 #!/usr/bin/env node
 
 /**
- * check-command-contract.mjs
+ * check-command-contract.mjs v2
  *
- * 扫描前端 invoke 调用和后端 Tauri command 注册，输出差集报告。
+ * 扫描前端 invoke 调用和后端 Tauri command 注册，输出分层状态报告。
  *
- * 检查逻辑：
- *   1. 扫描 src/**\/*.ts, src/**\/*.vue, src/**\/*.js 中的 invoke("...") 和 invokeWithTimeout("...")
- *   2. 解析 src-tauri/src/commands/mod.rs 中 generate_handler! 注册项
- *   3. 输出：前端调用但后端未注册、后端注册但前端未调用
- *
- * 用法：
- *   node scripts/ci/check-command-contract.mjs
- *   node scripts/ci/check-command-contract.mjs --json
+ * 改进：
+ * - 只解析 generate_handler![...] 块内真实 command 条目
+ * - 排除 generate_handler / ipc 等宏内部符号
+ * - 按 implemented / unsupported_stub / partial 分类
+ * - 输出 security_blocked 标记
  */
 
 import { readFileSync, readdirSync, existsSync } from "node:fs";
@@ -22,105 +19,158 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..", "..");
 
-// ── 已知配置项/非 command 误判 ──────────────────────────────
+// ── 已知误报项 ──────────────────────────────────────────────
+const FALSE_BACKEND_SYMBOLS = new Set(["generate_handler", "ipc"]);
 const KNOWN_NON_COMMANDS = new Set([
   "audio_url",
   "bookshelf_cache",
   "booksource_watcher_enabled",
-  "savePath", // 有可能是变量名
+  "savePath",
 ]);
+const SECURITY_BLOCKED = new Set(["js_eval"]);
 
-// ── 扫描前端 invoke 调用 ──────────────────────────────────
+// ── 扫描前端 invoke ────────────────────────────────────────
 function collectFrontendCommands() {
-  /** @type {Map<string, Set<string>>} */
   const cmdToFiles = new Map();
-
   const srcDir = resolve(projectRoot, "src");
   walkDir(srcDir, (filePath) => {
     if (!/\.(ts|vue|js|tsx)$/.test(filePath)) return;
     try {
       const content = readFileSync(filePath, "utf-8");
-      // 统一模式: 匹配 invokeWithTimeout("...") 或 invoke("...")
-      // 使用非贪婪 .+? 处理嵌套泛型 e.g. invokeWithTimeout<Array<[number,number]|null>>("cmd")
       const re = /(?:invokeWithTimeout|(?<!\.)\binvoke)(?:<.+?>)?\s*\(\s*["']([^"']+)["']/g;
-      let match;
-      while ((match = re.exec(content)) !== null) {
-        const name = match[1];
+      let m;
+      while ((m = re.exec(content)) !== null) {
+        const name = m[1];
         if (KNOWN_NON_COMMANDS.has(name)) continue;
-        if (!cmdToFiles.has(name)) {
-          cmdToFiles.set(name, new Set());
-        }
+        if (!cmdToFiles.has(name)) cmdToFiles.set(name, new Set());
         cmdToFiles.get(name).add(relative(projectRoot, filePath));
       }
     } catch {
-      // skip unreadable files
+      /* skip */
     }
   });
-
   return cmdToFiles;
 }
 
-function walkDir(dir, callback) {
+function walkDir(dir, cb) {
   if (!existsSync(dir)) return;
-  const entries = readdirSync(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (entry.name === "node_modules" || entry.name === "dist") continue;
-      walkDir(full, callback);
-    } else if (entry.isFile()) {
-      callback(full);
-    }
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, e.name);
+    if (e.isDirectory()) {
+      if (e.name !== "node_modules" && e.name !== "dist") walkDir(full, cb);
+    } else if (/\.(ts|vue|js|tsx)$/.test(e.name)) cb(full);
   }
 }
 
-// ── 解析后端注册命令 ──────────────────────────────────────
+// ── 解析 generate_handler! 块 ──────────────────────────────
 function collectRegisteredCommands() {
   const modPath = resolve(projectRoot, "src-tauri", "src", "commands", "mod.rs");
   if (!existsSync(modPath)) {
-    console.error("ERROR: mod.rs not found at", modPath);
+    console.error("ERROR: mod.rs not found");
     process.exit(2);
   }
   const content = readFileSync(modPath, "utf-8");
-  // 匹配 module::function_name 格式
-  const pattern = /\b\w+::(\w+)\b/g;
+  // Extract the generate_handler![...] block
+  const m = content.match(/generate_handler!\[([\s\S]*?)\]/);
+  if (!m) {
+    console.error("ERROR: generate_handler! not found");
+    process.exit(2);
+  }
+  const block = m[1];
   const cmds = new Set();
-  let match;
-  while ((match = pattern.exec(content)) !== null) {
-    cmds.add(match[1]);
+  // Match module::function_name entries
+  for (const line of block.split("\n")) {
+    const fm = line.match(/^\s*(\w+)::(\w+)\s*,?\s*$/);
+    if (fm) {
+      const name = fm[2];
+      if (!FALSE_BACKEND_SYMBOLS.has(name)) cmds.add(name);
+    }
   }
   return cmds;
 }
 
-// ── 主逻辑 ────────────────────────────────────────────────
+// ── 检测 unsupported stubs ────────────────────────────────
+function detectStubs() {
+  const stubs = new Set();
+  const cmdDir = resolve(projectRoot, "src-tauri", "src", "commands");
+  for (const fname of readdirSync(cmdDir)) {
+    if (!fname.endsWith(".rs")) continue;
+    const content = readFileSync(join(cmdDir, fname), "utf-8");
+    // Match: #[tauri::command] pub async fn xxx(...) -> CommandResult<...> { Err(u("...")) }
+    // or: Err(unsupported("..."))
+    const re =
+      /#\[tauri::command\][\s\S]*?pub\s+(?:async\s+)?fn\s+(\w+)\s*\([\s\S]*?\)\s*->\s*CommandResult[\s\S]*?\{\s*(?:Err\((?:u|unsupported)\()/g;
+    let m;
+    while ((m = re.exec(content)) !== null) {
+      stubs.add(m[1]);
+    }
+  }
+  return stubs;
+}
+
+// ── 检测已实现 command ─────────────────────────────────────
+function detectImplemented() {
+  const impl = new Set();
+  const stubs = detectStubs();
+  const cmdDir = resolve(projectRoot, "src-tauri", "src", "commands");
+  for (const fname of readdirSync(cmdDir)) {
+    if (!fname.endsWith(".rs")) continue;
+    const content = readFileSync(join(cmdDir, fname), "utf-8");
+    const re = /#\[tauri::command\][\s\S]*?pub\s+(?:async\s+)?fn\s+(\w+)\s*\(/g;
+    let m;
+    while ((m = re.exec(content)) !== null) {
+      const name = m[1];
+      if (!stubs.has(name) && !FALSE_BACKEND_SYMBOLS.has(name)) impl.add(name);
+    }
+  }
+  return impl;
+}
+
+// ── 主逻辑 ──────────────────────────────────────────────────
 const frontendCmds = collectFrontendCommands();
 const registeredCmds = collectRegisteredCommands();
+const unsupportedStubs = detectStubs();
+const implementedCmds = detectImplemented();
 
-// 分类
+// Classify
 const onlyFrontend = [];
 const onlyBackend = [];
 const both = [];
+const classified = {
+  implemented: [],
+  unsupported_stub: [],
+  partial: [],
+  security_blocked: [],
+  unknown: [],
+};
 
 for (const [name, files] of frontendCmds) {
   if (registeredCmds.has(name)) {
     both.push(name);
+    const info = { name, files: [...files].sort() };
+    if (SECURITY_BLOCKED.has(name)) {
+      classified.security_blocked.push(info);
+    } else if (unsupportedStubs.has(name)) {
+      classified.unsupported_stub.push(info);
+    } else if (implementedCmds.has(name)) {
+      classified.implemented.push(info);
+    } else {
+      classified.unknown.push(info);
+    }
   } else {
     onlyFrontend.push({ name, files: [...files].sort() });
   }
 }
 
 for (const name of registeredCmds) {
-  if (!frontendCmds.has(name)) {
-    onlyBackend.push(name);
-  }
+  if (!frontendCmds.has(name)) onlyBackend.push(name);
 }
 
 onlyFrontend.sort((a, b) => a.name.localeCompare(b.name));
 onlyBackend.sort();
 
-// ── 输出 ──────────────────────────────────────────────────
+// ── 输出 ────────────────────────────────────────────────────
 const jsonMode = process.argv.includes("--json");
-
 if (jsonMode) {
   console.log(
     JSON.stringify(
@@ -130,47 +180,38 @@ if (jsonMode) {
         bothCount: both.length,
         onlyFrontendCount: onlyFrontend.length,
         onlyBackendCount: onlyBackend.length,
-        onlyFrontend,
+        registered_unsupported_stub_count: unsupportedStubs.size,
+        registered_implemented_count: implementedCmds.size,
+        classification: {
+          implemented: classified.implemented.map((c) => c.name).sort(),
+          unsupported_stub: classified.unsupported_stub.map((c) => c.name).sort(),
+          partial: classified.partial.map((c) => c.name).sort(),
+          security_blocked: classified.security_blocked.map((c) => c.name).sort(),
+        },
+        onlyFrontend: onlyFrontend.map((c) => c.name).sort(),
         onlyBackend,
-        both,
       },
       null,
       2,
     ),
   );
 } else {
-  console.log("\n=== Command Contract Check ===\n");
-  console.log(`Frontend invoke calls: ${frontendCmds.size} unique`);
-  console.log(`Tauri registered:      ${registeredCmds.size} commands`);
-  console.log(`Both sides match:      ${both.length} commands`);
-
-  if (onlyFrontend.length > 0) {
-    console.log(`\n--- MISSING: Frontend calls NOT registered (${onlyFrontend.length}) ---\n`);
-    for (const { name, files } of onlyFrontend) {
-      console.log(`  ${name}`);
-      for (const f of files.slice(0, 3)) {
-        console.log(`    -> ${f}`);
-      }
-      if (files.length > 3) console.log(`    ... and ${files.length - 3} more files`);
-    }
+  console.log("\n=== Command Contract v2 ===\n");
+  console.log(`Frontend calls:          ${frontendCmds.size}`);
+  console.log(`Tauri registered:        ${registeredCmds.size}`);
+  console.log(`Both sides match:        ${both.length}`);
+  console.log(`Implemented:             ${classified.implemented.length}`);
+  console.log(`Unsupported stubs:       ${classified.unsupported_stub.length}`);
+  console.log(`Security blocked:        ${classified.security_blocked.length}`);
+  console.log(`Frontend-only (missing): ${onlyFrontend.length}`);
+  console.log(`Backend-only (unused):   ${onlyBackend.length}`);
+  console.log(`False backend symbols:   ${FALSE_BACKEND_SYMBOLS.size} excluded`);
+  if (classified.unsupported_stub.length > 0) {
+    console.log(`\n--- UNSUPPORTED Frontend-facing (${classified.unsupported_stub.length}) ---`);
+    for (const c of classified.unsupported_stub) console.log(`  ${c.name}`);
   }
-
-  if (onlyBackend.length > 0) {
-    console.log(
-      `\n--- UNUSED: Registered but no frontend call found (${onlyBackend.length}) ---\n`,
-    );
-    for (const name of onlyBackend) {
-      console.log(`  ${name}`);
-    }
-  }
-
-  if (onlyFrontend.length === 0 && onlyBackend.length === 0) {
-    console.log("\nAll frontend commands are registered, all registered have calls.\n");
-  }
-
-  console.log(
-    `\nSummary: ${frontendCmds.size} frontend, ${registeredCmds.size} backend, ${onlyFrontend.length} unregistered`,
-  );
 }
 
-process.exit(onlyFrontend.length > 0 ? 1 : 0);
+process.exit(
+  onlyFrontend.length > 0 && !onlyFrontend.every((f) => SECURITY_BLOCKED.has(f.name)) ? 1 : 0,
+);

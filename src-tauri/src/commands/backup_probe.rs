@@ -87,7 +87,7 @@ pub struct BackupCreateDataRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackupPeekRequest {
-    pub zip_path: String,
+    pub json_path: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -99,7 +99,7 @@ pub struct BackupPeekDataRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackupRestoreRequest {
-    pub zip_path: String,
+    pub json_path: String,
     pub categories: Vec<String>,
 }
 
@@ -290,7 +290,7 @@ pub async fn backup_create_data(state: State<'_, AppState>, request: BackupCreat
 
 #[tauri::command]
 pub async fn backup_peek(request: BackupPeekRequest) -> CommandResult<BackupPeekReport> {
-    let raw = std::fs::read_to_string(&request.zip_path).map_err(|e| CommandError { code: "IO_ERROR".into(), message: e.to_string(), detail: None, retryable: false })?;
+    let raw = std::fs::read_to_string(&request.json_path).map_err(|e| CommandError { code: "IO_ERROR".into(), message: e.to_string(), detail: None, retryable: false })?;
     parse_peek(&raw)
 }
 
@@ -312,7 +312,7 @@ fn parse_peek(raw: &str) -> CommandResult<BackupPeekReport> {
 
 #[tauri::command]
 pub async fn backup_restore(state: State<'_, AppState>, request: BackupRestoreRequest) -> CommandResult<BackupRestoreResult> {
-    let raw = std::fs::read_to_string(&request.zip_path).map_err(|e| CommandError { code: "IO_ERROR".into(), message: e.to_string(), detail: None, retryable: false })?;
+    let raw = std::fs::read_to_string(&request.json_path).map_err(|e| CommandError { code: "IO_ERROR".into(), message: e.to_string(), detail: None, retryable: false })?;
     restore_from_payload(&state, &raw, &request.categories)
 }
 

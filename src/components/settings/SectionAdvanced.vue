@@ -42,13 +42,16 @@ onMounted(async () => {
     webServerPortInput.value = config.value.web_server_port;
 
     try {
-      const status = await invokeWithTimeout<{ running: boolean; port: number }>(
+      const status = await invokeWithTimeout<{ running: boolean; port: number; dist_dir?: string }>(
         "web_server_status",
         undefined,
         3_000,
       );
       if (status.running !== config.value.web_server_enabled) {
         await loadConfig();
+      }
+      if (status.port > 0) {
+        config.value.web_server_port = status.port;
       }
     } catch {
       // 查询失败不影响其他功能
@@ -101,8 +104,12 @@ async function handleWebServerToggle(enabled: boolean) {
   try {
     await setConfig("web_server_enabled", String(enabled));
     if (enabled) {
-      const port = await invokeWithTimeout<number>("web_server_start", undefined, 5_000);
-      message.success(`Web 服务器已启动，端口: ${port}`);
+      const status = await invokeWithTimeout<{ running: boolean; port: number; dist_dir?: string }>(
+        "web_server_start",
+        { port: config.value.web_server_port || 0 },
+        5_000,
+      );
+      message.success(`Web 服务器已启动，端口: ${status.port}`);
     } else {
       await invokeWithTimeout("web_server_stop", undefined, 3_000);
       message.success("Web 服务器已停止");
@@ -159,7 +166,11 @@ async function clearDistDir() {
 }
 
 async function restartWebServer() {
-  return await invokeWithTimeout<number>("web_server_start", undefined, 5_000);
+  return await invokeWithTimeout<{ running: boolean; port: number; dist_dir?: string }>(
+    "web_server_start",
+    { port: config.value.web_server_port || 0 },
+    5_000,
+  );
 }
 
 async function openInBrowser() {
@@ -196,8 +207,12 @@ async function saveWebServerPort() {
     if (config.value.web_server_enabled) {
       await invokeWithTimeout("web_server_stop", undefined, 3_000);
       await new Promise((resolve) => setTimeout(resolve, 400));
-      const newPort = await invokeWithTimeout<number>("web_server_start", undefined, 5_000);
-      message.success(`端口已更新并重启，新端口: ${newPort}`);
+      const newStatus = await invokeWithTimeout<{
+        running: boolean;
+        port: number;
+        dist_dir?: string;
+      }>("web_server_start", undefined, 5_000);
+      message.success(`端口已更新并重启，新端口: ${newStatus.port}`);
     } else {
       message.success("端口已保存");
     }

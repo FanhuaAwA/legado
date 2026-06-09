@@ -65,8 +65,15 @@ pub fn web_server_pick_dist_dir(app: tauri::AppHandle) -> CommandResult<Option<S
     Ok(None)
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebServerStartRequest {
+    pub port: Option<u16>,
+}
+
 #[tauri::command]
-pub fn web_server_start() -> CommandResult<WebServerStatus> {
+pub fn web_server_start(request: Option<WebServerStartRequest>) -> CommandResult<WebServerStatus> {
+    let req_port = request.and_then(|r| r.port).unwrap_or(0);
     let mut guard = WEB_SERVER.lock().map_err(|e| CommandError {
         code: "IO_ERROR".into(), message: e.to_string(), detail: None, retryable: false,
     })?;
@@ -76,7 +83,8 @@ pub fn web_server_start() -> CommandResult<WebServerStatus> {
         return Ok(WebServerStatus { running: true, port: *port, dist_dir: dir });
     }
     let dist = DIST_DIR.lock().ok().and_then(|d| d.clone()).unwrap_or_else(|| ".".to_string());
-    match std::net::TcpListener::bind("127.0.0.1:0") {
+    let bind_addr = if req_port > 0 { format!("0.0.0.0:{req_port}") } else { "127.0.0.1:0".into() };
+    match std::net::TcpListener::bind(&bind_addr) {
         Ok(listener) => {
             let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
             let serve_dir = dist.clone();
@@ -161,14 +169,8 @@ fn tiny_http(mut stream: std::net::TcpStream, serve_dir: &str) -> std::io::Resul
 
 // ── 局域网信息 ────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize)]
-pub struct LocalIp {
-    pub name: String,
-    pub address: String,
-}
-
 #[tauri::command]
-pub fn get_local_ips() -> CommandResult<Vec<LocalIp>> {
+pub fn get_local_ips() -> CommandResult<Vec<String>> {
     let mut ips = Vec::new();
     // Try PowerShell on Windows
     #[cfg(target_os = "windows")]
@@ -181,8 +183,8 @@ pub fn get_local_ips() -> CommandResult<Vec<LocalIp>> {
             if output.status.success() {
                 for line in String::from_utf8_lossy(&output.stdout).lines() {
                     let line = line.trim();
-                    if let Some((name, addr)) = line.split_once('|') {
-                        ips.push(LocalIp { name: name.to_string(), address: addr.to_string() });
+                    if let Some((_name, addr)) = line.split_once('|') {
+                        ips.push(addr.to_string());
                     }
                 }
             }
@@ -193,12 +195,12 @@ pub fn get_local_ips() -> CommandResult<Vec<LocalIp>> {
         // Fallback: use hostname
         if let Ok(host) = std::process::Command::new("hostname").arg("-I").output() {
             for addr in String::from_utf8_lossy(&host.stdout).split_whitespace() {
-                ips.push(LocalIp { name: "eth0".into(), address: addr.to_string() });
+                ips.push(addr.to_string());
             }
         }
     }
     if ips.is_empty() {
-        ips.push(LocalIp { name: "localhost".into(), address: "127.0.0.1".into() });
+        ips.push("127.0.0.1".to_string());
     }
     Ok(ips)
 }
