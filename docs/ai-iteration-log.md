@@ -412,3 +412,37 @@ cargo test --workspace
 **不得重复做的事**：
 
 - 不要再改动 `booksource_eval`（已实现 sandbox 评估）
+
+---
+
+## 记录标题：2026-06-09 Iteration 12
+
+**本轮目标**：GitHub 推送 + 结构化 Logger + 平台构建复核
+
+**修改文件**：
+
+- `.gitignore` — 新增 `src-tauri/gen/android/**/build/` 排除
+- `src/utils/logger.ts` — 新建分级结构化 logger，通过 `frontend_log` 接入 Rust tracing
+- git 初始化 + 3 次 commit + push 到 `https://github.com/FanhuaAwA/legado`
+
+**验证命令**：
+
+```powershell
+pnpm lint
+pnpm run build:windows:release
+git push origin master
+```
+
+**通过项**：
+
+- `pnpm lint`：72 warnings, 0 errors
+- `pnpm run build:windows:release`：PASS（构建结果\windows\legado-tauri.exe, 19MB）
+- GitHub push：818017a
+
+**下轮第一件事**：
+按第 26.6 节完善阅读器/书架体验——前端 UI polish。先阅读 `src/views/BookshelfView.vue` 和 `src/views/SearchView.vue` 了解当前状态，再评估需要改进的 UX 点。
+
+**不得重复做的事**：
+
+- 不要再改 `.gitignore`（构建产物排除已配置）
+- 不要再创建 `logger.ts`（已创建）
