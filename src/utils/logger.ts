@@ -16,12 +16,6 @@
 
 type LogLevel = "error" | "warn" | "info" | "debug" | "success";
 
-interface LogEntry {
-  zone: string;
-  message: string;
-  data?: unknown;
-}
-
 async function sendToRust(
   level: LogLevel,
   zone: string,
