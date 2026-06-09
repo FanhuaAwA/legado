@@ -507,24 +507,26 @@ onMounted(async () => {
       <n-input v-model:value="searchPopupKw" placeholder="搜索书名或作者..." clearable autofocus />
       <div class="bs-search-results">
         <template v-if="searchPopupKw.trim()">
-          <div
-            v-for="book in sortedBooks
-              .filter(
-                (b) =>
-                  b.name.toLowerCase().includes(searchPopupKw.trim().toLowerCase()) ||
-                  b.author.toLowerCase().includes(searchPopupKw.trim().toLowerCase()),
-              )
-              .slice(0, 30)"
-            :key="book.id"
-            class="bs-search-item"
-            role="button"
-            tabindex="0"
-            @click="openSearchResult(book)"
-            @keydown.enter.prevent="openSearchResult(book)"
-          >
-            <span class="bs-search-item__name">{{ book.name || "未知书名" }}</span>
-            <span class="bs-search-item__author">{{ book.author || "佚名" }}</span>
-          </div>
+          <TransitionGroup name="bs-sr" tag="div" class="bs-search-list">
+            <div
+              v-for="book in sortedBooks
+                .filter(
+                  (b) =>
+                    b.name.toLowerCase().includes(searchPopupKw.trim().toLowerCase()) ||
+                    b.author.toLowerCase().includes(searchPopupKw.trim().toLowerCase()),
+                )
+                .slice(0, 30)"
+              :key="book.id"
+              class="bs-search-item"
+              role="button"
+              tabindex="0"
+              @click="openSearchResult(book)"
+              @keydown.enter.prevent="openSearchResult(book)"
+            >
+              <span class="bs-search-item__name">{{ book.name || "未知书名" }}</span>
+              <span class="bs-search-item__author">{{ book.author || "佚名" }}</span>
+            </div>
+          </TransitionGroup>
           <div
             v-if="
               !sortedBooks.filter(
@@ -705,6 +707,33 @@ onMounted(async () => {
   margin-top: 12px;
   max-height: 55vh;
   overflow-y: auto;
+}
+
+.bs-search-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.bs-sr-enter-active {
+  transition:
+    opacity 0.22s ease,
+    transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.bs-sr-leave-active {
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+.bs-sr-enter-from {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.97);
+}
+.bs-sr-leave-to {
+  opacity: 0;
+  transform: translateX(-8px);
+}
+.bs-sr-move {
+  transition: transform 0.2s ease;
 }
 
 .bs-search-item {

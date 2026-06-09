@@ -1,7 +1,6 @@
 <!-- ReaderVideoSurface — 阅读器视频承载层；当前在未开放播放器时显示解锁提示。 -->
 <script setup lang="ts">
-import { Lock } from "lucide-vue-next";
-import { useMessage } from "naive-ui";
+import { Lock, X } from "lucide-vue-next";
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import type { ChapterGroup } from "@/stores";
 // TODO: 视频功能暂时屏蔽，待启用时取消下方注释并删除临时屏蔽逻辑
@@ -18,7 +17,6 @@ defineProps<{
 }>();
 
 const readerActionsStore = useReaderActionsStore();
-const message = useMessage();
 
 // TODO: 待启用时恢复下方 ref 与 store 绑定
 // const readerSessionStore = useReaderSessionStore();
@@ -47,22 +45,19 @@ function getDuration() {
 
 defineExpose({ getCurrentTime, getDuration });
 
-let closeTimer: ReturnType<typeof setTimeout> | null = null;
+const dismissed = ref(false);
+let dismissTimer: ReturnType<typeof setTimeout> | null = null;
 
 onMounted(() => {
-  message.warning("需要解锁完全体模式后才能使用音频/视频播放", {
-    duration: 2500,
-    keepAliveOnHover: false,
-  });
-  closeTimer = setTimeout(() => {
-    readerActionsStore.close();
-  }, 2500);
+  dismissTimer = setTimeout(() => {
+    dismissed.value = true;
+  }, 4500);
 });
 
 onBeforeUnmount(() => {
-  if (closeTimer !== null) {
-    clearTimeout(closeTimer);
-    closeTimer = null;
+  if (dismissTimer !== null) {
+    clearTimeout(dismissTimer);
+    dismissTimer = null;
   }
 });
 </script>
@@ -93,10 +88,24 @@ onBeforeUnmount(() => {
     @ended="readerActionsStore.onVideoEnded"
     @retry="readerActionsStore.retryCurrentChapter"
   /> -->
-  <div class="video-unavailable">
-    <Lock :size="24" :stroke-width="2.4" />
-    <span class="video-unavailable__text">需要解锁完全体模式后才能使用音频/视频播放</span>
-  </div>
+  <Transition name="video-lock-fade">
+    <div v-if="!dismissed" class="video-unavailable">
+      <div class="video-unavailable__card">
+        <Lock class="video-unavailable__icon" :size="28" :stroke-width="2" />
+        <div class="video-unavailable__body">
+          <span class="video-unavailable__title">功能暂未开放</span>
+          <span class="video-unavailable__desc">需要解锁完全体模式后才能使用音频/视频播放</span>
+        </div>
+        <button
+          class="video-unavailable__close"
+          aria-label="关闭"
+          @click="readerActionsStore.close()"
+        >
+          <X :size="16" />
+        </button>
+      </div>
+    </div>
+  </Transition>
 </template>
 
 <style scoped>
@@ -104,11 +113,76 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
   width: 100%;
   height: 100%;
-  background: #000;
-  color: rgba(255, 255, 255, 0.6);
-  font-size: 15px;
+  background: radial-gradient(ellipse at center, #1a1a2e 0%, #0a0a0f 100%);
+}
+
+.video-unavailable__card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 24px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  max-width: 420px;
+}
+
+.video-unavailable__icon {
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.video-unavailable__body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.video-unavailable__title {
+  font-size: var(--fs-14);
+  font-weight: var(--fw-semibold);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.video-unavailable__desc {
+  font-size: var(--fs-13);
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.video-unavailable__close {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: none;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .video-unavailable__close:hover {
+    background: rgba(255, 255, 255, 0.16);
+    color: rgba(255, 255, 255, 0.85);
+  }
+}
+
+.video-lock-fade-enter-active {
+  transition: opacity 0.35s ease;
+}
+.video-lock-fade-leave-active {
+  transition: opacity 0.5s ease;
+}
+.video-lock-fade-enter-from,
+.video-lock-fade-leave-to {
+  opacity: 0;
 }
 </style>

@@ -212,12 +212,5 @@ pub async fn app_config_reset(
 
 #[tauri::command]
 pub async fn storage_debug_dump(state: State<'_, AppState>) -> CommandResult<Value> {
-    Ok(serde_json::json!({
-        "frontend": {},
-        "scriptJson": {},
-        "scriptBytes": {},
-        "clientStates": {},
-        "appStatePath": null,
-        "bookshelfPath": state.core.reader_dir().join("data").join("local").join("shelf.json").to_string_lossy(),
-    }))
+    state.core.debug_dump().await.map_err(map_err)
 }

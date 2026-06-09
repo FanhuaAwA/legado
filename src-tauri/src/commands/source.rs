@@ -291,14 +291,29 @@ pub async fn booksource_chapter_list(
     state: State<'_, AppState>,
     file_name: String,
     book_url: String,
-    _task_id: Option<String>,
+    task_id: Option<String>,
     source_dir: Option<String>,
 ) -> CommandResult<Vec<ChapterItem>> {
-    state
+    let token = task_id.as_deref().map(|tid| state.tasks.register(tid));
+    if let Some(ref t) = token {
+        if t.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(CommandError {
+                code: "CANCELLED".to_string(),
+                message: "任务已取消".to_string(),
+                detail: None,
+                retryable: false,
+            });
+        }
+    }
+    let result = state
         .core
         .chapter_list(&file_name, &book_url, source_dir.as_deref())
         .await
-        .map_err(map_err)
+        .map_err(map_err);
+    if let Some(tid) = task_id.as_deref() {
+        state.tasks.remove(tid);
+    }
+    result
 }
 
 #[tauri::command]
@@ -308,17 +323,43 @@ pub async fn booksource_chapter_content(
     chapter_url: String,
     source_dir: Option<String>,
     _category_params: Option<Value>,
+    task_id: Option<String>,
 ) -> CommandResult<String> {
-    state
+    let token = task_id.as_deref().map(|tid| state.tasks.register(tid));
+    if let Some(ref t) = token {
+        if t.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(CommandError {
+                code: "CANCELLED".to_string(),
+                message: "任务已取消".to_string(),
+                detail: None,
+                retryable: false,
+            });
+        }
+    }
+    let result = state
         .core
         .chapter_content(&file_name, &chapter_url, source_dir.as_deref())
         .await
-        .map_err(map_err)
+        .map_err(map_err);
+    if let Some(tid) = task_id.as_deref() {
+        state.tasks.remove(tid);
+    }
+    result
 }
 
 #[tauri::command]
-pub async fn booksource_purchase_chapter() -> CommandResult<Value> {
-    Ok(serde_json::json!({ "ok": true, "purchased": true }))
+pub async fn booksource_purchase_chapter(
+    state: State<'_, AppState>,
+    file_name: String,
+    chapter_url: String,
+    chapter: Option<Value>,
+    source_dir: Option<String>,
+) -> CommandResult<Value> {
+    state
+        .core
+        .purchase_chapter(&file_name, &chapter_url, chapter.as_ref(), source_dir.as_deref())
+        .await
+        .map_err(map_err)
 }
 
 #[tauri::command]
@@ -338,13 +379,18 @@ pub async fn booksource_explore(
 }
 
 #[tauri::command]
-pub async fn booksource_call_fn() -> CommandResult<Value> {
-    Err(CommandError {
-        code: "UNSUPPORTED".to_string(),
-        message: "Route B 原生 Legado 运行时不支持 JS 自定义函数调用".to_string(),
-        detail: None,
-        retryable: false,
-    })
+pub async fn booksource_call_fn(
+    state: State<'_, AppState>,
+    file_name: String,
+    fn_name: String,
+    args: Vec<Value>,
+    source_dir: Option<String>,
+) -> CommandResult<Value> {
+    state
+        .core
+        .source_call_fn(&file_name, &fn_name, args, source_dir.as_deref())
+        .await
+        .map_err(map_err)
 }
 
 #[tauri::command]
@@ -369,10 +415,91 @@ pub async fn booksource_run_tests(
     step_filter: Option<String>,
     source_dir: Option<String>,
 ) -> CommandResult<Value> {
-    let _ = (timeout_secs, step_filter);
     state
         .core
-        .run_source_tests(&file_name, source_dir.as_deref())
+        .run_source_tests(&file_name, source_dir.as_deref(), step_filter.as_deref(), timeout_secs)
         .await
         .map_err(map_err)
+}
+
+#[tauri::command]
+pub fn booksource_resolve_path(
+    state: State<'_, AppState>,
+    file_name: String,
+    source_dir: Option<String>,
+) -> CommandResult<String> {
+    state
+        .core
+        .resolve_source_path(&file_name, source_dir.as_deref())
+        .map(|p| p.to_string_lossy().to_string())
+        .map_err(map_err)
+}
+
+#[tauri::command]
+pub fn booksource_open_in_vscode(
+    state: State<'_, AppState>,
+    file_name: String,
+    source_dir: Option<String>,
+) -> CommandResult<()> {
+    let path = state
+        .core
+        .resolve_source_path(&file_name, source_dir.as_deref())
+        .map_err(map_err)?;
+    tauri_plugin_opener::open_path(path.to_string_lossy().to_string(), Some("code"))
+        .or_else(|_| {
+            tauri_plugin_opener::open_path(path.to_string_lossy().to_string(), None::<&str>)
+        })
+        .map_err(|err| CommandError {
+            code: "IO_ERROR".to_string(),
+            message: err.to_string(),
+            detail: Some(format!("{err:?}")),
+            retryable: false,
+        })
+}
+
+#[tauri::command]
+pub async fn booksource_delete_draft(
+    state: State<'_, AppState>,
+    file_name: String,
+) -> CommandResult<()> {
+    state.core.delete_draft(&file_name).await.map_err(map_err)
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HttpProxyRequest {
+    pub url: String,
+    pub method: String,
+    pub body: Option<String>,
+    pub headers: Option<Vec<String>>,
+}
+
+#[tauri::command]
+pub async fn booksource_http_proxy(
+    state: State<'_, AppState>,
+    request: HttpProxyRequest,
+) -> CommandResult<String> {
+    // Security: only allow http/https
+    if !request.url.starts_with("http://") && !request.url.starts_with("https://") {
+        return Err(CommandError {
+            code: "BLOCKED".to_string(),
+            message: "仅支持 http/https 协议".to_string(),
+            detail: None,
+            retryable: false,
+        });
+    }
+    // Security: block common internal addresses
+    let lower = request.url.to_lowercase();
+    if lower.contains("127.0.0.1") || lower.contains("localhost") || lower.contains("0.0.0.0") || lower.contains("::1") || lower.contains("169.254.") || lower.contains("10.") || lower.contains("172.16.") || lower.contains("192.168.") {
+        return Err(CommandError {
+            code: "BLOCKED".to_string(),
+            message: "禁止访问内网地址".to_string(),
+            detail: None,
+            retryable: false,
+        });
+    }
+    let body = request.body.as_deref();
+    let headers: Option<Vec<String>> = request.headers;
+    let headers_ref: Option<&[String]> = headers.as_deref();
+    state.core.http_proxy_request(&request.url, &request.method, body, headers_ref).await.map_err(map_err)
 }

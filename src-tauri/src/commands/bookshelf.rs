@@ -219,7 +219,6 @@ pub struct PrefetchPayload {
     pub id: String,
     pub file_name: String,
     pub source_dir: Option<String>,
-    #[allow(dead_code)]
     pub task_id: String,
 }
 
@@ -229,11 +228,14 @@ pub async fn bookshelf_prefetch_chapters(
     request: PrefetchRequest,
 ) -> CommandResult<i32> {
     let p = &request.payload;
-    state
+    let cancelled = state.tasks.register(&p.task_id);
+    let result = state
         .core
-        .prefetch_chapters(&p.id, &p.file_name, p.source_dir.as_deref())
+        .prefetch_chapters(&p.id, &p.file_name, p.source_dir.as_deref(), Some(cancelled))
         .await
-        .map_err(map_err)
+        .map_err(map_err);
+    state.tasks.remove(&p.task_id);
+    result
 }
 
 #[derive(serde::Deserialize)]
@@ -344,5 +346,69 @@ pub async fn export_save_file(
             Ok(Some(path_str))
         }
         None => Ok(None),
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportBookRequest {
+    pub id: String,
+    pub format: String,
+    pub save_path: String,
+}
+
+#[tauri::command]
+pub async fn bookshelf_export_book(
+    state: State<'_, AppState>,
+    request: ExportBookRequest,
+) -> CommandResult<()> {
+    state
+        .core
+        .export_book(&request.id, &request.format, &request.save_path)
+        .await
+        .map_err(map_err)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportBookDataRequest {
+    pub id: String,
+    pub format: String,
+}
+
+#[tauri::command]
+pub async fn bookshelf_export_book_data(
+    state: State<'_, AppState>,
+    request: ExportBookDataRequest,
+) -> CommandResult<serde_json::Value> {
+    let data = state
+        .core
+        .export_book_data(&request.id, &request.format)
+        .await
+        .map_err(map_err)?;
+    Ok(data)
+}
+
+#[tauri::command]
+pub fn bookshelf_reveal_export_file(path: String) -> CommandResult<()> {
+    let p = std::path::Path::new(&path);
+    if let Some(parent) = p.parent() {
+        tauri_plugin_opener::open_path(
+            parent.to_string_lossy().to_string(),
+            None::<&str>,
+        )
+        .map_err(|err| CommandError {
+            code: "IO_ERROR".to_string(),
+            message: err.to_string(),
+            detail: Some(format!("{err:?}")),
+            retryable: false,
+        })
+    } else {
+        Err(CommandError {
+            code: "BAD_REQUEST".to_string(),
+            message: "无效的文件路径".to_string(),
+            detail: None,
+            retryable: false,
+        })
     }
 }

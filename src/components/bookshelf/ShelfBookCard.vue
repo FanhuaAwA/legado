@@ -47,7 +47,10 @@ function statusLabel(book: ShelfBook): string {
   if (book.totalChapters <= 0) {
     return "阅读中";
   }
-  return "已读完";
+  if (book.readChapterIndex >= book.totalChapters - 1) {
+    return "已读完";
+  }
+  return "阅读中";
 }
 
 function unreadClass(book: ShelfBook): Record<string, boolean> {

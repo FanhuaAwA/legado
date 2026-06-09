@@ -712,7 +712,7 @@ onUnmounted(() => {
       </div>
 
       <!-- 翻页栏 -->
-      <div v-if="hasSearched && !searchRunning" class="sv-pagination">
+      <div v-if="hasSearched && !searchRunning && totalRawResultCount > 0" class="sv-pagination">
         <button
           class="sv-page-btn"
           :disabled="searchPage === 1"

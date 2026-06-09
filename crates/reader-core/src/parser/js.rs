@@ -601,13 +601,114 @@ fn is_safe_js_identifier(value: &str) -> bool {
 fn eval_script<'js>(ctx: rquickjs::Ctx<'js>, script: &str) -> anyhow::Result<Value<'js>> {
     match ctx.eval(script) {
         Ok(v) => Ok(v),
-        Err(e) => {
-            if let Some(exception) = ctx.catch().into_exception() {
-                return Err(anyhow::anyhow!("JS Exception: {:?}", exception));
+        Err(first_err) => {
+            // rquickjs eval runs in strict mode, but Legado book source scripts
+            // often use undeclared global variables (Rhino allows this).
+            // Collect exception info, then retry with var declarations prepended.
+            let first_msg = ctx
+                .catch()
+                .into_exception()
+                .and_then(|ex| ex.message())
+                .unwrap_or_else(|| first_err.to_string());
+
+            let fixed = prepend_undeclared_vars(script);
+            if fixed != script {
+                match ctx.eval(&*fixed) {
+                    Ok(v) => return Ok(v),
+                    Err(_) => {} // fall through
+                }
             }
-            Err(e.into())
+            Err(anyhow::anyhow!("JS Exception: {}", first_msg))
         }
     }
+}
+
+/// Detect undeclared top-level variable assignments (Legado convention)
+/// and prepend `var` declarations so they work in strict-mode rquickjs.
+fn prepend_undeclared_vars(script: &str) -> String {
+    let mut names = std::collections::BTreeSet::new();
+    for line in script.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("//") {
+            continue;
+        }
+        // Match: identifier =  (but not var/let/const identifier =)
+        if let Some(rest) = trimmed
+            .strip_prefix("var ")
+            .or_else(|| trimmed.strip_prefix("let "))
+            .or_else(|| trimmed.strip_prefix("const "))
+        {
+            // Extract the declared name to avoid double-declaring
+            if let Some(_name) = rest.split(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '$').next() {
+                // Already declared, don't add
+                continue;
+            }
+        }
+        // Check for bare identifier assignment at line start
+        if let Some(eq_pos) = trimmed.find('=') {
+            let candidate = trimmed[..eq_pos].trim();
+            if is_valid_identifier(candidate) && !is_keyword(candidate) {
+                names.insert(candidate.to_string());
+            }
+        }
+    }
+    if names.is_empty() {
+        return script.to_string();
+    }
+    let decls: Vec<String> = names.into_iter().collect();
+    format!("var {};\n{}", decls.join(", "), script)
+}
+
+fn is_valid_identifier(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' || c == '$' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+}
+
+fn is_keyword(s: &str) -> bool {
+    matches!(
+        s,
+        "if" | "else"
+            | "for"
+            | "while"
+            | "do"
+            | "switch"
+            | "case"
+            | "break"
+            | "continue"
+            | "return"
+            | "throw"
+            | "try"
+            | "catch"
+            | "finally"
+            | "new"
+            | "delete"
+            | "typeof"
+            | "instanceof"
+            | "in"
+            | "of"
+            | "this"
+            | "super"
+            | "class"
+            | "function"
+            | "var"
+            | "let"
+            | "const"
+            | "import"
+            | "export"
+            | "default"
+            | "void"
+            | "yield"
+            | "async"
+            | "await"
+            | "true"
+            | "false"
+            | "null"
+            | "undefined"
+    )
 }
 
 fn active_js_lib_script() -> anyhow::Result<String> {

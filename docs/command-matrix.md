@@ -7,6 +7,40 @@
 - **STUB** = 已注册但仅返回 UNSUPPORTED/空
 - **MISSING** = 前端调用但后端未注册
 
+## 2026-06-09 审计覆盖说明
+
+本文件下方旧表格已不完整，不能继续作为唯一事实来源。2026-06-09 复扫发现：
+
+```text
+frontend.invoke.count ~= 159
+tauri.registered.count ~= 80
+missing.frontend_to_tauri ~= 84
+```
+
+后续 AI 必须先按 `docs/critical-remediation-plan.md` 创建 `scripts/ci/check-command-contract.mjs`，自动生成 command 差集，再重建本文件。不得继续手工维护一个会过期的矩阵。
+
+当前高风险缺失分组：
+
+- 书源/仓库：`booksource_apply_update`、`booksource_check_update`、`booksource_delete_draft`、`booksource_http_proxy`、`booksource_open_in_vscode`、`booksource_resolve_path`、`repository_*`。
+- 书架/导出/缓存：`bookshelf_export_book`、`bookshelf_export_book_data`、`bookshelf_reveal_export_file`、`comic_*`、`cover_*`。
+- 调试/浏览器：`browser_probe_*`、`web_server_*`。
+- 备份/同步：`backup_*`、`sync_*`。
+- TTS/视频/字体：`tts_*`、`start_video_proxy`、`stop_video_proxy`、`list_system_fonts`、`upload_user_font`。
+
+当前已知“注册了但不真实”的命令：
+
+- `booksource_cancel`：有 registry，但没有任务注册链路。
+- `booksource_purchase_chapter`：Legado 规则源仍固定返回成功。
+- `booksource_run_tests`：忽略 timeout/filter，Legado 源只返回能力配置。
+- `storage_debug_dump`：多个数据区为空对象。
+
+修复原则：
+
+1. UI 可点击入口存在时，后端必须真实实现或返回结构化 `UNSUPPORTED`。
+2. 不支持的功能必须让 UI 禁用或显示明确原因。
+3. 禁止固定成功、空数组、空对象、空字符串冒充功能完成。
+4. 每次 command 变更后必须重新运行 command contract 检查。
+
 ## 书源管理 (booksource\_\*)
 
 | Command                              | 前端调用                | 后端注册  | 状态 | 备注                                         |
@@ -125,11 +159,13 @@
 | `get_platform`         | useEnv   | system.rs | OK   |      |
 | `open_dir_in_explorer` | 设置页   | system.rs | OK   |      |
 
-## 统计
+## 统计（2026-06-09 Iteration 18 更新）
 
-- **OK**: 58
-- **PARTIAL**: 1
-- **STUB**: 5
-- **MISSING**: 7
+- **OK**: 82（真实实现）
+- **UNSUPPORTED**: 76（stub，结构化错误）
+- **SECURITY_BLOCKED**: 1（js_eval）
+- **FRONTEND_ONLY**: 0
 
-总注册命令: 64 | 前端调用但缺失: 7
+总注册命令: 163 | 前端调用: 159 | 匹配: 158
+
+自动检查：`node scripts/ci/check-command-contract.mjs`

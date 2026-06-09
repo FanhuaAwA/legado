@@ -26,23 +26,23 @@
 
 ### 书旗小说
 
-| 能力     | 状态                         | 备注                                                           |
-| -------- | ---------------------------- | -------------------------------------------------------------- |
-| 导入     | PASS（2026-06-09）           | source_compat_import 测试通过                                  |
-| search   | PASS（2026-06-09 实网验证）  | 搜索"系统"成功返回书籍列表                                     |
-| bookInfo | CONFIGURED_EMPTY             | ruleBookInfo={}，返回默认空字段（非 bug）                      |
-| toc      | FAILED（代理 API 变更）      | 代理 jh.52dns.cc detail.php 返回 HTML 而非 JSON，ruleToc 失效 |
-| content  | BLOCKED（同 toc）            | 无可用章节，toc 不通则 content 不可达                          |
+| 能力     | 状态                                    | 备注                                                                                                                      |
+| -------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| 导入     | PASS（2026-06-09）                      | source_compat_import 测试通过                                                                                             |
+| search   | PASS（2026-06-09 Iteration 18 重验）    | 搜索"系统"成功返回书籍列表                                                                                                |
+| bookInfo | CONFIGURED_EMPTY                        | ruleBookInfo={}，返回默认空字段（非 bug）                                                                                 |
+| toc      | PASS（2026-06-09 Iteration 18 重验）    | 4785 章！JS strict-mode 修复 + base64 URL 解码均验证通过                                                                  |
+| content  | PARTIAL（2026-06-09 Iteration 18 重验） | URL 解码正确，请求返回 200，但 ruleContent 规则提取不到正文（代理 API 响应格式可能已变化，需更新书源 JSON ruleContent）。 |
 
 ### 七猫小说
 
-| 能力     | 状态                        | 备注                          |
-| -------- | --------------------------- | ----------------------------- |
-| 导入     | PASS（2026-06-09）          | source_compat_import 测试通过 |
-| search   | PASS（2026-06-09 实网验证） | 搜索"测试"成功，JS API 链路通 |
-| bookInfo | BLOCKED（JS API）           | 依赖 java.ajax                |
-| toc      | BLOCKED（JS API）           | 依赖 java.ajax                |
-| content  | BLOCKED（JS API）           | 依赖 java.ajax、svg/base64    |
+| 能力     | 状态                                  | 备注                                                                                                          |
+| -------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| 导入     | PASS（2026-06-09）                    | source_compat_import 测试通过                                                                                 |
+| search   | PASS（2026-06-09 实网验证）           | 搜索"凡人"成功返回书籍列表，JS API 链路通                                                                     |
+| bookInfo | BLOCKED（JS strict mode，2026-06-09） | detail.php 返回正确 JSON（参数需 qm_id=），但 ruleToc JS 受 strict mode 影响。Iteration 16 已修复 eval_script |
+| toc      | BLOCKED（JS strict mode）             | 同上；依赖 bookInfo 的 detail 拉取，detail API 本身正常                                                       |
+| content  | BLOCKED（同 toc）                     | toc 不通则 content 不可达                                                                                     |
 
 ### 番茄小说
 
@@ -85,4 +85,4 @@
 
 ---
 
-最后更新：2026-06-09（Iteration 13：全链路验证 — 书旗 search PASS, toc/content BLOCKED by 代理 API 变更）
+最后更新：2026-06-09（Iteration 16：更正诊断 — 代理 API 正常，根因是 rquickjs strict mode 拒绝未声明变量。eval_script 已添加自动 var 声明回退。）

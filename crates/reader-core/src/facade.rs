@@ -11,6 +11,7 @@ use crate::model::book::Book;
 use crate::model::book_chapter::BookChapter;
 use crate::model::book_source::{book_source_from_value, BookSource};
 use crate::model::search::SearchBook;
+use crate::parser::js::JsSourceArg;
 use crate::parser::rule_engine::RuleEngine;
 use crate::service::book_service::BookService;
 use crate::service::book_source_service::BookSourceService;
@@ -321,89 +322,303 @@ impl ReaderCore {
         &self,
         file_name: &str,
         source_dir: Option<&str>,
+        step_filter: Option<&str>,
+        timeout_secs: Option<i32>,
     ) -> Result<Value, ReaderCoreError> {
+        let _ = timeout_secs;
         #[derive(Serialize)]
         struct TestStep {
             name: String,
             status: String,
+            elapsed_ms: u64,
             error: Option<String>,
+            sample_count: Option<usize>,
             output_preview: Option<String>,
         }
+
+        let enabled: Vec<String> = step_filter
+            .map(|f| f.split(',').map(|s| s.trim().to_string()).collect())
+            .unwrap_or_else(|| {
+                vec![
+                    "search".into(),
+                    "bookInfo".into(),
+                    "toc".into(),
+                    "content".into(),
+                    "explore".into(),
+                ]
+            });
 
         if self.is_legado_file(file_name, source_dir) {
             let source = self.require_legado_source(file_name).await?;
             let mut steps = Vec::new();
-            let caps = [
-                ("search", source.rule_search.is_some()),
-                ("bookInfo", source.rule_book_info.is_some()),
-                ("toc", source.rule_toc.is_some()),
-                ("content", source.rule_content.is_some()),
-                ("explore", source.rule_explore.is_some()),
-            ];
-            for (name, available) in caps {
-                steps.push(TestStep {
-                    name: name.to_string(),
-                    status: if available { "available".to_string() } else { "not_configured".to_string() },
-                    error: None,
-                    output_preview: None,
-                });
+
+            for step_name in &enabled {
+                let start = std::time::Instant::now();
+                match step_name.as_str() {
+                    "search" => {
+                        if source.rule_search.is_none() {
+                            steps.push(TestStep {
+                                name: "search".into(), status: "skipped".into(),
+                                elapsed_ms: 0, error: Some("ruleSearch 未配置".into()),
+                                sample_count: None, output_preview: None,
+                            });
+                            continue;
+                        }
+                        match self.search(file_name, "测试", 1, source_dir).await {
+                            Ok(items) => {
+                                let preview = items.first().map(|i| format!("{} - {}", i.name, i.author));
+                                steps.push(TestStep {
+                                    name: "search".into(), status: "passed".into(),
+                                    elapsed_ms: start.elapsed().as_millis() as u64,
+                                    error: None, sample_count: Some(items.len()),
+                                    output_preview: preview,
+                                });
+                            }
+                            Err(e) => {
+                                steps.push(TestStep {
+                                    name: "search".into(), status: "failed".into(),
+                                    elapsed_ms: start.elapsed().as_millis() as u64,
+                                    error: Some(e.to_string()), sample_count: None,
+                                    output_preview: None,
+                                });
+                            }
+                        }
+                    }
+                    "bookInfo" => {
+                        if source.rule_book_info.is_none() {
+                            steps.push(TestStep {
+                                name: "bookInfo".into(), status: "skipped".into(),
+                                elapsed_ms: 0, error: Some("ruleBookInfo 未配置".into()),
+                                sample_count: None, output_preview: None,
+                            });
+                            continue;
+                        }
+                        let dummy_url = if source.book_source_url.is_empty() {
+                            "https://example.com".to_string()
+                        } else {
+                            source.book_source_url.clone()
+                        };
+                        match self.book_info(file_name, &dummy_url, source_dir).await {
+                            Ok(detail) => {
+                                steps.push(TestStep {
+                                    name: "bookInfo".into(), status: "passed".into(),
+                                    elapsed_ms: start.elapsed().as_millis() as u64,
+                                    error: None, sample_count: None,
+                                    output_preview: Some(format!("{} - {}", detail.name, detail.author)),
+                                });
+                            }
+                            Err(e) => {
+                                steps.push(TestStep {
+                                    name: "bookInfo".into(), status: "failed".into(),
+                                    elapsed_ms: start.elapsed().as_millis() as u64,
+                                    error: Some(e.to_string()), sample_count: None,
+                                    output_preview: None,
+                                });
+                            }
+                        }
+                    }
+                    "toc" => {
+                        if source.rule_toc.is_none() {
+                            steps.push(TestStep {
+                                name: "toc".into(), status: "skipped".into(),
+                                elapsed_ms: 0, error: Some("ruleToc 未配置".into()),
+                                sample_count: None, output_preview: None,
+                            });
+                            continue;
+                        }
+                        let dummy_url = if source.book_source_url.is_empty() {
+                            "https://example.com".to_string()
+                        } else {
+                            source.book_source_url.clone()
+                        };
+                        match self.chapter_list(file_name, &dummy_url, source_dir).await {
+                            Ok(chapters) => {
+                                let count = chapters.len();
+                                let preview = chapters.first().map(|c| c.name.clone());
+                                steps.push(TestStep {
+                                    name: "toc".into(), status: "passed".into(),
+                                    elapsed_ms: start.elapsed().as_millis() as u64,
+                                    error: None, sample_count: Some(count),
+                                    output_preview: preview,
+                                });
+                            }
+                            Err(e) => {
+                                steps.push(TestStep {
+                                    name: "toc".into(), status: "failed".into(),
+                                    elapsed_ms: start.elapsed().as_millis() as u64,
+                                    error: Some(e.to_string()), sample_count: None,
+                                    output_preview: None,
+                                });
+                            }
+                        }
+                    }
+                    "content" => {
+                        if source.rule_content.is_none() {
+                            steps.push(TestStep {
+                                name: "content".into(), status: "skipped".into(),
+                                elapsed_ms: 0, error: Some("ruleContent 未配置".into()),
+                                sample_count: None, output_preview: None,
+                            });
+                            continue;
+                        }
+                        let dummy_url = if source.book_source_url.is_empty() {
+                            "https://example.com".to_string()
+                        } else {
+                            source.book_source_url.clone()
+                        };
+                        match self.chapter_content(file_name, &dummy_url, source_dir).await {
+                            Ok(text) => {
+                                let trimmed: String = text.chars().take(100).collect();
+                                steps.push(TestStep {
+                                    name: "content".into(), status: "passed".into(),
+                                    elapsed_ms: start.elapsed().as_millis() as u64,
+                                    error: None, sample_count: Some(text.len()),
+                                    output_preview: Some(trimmed),
+                                });
+                            }
+                            Err(e) => {
+                                steps.push(TestStep {
+                                    name: "content".into(), status: "failed".into(),
+                                    elapsed_ms: start.elapsed().as_millis() as u64,
+                                    error: Some(e.to_string()), sample_count: None,
+                                    output_preview: None,
+                                });
+                            }
+                        }
+                    }
+                    "explore" => {
+                        if source.rule_explore.is_none() {
+                            steps.push(TestStep {
+                                name: "explore".into(), status: "skipped".into(),
+                                elapsed_ms: 0, error: Some("ruleExplore 未配置".into()),
+                                sample_count: None, output_preview: None,
+                            });
+                            continue;
+                        }
+                        match self.explore(file_name, 1, "", source_dir).await {
+                            Ok(result) => {
+                                steps.push(TestStep {
+                                    name: "explore".into(), status: "passed".into(),
+                                    elapsed_ms: start.elapsed().as_millis() as u64,
+                                    error: None, sample_count: None,
+                                    output_preview: Some(serde_json::to_string(&result).unwrap_or_default().chars().take(200).collect()),
+                                });
+                            }
+                            Err(e) => {
+                                steps.push(TestStep {
+                                    name: "explore".into(), status: "failed".into(),
+                                    elapsed_ms: start.elapsed().as_millis() as u64,
+                                    error: Some(e.to_string()), sample_count: None,
+                                    output_preview: None,
+                                });
+                            }
+                        }
+                    }
+                    _ => {}
+                }
             }
             return Ok(serde_json::to_value(steps)?);
         }
 
+        // JS 书源测试：使用现有逻辑
         let content = self.read_source(file_name, source_dir).await?;
         let runtime = JsSourceRuntime::new(file_name, content);
-
         let mut steps = Vec::new();
-        let test_ops: &[(&str, fn(&JsSourceRuntime) -> Result<Value, ReaderCoreError>)] = &[
-            ("search", |rt| {
-                let r = rt.search("test", 1)?;
-                Ok(serde_json::to_value(r)?)
-            }),
-            ("bookInfo", |rt| {
-                let r = rt.book_info("https://example.com")?;
-                Ok(serde_json::to_value(r)?)
-            }),
-            ("chapterList", |rt| {
-                let r = rt.chapter_list("https://example.com")?;
-                Ok(serde_json::to_value(r)?)
-            }),
-            ("chapterContent", |rt| {
-                let r = rt.chapter_content("https://example.com")?;
-                Ok(serde_json::to_value(&r)?)
-            }),
-            ("explore", |rt| {
-                let r = rt.explore(1, "")?;
-                Ok(r)
-            }),
-        ];
 
-        for (name, op) in test_ops {
-            match op(&runtime) {
-                Ok(output) => {
-                    let preview = serde_json::to_string(&output)
-                        .unwrap_or_default()
-                        .chars()
-                        .take(200)
-                        .collect::<String>();
-                    steps.push(TestStep {
-                        name: name.to_string(),
-                        status: "passed".to_string(),
-                        error: None,
-                        output_preview: if preview.len() >= 200 { Some(preview + "...") } else { Some(preview) },
-                    });
+        for step_name in &enabled {
+            let start = std::time::Instant::now();
+            match step_name.as_str() {
+                "search" => {
+                    match runtime.search("test", 1) {
+                        Ok(r) => {
+                            let items = serde_json::to_value(r).unwrap_or_default();
+                            let count = items.as_array().map(|a| a.len()).unwrap_or(0);
+                            steps.push(TestStep {
+                                name: "search".into(), status: "passed".into(),
+                                elapsed_ms: start.elapsed().as_millis() as u64,
+                                error: None, sample_count: Some(count),
+                                output_preview: Some(format!("{} results", count)),
+                            });
+                        }
+                        Err(e) => steps.push(TestStep {
+                            name: "search".into(), status: "failed".into(),
+                            elapsed_ms: start.elapsed().as_millis() as u64,
+                            error: Some(e.to_string()), sample_count: None, output_preview: None,
+                        }),
+                    }
                 }
-                Err(err) => {
-                    steps.push(TestStep {
-                        name: name.to_string(),
-                        status: "failed".to_string(),
-                        error: Some(err.to_string()),
-                        output_preview: None,
-                    });
+                "bookInfo" => {
+                    match runtime.book_info("https://example.com") {
+                        Ok(r) => {
+                            let v = serde_json::to_value(r).unwrap_or_default();
+                            steps.push(TestStep {
+                                name: "bookInfo".into(), status: "passed".into(),
+                                elapsed_ms: start.elapsed().as_millis() as u64,
+                                error: None, sample_count: None,
+                                output_preview: Some(serde_json::to_string(&v).unwrap_or_default().chars().take(200).collect()),
+                            });
+                        }
+                        Err(e) => steps.push(TestStep {
+                            name: "bookInfo".into(), status: "failed".into(),
+                            elapsed_ms: start.elapsed().as_millis() as u64,
+                            error: Some(e.to_string()), sample_count: None, output_preview: None,
+                        }),
+                    }
                 }
+                "toc" => {
+                    match runtime.chapter_list("https://example.com") {
+                        Ok(r) => {
+                            let v = serde_json::to_value(r).unwrap_or_default();
+                            let count = v.as_array().map(|a| a.len()).unwrap_or(0);
+                            steps.push(TestStep {
+                                name: "toc".into(), status: "passed".into(),
+                                elapsed_ms: start.elapsed().as_millis() as u64,
+                                error: None, sample_count: Some(count),
+                                output_preview: Some(format!("{} chapters", count)),
+                            });
+                        }
+                        Err(e) => steps.push(TestStep {
+                            name: "toc".into(), status: "failed".into(),
+                            elapsed_ms: start.elapsed().as_millis() as u64,
+                            error: Some(e.to_string()), sample_count: None, output_preview: None,
+                        }),
+                    }
+                }
+                "content" => {
+                    match runtime.chapter_content("https://example.com") {
+                        Ok(r) => {
+                            steps.push(TestStep {
+                                name: "content".into(), status: "passed".into(),
+                                elapsed_ms: start.elapsed().as_millis() as u64,
+                                error: None, sample_count: Some(r.len()),
+                                output_preview: Some(r.chars().take(100).collect()),
+                            });
+                        }
+                        Err(e) => steps.push(TestStep {
+                            name: "content".into(), status: "failed".into(),
+                            elapsed_ms: start.elapsed().as_millis() as u64,
+                            error: Some(e.to_string()), sample_count: None, output_preview: None,
+                        }),
+                    }
+                }
+                "explore" => {
+                    match runtime.explore(1, "") {
+                        Ok(r) => steps.push(TestStep {
+                            name: "explore".into(), status: "passed".into(),
+                            elapsed_ms: start.elapsed().as_millis() as u64,
+                            error: None, sample_count: None,
+                            output_preview: Some(serde_json::to_string(&r).unwrap_or_default().chars().take(200).collect()),
+                        }),
+                        Err(e) => steps.push(TestStep {
+                            name: "explore".into(), status: "failed".into(),
+                            elapsed_ms: start.elapsed().as_millis() as u64,
+                            error: Some(e.to_string()), sample_count: None, output_preview: None,
+                        }),
+                    }
+                }
+                _ => {}
             }
         }
-
         Ok(serde_json::to_value(steps)?)
     }
 
@@ -503,6 +718,45 @@ impl ReaderCore {
             )
             .await
             .map_err(ReaderCoreError::from)
+    }
+
+    pub async fn purchase_chapter(
+        &self,
+        file_name: &str,
+        chapter_url: &str,
+        _chapter: Option<&Value>,
+        source_dir: Option<&str>,
+    ) -> Result<Value, ReaderCoreError> {
+        if !self.is_legado_file(file_name, source_dir) {
+            let runtime = self.require_js_runtime(file_name, source_dir).await?;
+            let chapter_url = chapter_url.to_string();
+            return tokio::task::spawn_blocking(move || {
+                runtime.call_function("purchaseChapter", &[JsSourceArg::String(chapter_url)])
+            })
+            .await
+            .map_err(js_join_error)?;
+        }
+        Ok(json!({ "ok": false, "purchased": false, "unsupported": true, "message": "Legado 规则书源不支持自动购买，请手动处理" }))
+    }
+
+    pub async fn source_call_fn(
+        &self,
+        file_name: &str,
+        fn_name: &str,
+        args: Vec<Value>,
+        source_dir: Option<&str>,
+    ) -> Result<Value, ReaderCoreError> {
+        if !self.is_legado_file(file_name, source_dir) {
+            let runtime = self.require_js_runtime(file_name, source_dir).await?;
+            let fn_name = fn_name.to_string();
+            let js_args: Vec<JsSourceArg> = args.into_iter().map(value_to_js_source_arg).collect();
+            return tokio::task::spawn_blocking(move || runtime.call_function(&fn_name, &js_args))
+                .await
+                .map_err(js_join_error)?;
+        }
+        Err(ReaderCoreError::Message(format!(
+            "Legado 规则书源不支持自定义 JS 函数调用: {fn_name}"
+        )))
     }
 
     pub async fn explore(
@@ -835,10 +1089,16 @@ impl ReaderCore {
         id: &str,
         file_name: &str,
         source_dir: Option<&str>,
+        cancel_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<i32, ReaderCoreError> {
         let chapters = self.shelf_get_chapters(id).await?;
         let mut count = 0;
         for chapter in &chapters {
+            if let Some(ref token) = cancel_token {
+                if token.load(std::sync::atomic::Ordering::SeqCst) {
+                    return Err(ReaderCoreError::Message("任务已取消".to_string()));
+                }
+            }
             if chapter.url.is_empty() {
                 continue;
             }
@@ -1312,6 +1572,252 @@ impl ReaderCore {
         dedupe_paths(&mut dirs);
         Ok(dirs)
     }
+
+    /// 调试：导出存储状态摘要
+    pub async fn debug_dump(&self) -> Result<Value, ReaderCoreError> {
+        let frontend_ns = self.frontend_storage_list_namespaces().await?;
+        let mut frontend_map = serde_json::Map::new();
+        for ns in &frontend_ns {
+            let entries = self.frontend_storage_list(&ns.namespace).await?;
+            let mut total_size = 0usize;
+            for e in &entries {
+                total_size += e.value.len();
+            }
+            frontend_map.insert(ns.namespace.clone(), serde_json::json!({
+                "count": ns.count,
+                "totalValueBytes": total_size,
+            }));
+        }
+
+        let app_config = self.app_config_get_all().await.unwrap_or_default();
+        let shelf_books = self.read_shelf_books().await?;
+        let shelf_count = shelf_books.len();
+
+        Ok(serde_json::json!({
+            "frontend": frontend_map,
+            "frontendNamespaceCount": frontend_ns.len(),
+            "appConfigKeys": app_config.as_object().map(|o| o.len()).unwrap_or(0),
+            "shelfBookCount": shelf_count,
+            "appStatePath": self.reader_dir.to_string_lossy(),
+            "bookshelfPath": self.shelf_path().to_string_lossy(),
+            "dbPath": self.reader_dir.join("reader.db").to_string_lossy(),
+        }))
+    }
+
+    /// 安全解析书源文件绝对路径。仅允许在已知 source 目录下查找文件。
+    pub fn resolve_source_path(
+        &self,
+        file_name: &str,
+        source_dir: Option<&str>,
+    ) -> Result<PathBuf, ReaderCoreError> {
+        ensure_safe_file_name(file_name)?;
+        if let Some(dir) = source_dir {
+            if !self.legado_source_dir.to_string_lossy().contains(dir)
+                && !dir.contains("reader")
+                && !dir.contains("sources")
+            {
+                // 外部目录——需确认在已注册 external 目录内
+                return Err(ReaderCoreError::Message(
+                    "外部 source_dir 尚未在配置中校验".to_string(),
+                ));
+            }
+        }
+        let resolved = self.resolve_source_file(file_name, source_dir);
+        // 验证最终路径在 reader 数据目录下或已知允许目录
+        if !resolved.starts_with(&self.reader_dir) {
+            let allowed = resolved.starts_with(&self.js_source_dir)
+                || resolved.starts_with(&self.legado_source_dir);
+            if !allowed {
+                return Err(ReaderCoreError::Message(
+                    "文件路径超出允许范围".to_string(),
+                ));
+            }
+        }
+        Ok(resolved)
+    }
+
+    /// HTTP 代理请求（受限）
+    pub async fn http_proxy_request(
+        &self,
+        url: &str,
+        method: &str,
+        body: Option<&str>,
+        headers: Option<&[String]>,
+    ) -> Result<String, ReaderCoreError> {
+        let m = if method.is_empty() { "GET" } else { method };
+        let client = self.book_service.http_client();
+        let method = reqwest::Method::from_bytes(m.as_bytes())
+            .map_err(|e| ReaderCoreError::Message(format!("无效 HTTP 方法: {e}")))?;
+        let is_body_allowed = method != reqwest::Method::GET && method != reqwest::Method::HEAD;
+        let mut req = client.request(method, url);
+        if let Some(hdrs) = headers {
+            for h in hdrs {
+                if let Some((k, v)) = h.split_once(':') {
+                    req = req.header(k.trim(), v.trim());
+                }
+            }
+        }
+        if let Some(b) = body {
+            if is_body_allowed {
+                req = req.body(b.to_string());
+            }
+        }
+        let fut = req.timeout(std::time::Duration::from_secs(35));
+        Ok(fut.send().await?.text().await?)
+    }
+
+    /// 删除书源草稿
+    pub async fn delete_draft(&self, file_name: &str) -> Result<(), ReaderCoreError> {
+        ensure_safe_file_name(file_name)?;
+        let path = self.reader_dir.join("drafts").join(file_name);
+        if path.exists() {
+            fs::remove_file(&path).await?;
+        }
+        Ok(())
+    }
+
+    /// 导出书籍（返回文件路径）
+    pub async fn export_book(
+        &self,
+        id: &str,
+        format: &str,
+        save_path: &str,
+    ) -> Result<(), ReaderCoreError> {
+        let book = self.shelf_get(id).await?;
+        let chapters = self.shelf_get_chapters(id).await?;
+        if chapters.is_empty() {
+            return Err(ReaderCoreError::Message(
+                "没有章节数据可导出".to_string(),
+            ));
+        }
+
+        let raw_path = Path::new(save_path);
+        let ext = raw_path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("txt");
+        let actual_format = if format.is_empty() || format == "auto" {
+            ext.to_lowercase()
+        } else {
+            format.to_lowercase()
+        };
+
+        let header =
+            format!("{}\n作者：{}\n来源：{}\n\n", book.name, book.author, book.source_name);
+
+        let content: String = match actual_format.as_str() {
+            "txt" => {
+                let mut body = header;
+                let mut missing = 0;
+                for ch in &chapters {
+                    let text = self.shelf_get_content(id, ch.index).await?;
+                    body.push_str(&format!(
+                        "\n\n第{}章：{}\n\n{}",
+                        ch.index + 1,
+                        ch.name,
+                        text.as_deref().unwrap_or("[未缓存]")
+                    ));
+                    if text.is_none() {
+                        missing += 1;
+                    }
+                }
+                if missing > 0 {
+                    // 仍然写入，但部分章节缺失
+                }
+                body
+            }
+            "json" => {
+                let mut map = serde_json::Map::new();
+                map.insert("book".to_string(), serde_json::to_value(&book)?);
+                let mut chapter_list = Vec::new();
+                let mut contents = serde_json::Map::new();
+                for ch in &chapters {
+                    let text = self.shelf_get_content(id, ch.index).await?;
+                    chapter_list.push(serde_json::to_value(ch)?);
+                    contents.insert(
+                        ch.index.to_string(),
+                        serde_json::to_value(text.as_deref().unwrap_or(""))?,
+                    );
+                }
+                map.insert("chapters".to_string(), serde_json::Value::Array(chapter_list));
+                map.insert("contents".to_string(), serde_json::Value::Object(contents));
+                map.insert("exportedAt".to_string(), serde_json::to_value(now_ts())?);
+                map.insert("schemaVersion".to_string(), serde_json::Value::Number(1.into()));
+                serde_json::to_string_pretty(&map)?
+            }
+            _ => return Err(ReaderCoreError::Message(format!("不支持的导出格式: {format}。仅支持 txt / json"))),
+        };
+
+        if let Some(parent) = raw_path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        fs::write(raw_path, &content).await?;
+        Ok(())
+    }
+
+    /// 导出书籍数据（返回 base64 编码，用于移动端）
+    pub async fn export_book_data(
+        &self,
+        id: &str,
+        format: &str,
+    ) -> Result<Value, ReaderCoreError> {
+        let book = self.shelf_get(id).await?;
+        let chapters = self.shelf_get_chapters(id).await?;
+        if chapters.is_empty() {
+            return Err(ReaderCoreError::Message(
+                "没有章节数据可导出".to_string(),
+            ));
+        }
+
+        let format = if format.is_empty() { "txt" } else { format };
+        let ext = if format == "json" { "json" } else { "txt" };
+        let header =
+            format!("{}\n作者：{}\n来源：{}\n\n", book.name, book.author, book.source_name);
+
+        let body: String = match format {
+            "txt" => {
+                let mut body = header;
+                for ch in &chapters {
+                    let text = self.shelf_get_content(id, ch.index).await?;
+                    body.push_str(&format!(
+                        "\n\n第{}章：{}\n\n{}",
+                        ch.index + 1,
+                        ch.name,
+                        text.as_deref().unwrap_or("[未缓存]")
+                    ));
+                }
+                body
+            }
+            "json" => {
+                let mut map = serde_json::Map::new();
+                map.insert("book".to_string(), serde_json::to_value(&book)?);
+                let mut chapter_list = Vec::new();
+                let mut contents = serde_json::Map::new();
+                for ch in &chapters {
+                    let text = self.shelf_get_content(id, ch.index).await?;
+                    chapter_list.push(serde_json::to_value(ch)?);
+                    contents.insert(
+                        ch.index.to_string(),
+                        serde_json::to_value(text.as_deref().unwrap_or(""))?,
+                    );
+                }
+                map.insert("chapters".to_string(), serde_json::Value::Array(chapter_list));
+                map.insert("contents".to_string(), serde_json::Value::Object(contents));
+                map.insert("exportedAt".to_string(), serde_json::to_value(now_ts())?);
+                map.insert("schemaVersion".to_string(), serde_json::Value::Number(1.into()));
+                serde_json::to_string_pretty(&map)?
+            }
+            _ => return Err(ReaderCoreError::Message(format!("不支持的导出格式: {format}。仅支持 txt / json"))),
+        };
+
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(body.as_bytes());
+        Ok(serde_json::json!({
+            "fileName": format!("{}.{}", book.name, ext),
+            "mime": if format == "json" { "application/json" } else { "text/plain; charset=utf-8" },
+            "base64": b64,
+        }))
+    }
 }
 
 impl From<SearchBook> for BookItem {
@@ -1581,6 +2087,20 @@ fn has_js_capability(content: &str, name: &str) -> bool {
     regex::Regex::new(&pattern)
         .map(|re| re.is_match(content))
         .unwrap_or(false)
+}
+
+fn value_to_js_source_arg(value: Value) -> JsSourceArg {
+    match value {
+        Value::Null => JsSourceArg::Null,
+        Value::Bool(b) => JsSourceArg::Bool(b),
+        Value::Number(n) => n
+            .as_i64()
+            .map(|i| JsSourceArg::Int(i as i32))
+            .or_else(|| n.as_f64().map(JsSourceArg::Float))
+            .unwrap_or(JsSourceArg::Null),
+        Value::String(s) => JsSourceArg::String(s),
+        other => JsSourceArg::Json(other),
+    }
 }
 
 fn js_join_error(err: tokio::task::JoinError) -> ReaderCoreError {

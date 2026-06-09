@@ -1,17 +1,24 @@
+mod backup_probe;
 mod bookshelf;
+mod comic_cover;
 mod config;
 mod extension;
+mod fonts;
 mod source;
+mod source_update;
+mod sync_misc;
 mod system;
 
 pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
+        // system
         system::frontend_log,
         system::get_platform,
         system::open_dir_in_explorer,
         system::script_dialog_result,
         system::audio_resolve_cache,
         system::script_repl_eval,
+        // extension
         extension::extension_get_dir,
         extension::extension_list,
         extension::extension_read,
@@ -19,6 +26,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         extension::extension_delete,
         extension::extension_toggle,
         extension::extension_open_in_vscode,
+        // source
         source::booksource_get_dir,
         source::booksource_get_dirs,
         source::booksource_add_dir,
@@ -44,6 +52,14 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         source::booksource_call_fn,
         source::booksource_cancel,
         source::booksource_run_tests,
+        source::booksource_resolve_path,
+        source::booksource_open_in_vscode,
+        source::booksource_delete_draft,
+        source::booksource_http_proxy,
+        // source_update
+        source_update::booksource_apply_update,
+        source_update::booksource_check_update,
+        // bookshelf
         bookshelf::bookshelf_list,
         bookshelf::bookshelf_add,
         bookshelf::bookshelf_remove,
@@ -65,6 +81,10 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         bookshelf::bookshelf_pick_save_path,
         bookshelf::bookshelf_reveal_data_dir,
         bookshelf::export_save_file,
+        bookshelf::bookshelf_export_book,
+        bookshelf::bookshelf_export_book_data,
+        bookshelf::bookshelf_reveal_export_file,
+        // config
         config::config_read,
         config::config_write,
         config::config_read_json,
@@ -84,5 +104,83 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         config::app_config_set,
         config::app_config_reset,
         config::storage_debug_dump,
+        // comic / cover
+        comic_cover::comic_cache_clear,
+        comic_cover::comic_cache_clear_chapter,
+        comic_cover::comic_cache_size,
+        comic_cover::comic_download_images,
+        comic_cover::comic_get_cached_page,
+        comic_cover::cover_cache_clear,
+        comic_cover::cover_cache_size,
+        comic_cover::cover_resolve_cache,
+        // fonts
+        fonts::list_system_fonts,
+        fonts::list_user_fonts,
+        fonts::upload_user_font,
+        fonts::delete_user_font,
+        fonts::rename_user_font,
+        // backup / browser_probe
+        backup_probe::backup_create,
+        backup_probe::backup_create_data,
+        backup_probe::backup_inspect,
+        backup_probe::backup_peek,
+        backup_probe::backup_peek_data,
+        backup_probe::backup_restore,
+        backup_probe::backup_restore_data,
+        backup_probe::browser_probe_create,
+        backup_probe::browser_probe_close,
+        backup_probe::browser_probe_close_all,
+        backup_probe::browser_probe_hide,
+        backup_probe::browser_probe_show,
+        backup_probe::browser_probe_navigate,
+        backup_probe::browser_probe_eval,
+        backup_probe::browser_probe_run,
+        backup_probe::browser_probe_get_cookies,
+        backup_probe::browser_probe_set_cookie,
+        backup_probe::browser_probe_clear_data,
+        backup_probe::browser_probe_set_user_agent,
+        // sync / tts / video / web_server / unlock / repository / misc
+        sync_misc::sync_baidu_start_auth,
+        sync_misc::sync_baidu_poll_token,
+        sync_misc::sync_baidu_token_status,
+        sync_misc::sync_baidu_revoke_auth,
+        sync_misc::sync_set_credentials,
+        sync_misc::sync_get_credentials,
+        sync_misc::sync_clear_credentials,
+        sync_misc::sync_get_status,
+        sync_misc::sync_now,
+        sync_misc::sync_test_connection,
+        sync_misc::sync_list_conflicts,
+        sync_misc::sync_resolve_conflict,
+        sync_misc::sync_notify_lifecycle,
+        sync_misc::sync_client_state_set,
+        sync_misc::sync_report_reader_session,
+        sync_misc::sync_v2_sync_reading_progress,
+        sync_misc::tts_get_voices,
+        sync_misc::tts_is_initialized,
+        sync_misc::tts_is_speaking,
+        sync_misc::tts_speak,
+        sync_misc::tts_stop,
+        sync_misc::tts_preview_voice,
+        sync_misc::start_video_proxy,
+        sync_misc::stop_video_proxy,
+        sync_misc::web_server_pick_dist_dir,
+        sync_misc::web_server_start,
+        sync_misc::web_server_stop,
+        sync_misc::web_server_status,
+        sync_misc::issue_full_mode_challenge,
+        sync_misc::issue_scoped_unlock_challenge,
+        sync_misc::verify_full_mode_challenge,
+        sync_misc::verify_scoped_unlock_challenge,
+        sync_misc::repository_check_source_sync,
+        sync_misc::repository_fetch,
+        sync_misc::repository_install,
+        sync_misc::repository_preview_source,
+        sync_misc::ai_http_proxy_url,
+        sync_misc::app_update_download,
+        sync_misc::app_update_install_downloaded_file,
+        sync_misc::get_local_ips,
+        sync_misc::frontend_plugin_http_request,
+        sync_misc::explore_clear_cache,
     ]
 }
