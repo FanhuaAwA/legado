@@ -26,13 +26,13 @@
 
 ### 书旗小说
 
-| 能力     | 状态                        | 备注                                                   |
-| -------- | --------------------------- | ------------------------------------------------------ |
-| 导入     | PASS（2026-06-09）          | source_compat_import 测试通过                          |
-| search   | PASS（2026-06-09 实网验证） | 搜索"系统"成功返回书籍列表                             |
-| bookInfo | NOT_CONFIGURED              | ruleBookInfo 为空对象                                  |
-| toc      | BLOCKED（JS API）           | @js: 规则依赖 java.base64Encode（已实现，待验证）      |
-| content  | BLOCKED（JS API）           | @js: 规则依赖 java.hexDecodeToString（已实现，待验证） |
+| 能力     | 状态                         | 备注                                                           |
+| -------- | ---------------------------- | -------------------------------------------------------------- |
+| 导入     | PASS（2026-06-09）           | source_compat_import 测试通过                                  |
+| search   | PASS（2026-06-09 实网验证）  | 搜索"系统"成功返回书籍列表                                     |
+| bookInfo | CONFIGURED_EMPTY             | ruleBookInfo={}，返回默认空字段（非 bug）                      |
+| toc      | FAILED（代理 API 变更）      | 代理 jh.52dns.cc detail.php 返回 HTML 而非 JSON，ruleToc 失效 |
+| content  | BLOCKED（同 toc）            | 无可用章节，toc 不通则 content 不可达                          |
 
 ### 七猫小说
 
@@ -85,4 +85,4 @@
 
 ---
 
-最后更新：2026-06-09（Iteration 6：JS API shim 补全）
+最后更新：2026-06-09（Iteration 13：全链路验证 — 书旗 search PASS, toc/content BLOCKED by 代理 API 变更）

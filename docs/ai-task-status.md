@@ -24,7 +24,7 @@ format.baseline = passed
 | -------------------------------- | ---- | --------------------------------- |
 | `cargo check -p reader-core`     | PASS |                                   |
 | `cargo check -p legado-tauri`    | PASS |                                   |
-| `cargo test -p reader-core`      | PASS | 32 passed, 1 live-network ignored |
+| `cargo test -p reader-core`      | PASS | 33 passed (5 source_compat + route_b + js_compat + unit_tests + doc), 2 live-network ignored |
 | `cargo test -p legado-tauri`     | PASS | 5 passed                          |
 | `pnpm build`                     | PASS | eval/chunk-size warning           |
 | `pnpm lint`                      | PASS | 73 warnings, 0 errors             |

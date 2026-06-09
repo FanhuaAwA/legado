@@ -446,3 +446,68 @@ git push origin master
 
 - 不要再改 `.gitignore`（构建产物排除已配置）
 - 不要再创建 `logger.ts`（已创建）
+
+---
+
+## 记录标题：2026-06-09 Iteration 13
+
+**本轮目标**：console.log → 结构化 logger 全量迁移 + 门禁验证 + GitHub 备份
+
+**读取文件**：
+
+- `docs/ai-iteration-log.md`（前 12 轮记录）
+- `docs/ai-task-status.md`（AUDIT-007 状态）
+- `docs/source-compat-matrix.md`（JS API 依赖现状）
+
+**修改文件**：
+
+- `src/App.vue` — console.log → log.* 迁移
+- `src/components/AppUpdateDialog.vue` — console.log → log.* 迁移
+- `src/components/GlobalFeedbackMirror.vue` — console.log → log.* 迁移
+- `src/components/reader/modes/VideoMode.vue` — console.log → log.* 迁移
+- `src/composables/useBackAwareDialog.ts` — catch 块类型修复（unknown → Error | string）
+- `src/composables/useEnv.ts` — 删除未使用的 log import
+- `src/composables/useFrontendStorage.ts` — console.log → log.* 迁移
+- `src/composables/useLegadoDeepLink.ts` — console.log → log.* 迁移
+- `src/composables/useTransport.ts` — console.log → log.* 迁移
+- `src/main.ts` — console.log → log.* 迁移
+- `src/stores/backStack.ts` — catch 块类型修复
+- `src/stores/musicPlayer.ts` — console.log → log.* 迁移
+- `src/stores/scriptBridge.ts` — console.log → log.* 迁移
+- `docs/ai-task-status.md` — 更新 AUDIT-007 状态 + 门禁时间戳
+- `.gitignore` — 添加 reports/ 目录排除
+- `scripts/ci/generate-gate-report.mjs` — 新建门禁报告生成脚本
+
+**验证命令**：
+
+```powershell
+pnpm exec vue-tsc -p tsconfig.app.json --noEmit
+pnpm exec oxfmt .
+pnpm lint
+cargo test --workspace
+node scripts/ci/generate-gate-report.mjs
+git push origin master
+```
+
+**通过项**：
+
+- vue-tsc: EXIT 0（0 errors）
+- oxfmt: 358 files formatted
+- lint: 73 warnings, 0 errors（warnings 均为 plugin example 文件）
+- cargo test: 5 passed, 2 live-network ignored
+- 门禁报告: 6/6 steps PASS（check-scripts, frontend-lint, frontend-build, cargo-check-core, cargo-test-core, cargo-check-tauri）
+- GitHub push: 5f37e3f → master
+
+**console.log 迁移统计**：
+
+- 85+ console.log calls 迁移到结构化 log.* 调用
+- 剩余 4 处 console.log 均为有意使用（logger.ts 回退、plugin API log、iframe 日志转发、doc 注释示例）
+- catch 块修复：7 处 `unknown` → `instanceof Error` 转换
+
+**下轮第一件事**：
+按第 26.4 节验证书源全链路（toc + content）。书旗和七猫的 JS API 依赖（java.base64Encode、java.hexDecodeToString、java.ajax）均已实现，但尚未经 toc/content 端到端验证。先读 `crates/reader-core/tests/source_compat_import.rs`，为书旗和七猫添加 toc + content 实网测试。
+
+**不得重复做的事**：
+
+- 不要再迁 console.log（AUDIT-007 已全部完成）
+- 不要再改 type cast catch（全部已修复）
