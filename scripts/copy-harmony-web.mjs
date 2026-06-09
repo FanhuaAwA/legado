@@ -3,13 +3,19 @@
 /**
  * copy-harmony-web.mjs
  *
- * 将前端构建产物复制到 Harmony 工程目标目录。
- * 当前 Harmony 目标未启用 — 脚本仅提供最小骨架以便 package.json scripts 不报错。
+ * ⚠️ Harmony 构建目标当前不可用 ⚠️
  *
- * TODO：Harmony 工程集成后，补充真实的目标目录路径和资源复制逻辑。
+ * 此脚本尚未配置真实 Harmony 工程目标目录。
+ * 如需启用 Harmony 构建，必须先完成：
+ *   1. 配置 Harmony 工程路径
+ *   2. 配置资源复制逻辑
+ *   3. 验证产物可部署
+ *
+ * 在此之前，`pnpm run build:harmony` 将始终以非零退出码退出，
+ * 以明确标记该能力尚未就绪。
  */
 
-import { existsSync, cpSync, mkdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -17,9 +23,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
 const distDir = resolve(projectRoot, "dist");
 
-console.log("[copy-harmony-web] Harmony target is not yet configured.");
+console.error("══════════════════════════════════════════════");
+console.error("  Harmony 构建目标当前不可用");
+console.error("  此平台尚未配置，构建产物不会生成");
+console.error("══════════════════════════════════════════════");
+
 if (!existsSync(distDir)) {
-  console.error("[copy-harmony-web] dist/ directory not found. Run `pnpm build` first.");
-  process.exit(1);
+  console.error("此外，dist/ 目录不存在。请先运行 pnpm build。");
 }
-console.log("[copy-harmony-web] Skipping — no Harmony target path configured.");
+
+// 以非零退出码标记不可用
+process.exit(2);
