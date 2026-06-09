@@ -44,28 +44,29 @@
 
 ## 书架 (bookshelf\_\*)
 
-| Command                           | 前端调用                | 后端注册     | 状态 | 备注                 |
-| --------------------------------- | ----------------------- | ------------ | ---- | -------------------- |
-| `bookshelf_list`                  | bookshelf.ts:68         | bookshelf.rs | OK   |                      |
-| `bookshelf_add`                   | bookshelf.ts:97         | bookshelf.rs | OK   |                      |
-| `bookshelf_remove`                | bookshelf.ts:107        | bookshelf.rs | OK   |                      |
-| `bookshelf_get`                   | bookshelf.ts:220        | bookshelf.rs | OK   |                      |
-| `bookshelf_update_progress`       | bookshelf.ts:236        | bookshelf.rs | OK   |                      |
-| `bookshelf_set_private`           | bookshelf.ts:271        | bookshelf.rs | OK   |                      |
-| `bookshelf_save_chapters`         | bookshelf.ts:163,277    | bookshelf.rs | OK   |                      |
-| `bookshelf_get_chapters`          | bookshelf.ts:282        | bookshelf.rs | OK   |                      |
-| `bookshelf_update_book`           | bookshelf.ts:183,320    | bookshelf.rs | OK   |                      |
-| `bookshelf_restore_source_switch` | bookshelf.ts:372        | bookshelf.rs | OK   |                      |
-| `bookshelf_save_content`          | bookshelf.ts:382        | bookshelf.rs | OK   |                      |
-| `bookshelf_get_content`           | bookshelf.ts:387        | bookshelf.rs | OK   |                      |
-| `bookshelf_delete_content`        | bookshelf.ts:392        | bookshelf.rs | OK   |                      |
-| `bookshelf_get_cached_indices`    | bookshelf.ts:397        | bookshelf.rs | OK   |                      |
-| `bookshelf_save_txt_chapters`     | bookshelf.ts:170        | bookshelf.rs | OK   |                      |
-| `bookshelf_get_episode_progress`  | bookshelf.ts:404        | bookshelf.rs | OK   |                      |
-| `bookshelf_save_episode_progress` | bookshelf.ts:418        | bookshelf.rs | OK   |                      |
-| `bookshelf_prefetch_chapters`     | prefetch.ts:235,285     | bookshelf.rs | OK   | 后台逐章缓存正文     |
-| `bookshelf_pick_save_path`        | exportFile.ts:112       | bookshelf.rs | OK   | 桌面端原生保存对话框 |
-| `bookshelf_reveal_data_dir`       | bookshelfActions.ts:116 | bookshelf.rs | OK   | 打开阅读器数据目录   |
+| Command                           | 前端调用                | 后端注册     | 状态 | 备注                           |
+| --------------------------------- | ----------------------- | ------------ | ---- | ------------------------------ |
+| `bookshelf_list`                  | bookshelf.ts:68         | bookshelf.rs | OK   |                                |
+| `bookshelf_add`                   | bookshelf.ts:97         | bookshelf.rs | OK   |                                |
+| `bookshelf_remove`                | bookshelf.ts:107        | bookshelf.rs | OK   |                                |
+| `bookshelf_get`                   | bookshelf.ts:220        | bookshelf.rs | OK   |                                |
+| `bookshelf_update_progress`       | bookshelf.ts:236        | bookshelf.rs | OK   |                                |
+| `bookshelf_set_private`           | bookshelf.ts:271        | bookshelf.rs | OK   |                                |
+| `bookshelf_save_chapters`         | bookshelf.ts:163,277    | bookshelf.rs | OK   |                                |
+| `bookshelf_get_chapters`          | bookshelf.ts:282        | bookshelf.rs | OK   |                                |
+| `bookshelf_update_book`           | bookshelf.ts:183,320    | bookshelf.rs | OK   |                                |
+| `bookshelf_restore_source_switch` | bookshelf.ts:372        | bookshelf.rs | OK   |                                |
+| `bookshelf_save_content`          | bookshelf.ts:382        | bookshelf.rs | OK   |                                |
+| `bookshelf_get_content`           | bookshelf.ts:387        | bookshelf.rs | OK   |                                |
+| `bookshelf_delete_content`        | bookshelf.ts:392        | bookshelf.rs | OK   |                                |
+| `bookshelf_get_cached_indices`    | bookshelf.ts:397        | bookshelf.rs | OK   |                                |
+| `bookshelf_save_txt_chapters`     | bookshelf.ts:170        | bookshelf.rs | OK   |                                |
+| `bookshelf_get_episode_progress`  | bookshelf.ts:404        | bookshelf.rs | OK   |                                |
+| `bookshelf_save_episode_progress` | bookshelf.ts:418        | bookshelf.rs | OK   |                                |
+| `bookshelf_prefetch_chapters`     | prefetch.ts:235,285     | bookshelf.rs | OK   | 后台逐章缓存正文               |
+| `bookshelf_pick_save_path`        | exportFile.ts:112       | bookshelf.rs | OK   | 桌面端原生保存对话框           |
+| `bookshelf_reveal_data_dir`       | bookshelfActions.ts:116 | bookshelf.rs | OK   | 打开阅读器数据目录             |
+| `export_save_file`                | exportFile.ts:55        | bookshelf.rs | OK   | 选择路径 + base64/文本写入文件 |
 
 ## 音频 (audio\_\*)
 

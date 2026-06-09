@@ -286,3 +286,63 @@ pub async fn bookshelf_reveal_data_dir(
         retryable: false,
     })
 }
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportSaveFileRequest {
+    pub default_name: String,
+    pub mime: String,
+    pub text: String,
+    pub base64: String,
+    pub extensions: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn export_save_file(
+    app: tauri::AppHandle,
+    request: ExportSaveFileRequest,
+) -> CommandResult<Option<String>> {
+    use base64::Engine as _;
+    use tauri_plugin_dialog::DialogExt;
+    use tokio::fs;
+    let exts: Vec<&str> = request.extensions.iter().map(|s| s.as_str()).collect();
+    let result = app
+        .dialog()
+        .file()
+        .add_filter(
+            &request.mime,
+            if exts.is_empty() { &["*"] } else { &exts },
+        )
+        .set_file_name(&request.default_name)
+        .blocking_save_file();
+    match result {
+        Some(path) => {
+            let path_str = path.to_string();
+            if !request.base64.is_empty() {
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(&request.base64)
+                    .map_err(|err| CommandError {
+                        code: "IO_ERROR".to_string(),
+                        message: format!("base64 decode failed: {err}"),
+                        detail: None,
+                        retryable: false,
+                    })?;
+                fs::write(&path_str, &bytes).await.map_err(|err| CommandError {
+                    code: "IO_ERROR".to_string(),
+                    message: err.to_string(),
+                    detail: None,
+                    retryable: false,
+                })?;
+            } else {
+                fs::write(&path_str, &request.text).await.map_err(|err| CommandError {
+                    code: "IO_ERROR".to_string(),
+                    message: err.to_string(),
+                    detail: None,
+                    retryable: false,
+                })?;
+            }
+            Ok(Some(path_str))
+        }
+        None => Ok(None),
+    }
+}

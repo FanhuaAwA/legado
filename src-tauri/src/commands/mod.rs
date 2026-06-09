@@ -64,6 +64,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         bookshelf::bookshelf_prefetch_chapters,
         bookshelf::bookshelf_pick_save_path,
         bookshelf::bookshelf_reveal_data_dir,
+        bookshelf::export_save_file,
         config::config_read,
         config::config_write,
         config::config_read_json,
