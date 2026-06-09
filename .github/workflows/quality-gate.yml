@@ -1,0 +1,57 @@
+name: Quality Gate
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  quality-gate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: "9"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Script references check
+        run: node scripts/ci/check-scripts.mjs
+
+      - name: Frontend lint
+        run: pnpm oxlint --type-aware --type-check . --max-warnings 100
+
+      - name: Frontend build
+        run: pnpm build
+
+      - name: Rust fmt check
+        run: cargo fmt --all -- --check
+
+      - name: Cargo check reader-core
+        run: cargo check -p reader-core
+
+      - name: Cargo test reader-core
+        run: cargo test -p reader-core
+
+      - name: Cargo check tauri
+        run: cargo check -p legado-tauri
+
+      - name: Command contract check
+        run: node scripts/ci/check-command-contract.mjs
+
+      - name: Environment summary
+        run: node scripts/ci/check-env.mjs --json
