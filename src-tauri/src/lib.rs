@@ -7,16 +7,56 @@ use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use tauri::WindowEvent;
 use tauri::{Emitter, Manager};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::Layer;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
+    // Set up file-based logging with rotation
+    let app_data = std::env::var("APPDATA")
+        .or_else(|_| {
+            std::env::var("HOME").map(|h| format!("{}/.local/share", h))
+        })
+        .unwrap_or_else(|_| ".".to_string());
+    let log_dir = std::path::PathBuf::from(&app_data)
+        .join("com.legado.tauri")
+        .join("reader")
+        .join("logs");
+
+    // Create the log directory
+    if let Err(e) = std::fs::create_dir_all(&log_dir) {
+        eprintln!("Failed to create log dir: {e}");
+    }
+
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "app.log");
+    let error_appender = tracing_appender::rolling::daily(&log_dir, "app.error.log");
+
+    // Console layer (for development)
+    let console_layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "info,reader_core=info,legado_tauri=info".into()),
-        )
-        .try_init()
-        .ok();
+        );
+
+    // File layer: all logs (info and above)
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_writer(file_appender)
+        .with_ansi(false)
+        .with_filter(tracing_subscriber::filter::LevelFilter::INFO);
+
+    // Error file layer: warnings and errors
+    let error_layer = tracing_subscriber::fmt::layer()
+        .with_writer(error_appender)
+        .with_ansi(false)
+        .with_filter(tracing_subscriber::filter::LevelFilter::WARN);
+
+    tracing_subscriber::registry()
+        .with(console_layer)
+        .with(file_layer)
+        .with(error_layer)
+        .init();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
