@@ -47,7 +47,7 @@ format.baseline = passed
 
 | ID        | 问题                                       | 状态                   |
 | --------- | ------------------------------------------ | ---------------------- |
-| AUDIT-001 | 无 `.git`                                  | 待用户提供 GitHub 地址 |
+| AUDIT-001 | 无 `.git`                                  | 已修复（2026-06-09 init + push） |
 | AUDIT-002 | `scripts/copy-harmony-web.mjs` 缺失        | 已修复（Iteration 9）  |
 | AUDIT-003 | `scripts/booksource-node-runtime.mjs` 缺失 | 已修复（Iteration 9）  |
 | AUDIT-004 | `scripts/copy-build-result.mjs` 存在且正常 | 已确认                 |
