@@ -45,17 +45,17 @@ format.baseline = passed
 
 ## 审计问题追踪（来自 2026-06-09 轻量审计）
 
-| ID        | 问题                                       | 状态                   |
-| --------- | ------------------------------------------ | ---------------------- |
+| ID        | 问题                                       | 状态                             |
+| --------- | ------------------------------------------ | -------------------------------- |
 | AUDIT-001 | 无 `.git`                                  | 已修复（2026-06-09 init + push） |
-| AUDIT-002 | `scripts/copy-harmony-web.mjs` 缺失        | 已修复（Iteration 9）  |
-| AUDIT-003 | `scripts/booksource-node-runtime.mjs` 缺失 | 已修复（Iteration 9）  |
-| AUDIT-004 | `scripts/copy-build-result.mjs` 存在且正常 | 已确认                 |
-| AUDIT-005 | `booksource_eval` 为 UNSUPPORTED           | 已修复（Iteration 11） |
-| AUDIT-006 | `config_list_scopes` 返回空                | 已修复（Iteration 9）  |
-| AUDIT-007 | 前端裸 `console.log`                       | 待迁移到结构化日志     |
-| AUDIT-008 | 前端 TODO 和屏蔽逻辑                       | 待评估                 |
-| AUDIT-009 | reader-core 测试内 `unwrap()`              | 测试中可接受           |
+| AUDIT-002 | `scripts/copy-harmony-web.mjs` 缺失        | 已修复（Iteration 9）            |
+| AUDIT-003 | `scripts/booksource-node-runtime.mjs` 缺失 | 已修复（Iteration 9）            |
+| AUDIT-004 | `scripts/copy-build-result.mjs` 存在且正常 | 已确认                           |
+| AUDIT-005 | `booksource_eval` 为 UNSUPPORTED           | 已修复（Iteration 11）           |
+| AUDIT-006 | `config_list_scopes` 返回空                | 已修复（Iteration 9）            |
+| AUDIT-007 | 前端裸 `console.log`                       | 待迁移到结构化日志               |
+| AUDIT-008 | 前端 TODO 和屏蔽逻辑                       | 待评估                           |
+| AUDIT-009 | reader-core 测试内 `unwrap()`              | 测试中可接受                     |
 
 ## 书源兼容状态
 
