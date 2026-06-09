@@ -7,6 +7,26 @@ use std::collections::HashMap;
 pub enum SourceRuntimeKind {
     JsScript,
     LegadoRule,
+    LegacyArticle,
+}
+
+impl SourceRuntimeKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SourceRuntimeKind::JsScript => "js",
+            SourceRuntimeKind::LegadoRule => "legado",
+            SourceRuntimeKind::LegacyArticle => "article",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "js" | "jsscript" => SourceRuntimeKind::JsScript,
+            "legado" | "legadorule" => SourceRuntimeKind::LegadoRule,
+            "article" | "legacyarticle" => SourceRuntimeKind::LegacyArticle,
+            _ => SourceRuntimeKind::LegadoRule,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

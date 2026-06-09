@@ -7,6 +7,7 @@ use crate::dto::{
     UpdateShelfBookPayload,
 };
 use crate::error::ReaderCoreError;
+use crate::model::article_source::ArticleSource;
 use crate::model::book::Book;
 use crate::model::book_chapter::BookChapter;
 use crate::model::book_source::{book_source_from_value, BookSource};
@@ -130,7 +131,64 @@ impl ReaderCore {
         let mut out = Vec::new();
         out.extend(self.list_js_sources().await?);
         out.extend(self.list_legado_sources().await?);
+        out.extend(self.list_article_sources().await?);
         out.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(out)
+    }
+
+    async fn list_article_sources(&self) -> Result<Vec<BookSourceMeta>, ReaderCoreError> {
+        let article_dir = self.reader_dir.join("sources").join("article-json");
+        let mut out = Vec::new();
+        let mut entries = match fs::read_dir(&article_dir).await {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
+            Err(e) => return Err(e.into()),
+        };
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if path.extension().and_then(|v| v.to_str()) != Some("json") {
+                continue;
+            }
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            let content = fs::read_to_string(&path).await.unwrap_or_default();
+            if let Ok(article) = serde_json::from_str::<ArticleSource>(&content) {
+                let metadata = fs::metadata(&path).await.ok();
+                let modified = metadata
+                    .as_ref()
+                    .and_then(|m| {
+                        m.modified()
+                            .ok()
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs() as i64)
+                    })
+                    .unwrap_or(0);
+                let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+                out.push(BookSourceMeta {
+                    source_key: format!("article:{}", article.source_name),
+                    uuid: article.source_name.clone(),
+                    file_name,
+                    name: article.source_name,
+                    url: article.source_url.clone(),
+                    urls: vec![article.source_url.clone()],
+                    homepage_url: None,
+                    author: None,
+                    logo: None,
+                    description: None,
+                    enabled: article.enabled,
+                    file_size: size,
+                    modified_at: modified,
+                    source_dir: article_dir.to_string_lossy().to_string(),
+                    source_type: "article".to_string(),
+                    version: String::new(),
+                    update_url: None,
+                    tags: Vec::new(),
+                    min_delay_ms: 0,
+                    require_urls: Vec::new(),
+                    has_explore: None,
+                    runtime: SourceRuntimeKind::LegacyArticle,
+                });
+            }
+        }
         Ok(out)
     }
 
@@ -220,6 +278,27 @@ impl ReaderCore {
         let mut seen = HashSet::new();
 
         for value in values {
+            // Try as article source first (sourceName + ruleArticles)
+            if let (Some(name), Some(_rules)) = (
+                value.get("sourceName").and_then(|v| v.as_str()),
+                value.get("ruleArticles"),
+            ) {
+                if !name.trim().is_empty() {
+                    let article: ArticleSource = serde_json::from_value(value.clone())?;
+                    let file_name = format!(
+                        "{}.article.json",
+                        article.source_name.replace(['/', '\\', ':', '?', '*', '"', '<', '>', '|'], "_")
+                    );
+                    let article_dir = self.reader_dir.join("sources").join("article-json");
+                    fs::create_dir_all(&article_dir).await?;
+                    let article_path = article_dir.join(&file_name);
+                    fs::write(&article_path, serde_json::to_string_pretty(&article)?).await?;
+                    result.imported += 1;
+                    result.files.push(file_name);
+                    continue;
+                }
+            }
+
             match book_source_from_value(value) {
                 Ok(source) => {
                     if source.book_source_name.trim().is_empty()

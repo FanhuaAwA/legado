@@ -1,6 +1,7 @@
 pub mod ai_book;
 pub mod ai_model;
 pub mod ai_proxy;
+pub mod article_source;
 pub mod book;
 pub mod book_chapter;
 pub mod book_group;

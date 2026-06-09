@@ -78,6 +78,7 @@ pub struct ContentRule {
     pub image_style: Option<String>,
     pub image_decode: Option<String>,
     pub pay_action: Option<String>,
+    pub call_back_js: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

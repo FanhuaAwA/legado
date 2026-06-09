@@ -293,3 +293,34 @@ async fn fanqie_source_imports_and_parses_fields() {
     assert!(matches!(fanqie.runtime, SourceRuntimeKind::LegadoRule));
     assert!(fanqie.enabled);
 }
+
+#[tokio::test]
+async fn short_drama_source_imports_as_article() {
+    let temp = tempfile::tempdir().unwrap();
+    let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
+        .await
+        .unwrap();
+
+    let content =
+        read_source_fixture(r"E:\Book\番茄短剧\fqdj0719_016377fa4.json");
+    let result = core.import_legacy_json_text(&content, false).await.unwrap();
+    assert!(
+        result.imported > 0,
+        "番茄短剧应作为 article source 成功导入"
+    );
+    assert!(
+        result.files.iter().any(|f| f.contains("article")),
+        "导入文件名应包含 article 标识"
+    );
+
+    // Should still be listable via list_sources
+    let sources = core.list_sources().await.unwrap();
+    let drama = sources.iter().find(|s| s.name.contains("番茄短剧"));
+    assert!(drama.is_some(), "番茄短剧应在书源列表中");
+    if let Some(d) = drama {
+        assert!(
+            matches!(d.runtime, SourceRuntimeKind::LegacyArticle),
+            "番茄短剧 runtime 应为 LegacyArticle"
+        );
+    }
+}

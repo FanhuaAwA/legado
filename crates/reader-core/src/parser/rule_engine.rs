@@ -345,6 +345,18 @@ impl RuleEngine {
                     content = apply_legado_regex(&content, replace);
                 }
 
+                if let Some(callback) = rule.call_back_js.as_deref().filter(|s| !s.trim().is_empty()) {
+                    if let Ok(processed) = eval_js(
+                        self.strip_mode_prefix(callback),
+                        &content,
+                        base_url,
+                    ) {
+                        if !processed.trim().is_empty() {
+                            content = processed;
+                        }
+                    }
+                }
+
                 return content;
             }
 

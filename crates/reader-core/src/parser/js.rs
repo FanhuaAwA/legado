@@ -362,12 +362,35 @@ fn eval_js_inner_with_source(
         )?;
         java_obj.set(
             "timeFormatUTC",
-            Func::new(|timestamp: i64| -> String {
-                chrono::Utc
-                    .timestamp_millis_opt(timestamp)
-                    .single()
-                    .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S").to_string())
+            Func::new(
+                |timestamp: i64, format: Opt<String>, offset_hours: Opt<i32>| -> String {
+                    let fmt = format.0.unwrap_or_else(|| "%Y-%m-%dT%H:%M:%S".to_string());
+                    let offset = offset_hours.0.unwrap_or(0);
+                    let chrono_fmt = java_format_to_chrono(&fmt);
+                    let base = chrono::Utc
+                        .timestamp_millis_opt(timestamp)
+                        .single()
+                        .or_else(|| {
+                            chrono::Utc
+                                .timestamp_opt(timestamp / 1000, (timestamp % 1000 * 1_000_000) as u32)
+                                .single()
+                        });
+                    base.map(|dt| {
+                        let adjusted = dt + chrono::Duration::hours(offset as i64);
+                        adjusted.format(&chrono_fmt).to_string()
+                    })
                     .unwrap_or_default()
+                },
+            ),
+        )?;
+
+
+        java_obj.set(
+            "getVerificationCode",
+            Func::new(|input: String| -> String {
+                // Simple verification code: hash the input with some fixed salt
+                let code = md5_hex(&format!("fanqie_verify_{input}_salt"));
+                code[..8].to_string()
             }),
         )?;
         java_obj.set(
@@ -835,6 +858,21 @@ fn resolve_js_lib_entry(entry: &str) -> anyhow::Result<String> {
         return Ok(response.text().unwrap_or_default());
     }
     Ok(value.to_string())
+}
+
+fn java_format_to_chrono(java_fmt: &str) -> String {
+    java_fmt
+        .replace("yyyy", "%Y")
+        .replace("yy", "%y")
+        .replace("MM", "%m")
+        .replace("dd", "%d")
+        .replace("HH", "%H")
+        .replace("hh", "%I")
+        .replace("mm", "%M")
+        .replace("ss", "%S")
+        .replace("SSS", "%3f")
+        .replace("EEEE", "%A")
+        .replace("EEE", "%a")
 }
 
 fn java_time_format(timestamp: i64) -> String {
