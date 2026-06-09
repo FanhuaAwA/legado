@@ -28,10 +28,36 @@ pub fn analyze_url(
         let mut rule_url = m_url.to_string();
         let mut header_spec = source_header_spec(source)?;
 
+        // Decode proxy URLs BEFORE any processing
+        let trimmed = rule_url.trim();
+        if let Some(payload) = trimmed.strip_prefix("data:;base64,").or_else(|| {
+            trimmed.strip_prefix("DATA:;BASE64,")
+        }) {
+            use base64::Engine as _;
+            if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(payload) {
+                if let Ok(decoded) = String::from_utf8(bytes) {
+                    rule_url = decoded;
+                }
+            }
+        }
+
         rule_url = eval_url_js_segments(&rule_url, key, page, &source.book_source_url, &base_url)?;
         rule_url = replace_inline_js(&rule_url, key, page, &source.book_source_url, &base_url)?;
         rule_url = replace_legacy_placeholders(&rule_url, key, page);
         rule_url = replace_page_choices(&rule_url, page);
+
+        // Decode proxy URLs: data:;base64,<base64> → real URL
+        let trimmed = rule_url.trim();
+        if let Some(payload) = trimmed.strip_prefix("data:;base64,").or_else(|| {
+            trimmed.strip_prefix("DATA:;BASE64,")
+        }) {
+            use base64::Engine as _;
+            if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(payload) {
+                if let Ok(decoded) = String::from_utf8(bytes) {
+                    rule_url = decoded;
+                }
+            }
+        }
 
         let (url_part, options) = split_url_options(&rule_url);
         let mut url = absolute_url(&base_url, url_part.trim());

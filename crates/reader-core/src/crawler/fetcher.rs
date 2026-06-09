@@ -71,14 +71,12 @@ pub struct StrResponse {
     pub is_successful: bool,
 }
 
-/// Decode `data:;base64,<base64>` proxy URLs to the real target URL.
-/// This is a custom scheme used by some book source proxies (e.g., jh.52dns.cc)
-/// to encode the real API endpoint URL in base64.
 fn resolve_proxy_url(raw: &str) -> String {
-    if let Some(payload) = raw.strip_prefix("data:;base64,") {
+    if let Some(payload) = raw.trim().strip_prefix("data:;base64,") {
         use base64::Engine as _;
         if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(payload) {
             if let Ok(decoded) = String::from_utf8(bytes) {
+                tracing::debug!("fetcher decoded proxy URL: {} -> {}", raw, decoded);
                 return decoded;
             }
         }
@@ -91,8 +89,7 @@ pub async fn fetch(client: &HttpClient, req: RequestSpec) -> anyhow::Result<Fetc
     let max_retries = req.retry;
     for attempt in 0..=max_retries {
         let mut req = req.clone();
-        let real_url = resolve_proxy_url(&req.url);
-        req.url = real_url;
+        req.url = resolve_proxy_url(&req.url);
         let mut builder = match req.method {
             HttpMethod::GET => client.client().get(&req.url),
             HttpMethod::POST => client.client().post(&req.url),

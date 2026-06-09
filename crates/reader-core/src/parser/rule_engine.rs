@@ -285,8 +285,30 @@ impl RuleEngine {
                     ParseMode::Js
                 ) {
                     let script = self.strip_mode_prefix(&content_rule);
-                    if let Ok(res) = eval_js(script, &content_body, base_url) {
-                        return res;
+                    let js_ok = match eval_js(script, &content_body, base_url) {
+                        Ok(res) if !res.trim().is_empty() && res.contains('<') && res.contains('>') => {
+                            return res;
+                        }
+                        Ok(_) => false, // returned empty or non-HTML
+                        Err(_) => false, // JS failed
+                    };
+                    // Fallback: if JS failed or returned non-HTML, try JSONPath
+                    if !js_ok && content_body.trim_start().starts_with('{') {
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content_body) {
+                            if let Some(content_text) = v.pointer("/data/content").and_then(|val| val.as_str()) {
+                                if !content_text.trim().is_empty() {
+                                    return content_text.to_string();
+                                }
+                            }
+                            // Also try common proxy API patterns
+                            for path in &["/data/content", "/content", "/data", "/msg"] {
+                                if let Some(text) = v.pointer(path).and_then(|val| val.as_str()) {
+                                    if !text.trim().is_empty() && text.contains('<') {
+                                        return text.to_string();
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
