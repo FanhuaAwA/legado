@@ -1093,6 +1093,8 @@ impl ReaderCore {
     ) -> Result<i32, ReaderCoreError> {
         let chapters = self.shelf_get_chapters(id).await?;
         let mut count = 0;
+        let mut errors = 0usize;
+        let max_retries = 2usize;
         for chapter in &chapters {
             if let Some(ref token) = cancel_token {
                 if token.load(std::sync::atomic::Ordering::SeqCst) {
@@ -1106,13 +1108,93 @@ impl ReaderCore {
             if self.shelf_get_content(id, chapter_idx).await?.is_some() {
                 continue;
             }
-            let content = self
-                .chapter_content(file_name, &chapter.url, source_dir)
-                .await?;
+            let mut content = Err(ReaderCoreError::Message("未尝试".into()));
+            for _ in 0..=max_retries {
+                match self
+                    .chapter_content(file_name, &chapter.url, source_dir)
+                    .await
+                {
+                    Ok(c) => {
+                        content = Ok(c);
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "prefetch retry {}/{} for chapter {}: {e}",
+                            errors,
+                            max_retries,
+                            chapter_idx
+                        );
+                        errors += 1;
+                    }
+                }
+            }
+            let content = content?;
             self.shelf_save_content(id, chapter_idx, &content).await?;
             count += 1;
         }
         Ok(count)
+    }
+
+    /// 创建本地备份：导出所有书架数据 + 书源列表到 JSON 文件
+    pub async fn create_backup(&self) -> Result<String, ReaderCoreError> {
+        let shelf_books = self.read_shelf_books().await?;
+        let sources = self.source_service.list(USER_NS).await?;
+        let backup = serde_json::json!({
+            "version": 1,
+            "createdAt": now_ts(),
+            "shelfBooks": shelf_books.values().collect::<Vec<_>>(),
+            "bookSources": sources,
+        });
+        let backup_dir = self.reader_dir.join("backups");
+        fs::create_dir_all(&backup_dir).await?;
+        let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+        let file_name = format!("legado_backup_{}.json", timestamp);
+        let path = backup_dir.join(&file_name);
+        fs::write(&path, serde_json::to_string_pretty(&backup)?).await?;
+        Ok(path.to_string_lossy().to_string())
+    }
+
+    /// 从备份文件恢复书架数据
+    pub async fn restore_backup(&self, backup_path: &str) -> Result<i32, ReaderCoreError> {
+        let raw = fs::read_to_string(backup_path).await?;
+        match serde_json::from_str::<serde_json::Value>(&raw) {
+            Ok(v) => {
+                let mut restored = 0i32;
+                if let Some(books) = v.get("shelfBooks").and_then(|b| b.as_array()) {
+                    let mut shelf = self.read_shelf_books().await?;
+                    for book_val in books {
+                        if let Ok(book) = serde_json::from_value::<ShelfBook>(book_val.clone()) {
+                            shelf.insert(book.id.clone(), book);
+                            restored += 1;
+                        }
+                    }
+                    self.write_shelf_books(&shelf).await?;
+                }
+                if let Some(srcs) = v.get("bookSources").and_then(|s| s.as_array()) {
+                    for src_val in srcs {
+                        if let Ok(source) = serde_json::from_value::<BookSource>(src_val.clone()) {
+                            let file_name = legado_file_name(&source);
+                            self.persist_legado_source(&file_name, &source).await?;
+                        }
+                    }
+                }
+                Ok(restored)
+            }
+            Err(e) => Err(ReaderCoreError::Message(format!("备份文件格式无效: {e}"))),
+        }
+    }
+
+    /// EPUB 导出 stub（后续实现）
+    pub async fn export_book_epub(
+        &self,
+        id: &str,
+        save_path: &str,
+    ) -> Result<(), ReaderCoreError> {
+        let _ = (id, save_path);
+        Err(ReaderCoreError::Message(
+            "EPUB 导出尚未实现，请使用 TXT 或 JSON 格式".into(),
+        ))
     }
 
     pub async fn config_read(&self, scope: &str, key: &str) -> Result<String, ReaderCoreError> {

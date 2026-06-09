@@ -205,3 +205,49 @@ async function search() {
         .iter()
         .any(|source| source.file_name == "external-fixture.js"));
 }
+
+#[test]
+fn new_js_apis_work() {
+    // md5Encode16: first 16 chars of md5
+    let result = eval_js("java.md5Encode16(result)", "hello", "").unwrap();
+    assert_eq!(result.len(), 16);
+    assert_eq!(result, "5d41402abc4b2a76");
+
+    // timeFormatUTC
+    let result = eval_js("java.timeFormatUTC(1700000000000)", "", "").unwrap();
+    assert!(!result.is_empty());
+    assert!(result.contains("T"));
+
+    // base64DecodeToByteArray
+    use base64::Engine as _;
+    let input = base64::engine::general_purpose::STANDARD.encode(b"hello");
+    let result = eval_js(
+        &format!("java.base64DecodeToByteArray('{}')", input),
+        "",
+        "",
+    )
+    .unwrap();
+    assert_eq!(result, "hello");
+
+    // toast / longToast / log: should not panic
+    assert!(eval_js("java.toast('test')", "", "").is_ok());
+    assert!(eval_js("java.longToast('test')", "", "").is_ok());
+    assert!(eval_js("java.log('test')", "", "").is_ok());
+
+    // cookie.getKey
+    eval_js("cookie.setCookie('ck_test', 'val')", "", "").unwrap();
+    let result = eval_js("cookie.getKey('ck_test')", "", "").unwrap();
+    assert_eq!(result, "val");
+
+    // cache.delete
+    eval_js("cache.put('del_test', 'val')", "", "").unwrap();
+    eval_js("cache.delete('del_test')", "", "").unwrap();
+    let result = eval_js("cache.get('del_test')", "", "").unwrap();
+    assert!(result.is_empty());
+
+    // source.putLoginInfo
+    eval_js("source.putLoginInfo('li_key', 'li_val')", "", "").unwrap();
+    let result = eval_js("source.getLoginInfoMap()", "", "").unwrap();
+    assert!(result.contains("li_key"));
+    assert!(result.contains("li_val"));
+}

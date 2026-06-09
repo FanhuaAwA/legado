@@ -256,6 +256,14 @@ fn eval_js_inner_with_source(
                 true
             }),
         )?;
+        source_obj.set(
+            "putLoginInfo",
+            Func::new(|key: String, val: String| -> bool {
+                let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+                map.insert(format!("__source_login_{}", key), val);
+                true
+            }),
+        )?;
         globals.set("source", source_obj)?;
 
         let cookie_obj = Object::new(ctx.clone())?;
@@ -280,6 +288,13 @@ fn eval_js_inner_with_source(
                 let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
                 map.remove(&format!("__cookie_{}", key));
                 "".to_string()
+            }),
+        )?;
+        cookie_obj.set(
+            "getKey",
+            Func::new(|key: String| -> Option<String> {
+                let map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+                map.get(&format!("__cookie_{}", key)).cloned()
             }),
         )?;
         globals.set("cookie", cookie_obj)?;
@@ -315,6 +330,14 @@ fn eval_js_inner_with_source(
                 true
             }),
         )?;
+        cache_obj.set(
+            "delete",
+            Func::new(|key: String| -> String {
+                let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+                map.remove(&key);
+                "".to_string()
+            }),
+        )?;
         globals.set("cache", cache_obj)?;
 
         let java_obj = Object::new(ctx.clone())?;
@@ -327,8 +350,55 @@ fn eval_js_inner_with_source(
             Func::new(|input: String| -> String { md5_hex(&input) }),
         )?;
         java_obj.set(
+            "md5Encode16",
+            Func::new(|input: String| -> String {
+                let full = md5_hex(&input);
+                full.chars().take(16).collect()
+            }),
+        )?;
+        java_obj.set(
             "timeFormat",
             Func::new(|timestamp: i64| -> String { java_time_format(timestamp) }),
+        )?;
+        java_obj.set(
+            "timeFormatUTC",
+            Func::new(|timestamp: i64| -> String {
+                chrono::Utc
+                    .timestamp_millis_opt(timestamp)
+                    .single()
+                    .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S").to_string())
+                    .unwrap_or_default()
+            }),
+        )?;
+        java_obj.set(
+            "base64DecodeToByteArray",
+            Func::new(|input: String| -> String {
+                base64::engine::general_purpose::STANDARD
+                    .decode(input)
+                    .map(|bytes| bytes.iter().map(|b| *b as char).collect::<String>())
+                    .unwrap_or_default()
+            }),
+        )?;
+        java_obj.set(
+            "toast",
+            Func::new(|msg: String| -> bool {
+                tracing::info!(target: "reader_core::js_source::toast", "{msg}");
+                true
+            }),
+        )?;
+        java_obj.set(
+            "longToast",
+            Func::new(|msg: String| -> bool {
+                tracing::info!(target: "reader_core::js_source::toast", "long: {msg}");
+                true
+            }),
+        )?;
+        java_obj.set(
+            "log",
+            Func::new(|msg: String| -> bool {
+                tracing::info!(target: "reader_core::js_source::log", "{msg}");
+                true
+            }),
         )?;
         java_obj.set(
             "androidId",
@@ -394,7 +464,10 @@ fn eval_js_inner_with_source(
         )?;
         java_obj.set(
             "startBrowser",
-            Func::new(|_url: String| -> String { "".to_string() }),
+            Func::new(|url: String| -> String {
+                tracing::warn!(target: "reader_core::js_source", "startBrowser called but not supported on this platform: {url}");
+                "".to_string()
+            }),
         )?;
         java_obj.set(
             "aesBase64DecodeToString",
