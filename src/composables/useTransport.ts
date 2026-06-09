@@ -25,6 +25,7 @@
  * ```
  */
 
+import { log } from "@/utils/logger";
 import { safeRandomUUID } from "@/utils/uuid";
 import { hasNativeTransport, isHarmonyNative, isTauri } from "./useEnv";
 
@@ -174,14 +175,14 @@ class WsTransport {
     try {
       this.ws = new WebSocket(this.wsUrl);
     } catch (e) {
-      console.error("[Transport] WebSocket 创建失败:", e);
+      log.error("Transport", "WebSocket 创建失败", { error: e });
       this.state = "error";
       this.scheduleReconnect();
       return;
     }
 
     this.ws.onopen = () => {
-      console.log("[Transport] WebSocket 已连接:", this.wsUrl);
+      log.info("Transport", "WebSocket 已连接", { url: this.wsUrl });
       this.state = "connected";
       this.reconnectAttempts = 0;
 
@@ -193,14 +194,14 @@ class WsTransport {
     };
 
     this.ws.onclose = (e) => {
-      console.warn("[Transport] WebSocket 断开:", e.code, e.reason);
+      log.warn("Transport", "WebSocket 断开", { code: e.code, reason: e.reason });
       this.state = "disconnected";
       this.rejectAllPending("WebSocket 连接断开");
       this.scheduleReconnect();
     };
 
     this.ws.onerror = (e) => {
-      console.error("[Transport] WebSocket 错误:", e);
+      log.error("Transport", "WebSocket 错误", { error: e });
       this.state = "error";
     };
 
@@ -223,7 +224,7 @@ class WsTransport {
     try {
       msg = JSON.parse(raw);
     } catch {
-      console.warn("[Transport] 无法解析 WS 消息:", raw.slice(0, 200));
+      log.warn("Transport", "无法解析 WS 消息", { raw: raw.slice(0, 200) });
       return;
     }
 
@@ -248,7 +249,7 @@ class WsTransport {
           try {
             handler(eventObj);
           } catch (e) {
-            console.error(`[Transport] 事件处理器错误 [${msg.event}]:`, e);
+            log.error("Transport", `事件处理器错误 [${msg.event}]`, { error: e });
           }
         }
       }
@@ -317,7 +318,7 @@ class WsTransport {
       return;
     }
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.error("[Transport] 已达最大重连次数，停止重连");
+      log.error("Transport", "已达最大重连次数，停止重连");
       return;
     }
 
@@ -327,7 +328,7 @@ class WsTransport {
     );
     this.reconnectAttempts++;
 
-    console.log(`[Transport] ${delay}ms 后重连（第 ${this.reconnectAttempts} 次）...`);
+    log.info("Transport", "重连调度", { delay, attempt: this.reconnectAttempts });
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.doConnect();
@@ -458,7 +459,7 @@ function ensureHarmonyBridgeRuntime(): HarmonyUiBridgeRuntime {
         try {
           handler(eventObj as { payload: unknown });
         } catch (error) {
-          console.error(`[Transport] Harmony 本地事件广播错误 [${event}]:`, error);
+          log.error("Transport", `Harmony 本地事件广播错误 [${event}]`, { error });
         }
       }
     },
@@ -491,7 +492,7 @@ function ensureHarmonyBridgeRuntime(): HarmonyUiBridgeRuntime {
   try {
     nativeBridge.subscribe?.();
   } catch (error) {
-    console.warn("[Transport] Harmony 事件订阅失败:", error);
+    log.warn("Transport", "Harmony 事件订阅失败", { error });
   }
 
   harmonyBridgeRuntime = bridgeObj;
@@ -522,7 +523,7 @@ async function probeWsServer(): Promise<boolean> {
     const defaultUrl = `${protocol}//${hostname}:7688/ws`;
     const url = customUrl || defaultUrl;
 
-    console.log("[Transport] 探测 WebSocket 服务:", url);
+    log.info("Transport", "探测 WebSocket 服务", { url });
 
     const transport = getWsTransport();
 
@@ -531,7 +532,7 @@ async function probeWsServer(): Promise<boolean> {
       wsProbed = true;
       wsAvailable = false;
       wsProbePromise = null;
-      console.warn("[Transport] WebSocket 探测超时");
+      log.warn("Transport", "WebSocket 探测超时");
       resolve(false);
     }, 5000);
 
@@ -542,7 +543,7 @@ async function probeWsServer(): Promise<boolean> {
         wsProbed = true;
         wsAvailable = true;
         wsProbePromise = null;
-        console.log("[Transport] WebSocket 服务可用");
+        log.info("Transport", "WebSocket 服务可用");
         resolve(true);
       })
       .catch(() => {
@@ -550,7 +551,7 @@ async function probeWsServer(): Promise<boolean> {
         wsProbed = true;
         wsAvailable = false;
         wsProbePromise = null;
-        console.warn("[Transport] WebSocket 服务不可用");
+        log.warn("Transport", "WebSocket 服务不可用");
         resolve(false);
       });
   });
@@ -688,7 +689,7 @@ export async function transportEmit<T = unknown>(event: string, payload?: T): Pr
       try {
         handler(eventObj as { payload: unknown });
       } catch (e) {
-        console.error(`[Transport] 本地事件广播错误 [${event}]:`, e);
+        log.error("Transport", `本地事件广播错误 [${event}]`, { error: e });
       }
     }
   }

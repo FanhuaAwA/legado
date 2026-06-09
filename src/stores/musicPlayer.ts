@@ -12,6 +12,7 @@ import { computed, ref } from "vue";
 import { isTauri } from "@/composables/useEnv";
 import { toFileSrcSync } from "@/composables/useFileSrc";
 import { getFrontendStorageItem, setFrontendStorageJson } from "@/composables/useFrontendStorage";
+import { log } from "@/utils/logger";
 import { useScriptBridgeStore } from "./scriptBridge";
 
 const STORAGE_NAMESPACE = "music.player";
@@ -267,22 +268,15 @@ export const useMusicPlayerStore = defineStore("musicPlayer", () => {
         3: "MEDIA_ERR_DECODE",
         4: "MEDIA_ERR_SRC_NOT_SUPPORTED",
       };
-      console.error(
-        "[MusicPlayer] 音频加载失败",
-        "\n  code:",
+      log.error("MusicPlayer", "音频加载失败", {
         code,
-        `(${codeNames[code] ?? "unknown"})`,
-        "\n  message:",
-        msg || "（空）",
-        "\n  el.src (完整):",
-        url || "（空）",
-        "\n  networkState:",
-        el.networkState,
-        "\n  readyState:",
-        el.readyState,
-        "\n  currentTrack:",
-        tracks.value[currentIndex.value],
-      );
+        codeName: codeNames[code] ?? "unknown",
+        message: msg || "（空）",
+        src: url || "（空）",
+        networkState: el.networkState,
+        readyState: el.readyState,
+        currentTrack: tracks.value[currentIndex.value],
+      });
       errorText.value = `音频加载失败（code=${code} ${codeNames[code] ?? ""}）${msg ? ": " + msg : ""}${url ? "\nURL: " + url.slice(0, 200) : ""}`;
       isPlaying.value = false;
     });
@@ -343,34 +337,29 @@ export const useMusicPlayerStore = defineStore("musicPlayer", () => {
       throw new Error("未设置当前歌单");
     }
     const bridge = useScriptBridgeStore();
-    console.log(
-      "[MusicPlayer] 开始解析音频 URL",
-      "\n  fileName:",
-      ctx.fileName,
-      "\n  chapterUrl:",
-      track.chapterUrl,
-      "\n  trackName:",
-      track.name,
-    );
+    log.info("MusicPlayer", "开始解析音频 URL", {
+      fileName: ctx.fileName,
+      chapterUrl: track.chapterUrl,
+      trackName: track.name,
+    });
     const raw = await bridge.runChapterContent(ctx.fileName, track.chapterUrl);
-    console.log("[MusicPlayer] runChapterContent 原始返回:", raw);
+    log.info("MusicPlayer", "runChapterContent 原始返回", { raw });
     const raw_url = extractAudioUrl(raw);
-    console.log("[MusicPlayer] extractAudioUrl 提取结果:", raw_url || "（空）");
+    log.info("MusicPlayer", "extractAudioUrl 提取结果", { rawUrl: raw_url || "（空）" });
     if (raw_url.length === 0) {
       const preview = rawToText(raw).slice(0, 300);
-      console.error("[MusicPlayer] 未提取到 URL，书源完整返回:", rawToText(raw));
+      log.error("MusicPlayer", "未提取到 URL", { sourceReturn: rawToText(raw) });
       throw new Error(`未解析到音频地址。书源返回：${preview || "（空）"}`);
     }
     const url = normalizeAudioUrl(raw_url, track.chapterUrl);
-    console.log("[MusicPlayer] 规范化后音频 URL:", url);
+    log.info("MusicPlayer", "规范化后音频 URL", { url });
 
     // Tauri 环境：通过后端代理下载（携带正确 Referer），缓存后返回本地路径
     if (isTauri) {
       const { invoke } = await import("@tauri-apps/api/core");
-      console.log(
-        "[MusicPlayer] 通过 Tauri audio_resolve_cache 代理下载，referer:",
-        track.chapterUrl,
-      );
+      log.info("MusicPlayer", "通过 Tauri audio_resolve_cache 代理下载", {
+        referer: track.chapterUrl,
+      });
       try {
         const result = await invoke<{ localPath: string }>("audio_resolve_cache", {
           request: {
@@ -379,16 +368,13 @@ export const useMusicPlayerStore = defineStore("musicPlayer", () => {
           },
         });
         const localUrl = toFileSrcSync(result.localPath);
-        console.log(
-          "[MusicPlayer] 音频已缓存，本地路径:",
-          result.localPath,
-          "\n  播放 URL:",
-          localUrl,
-        );
+        log.info("MusicPlayer", "音频已缓存", { localPath: result.localPath, playUrl: localUrl });
         track.audioUrl = localUrl;
         return localUrl;
       } catch (proxyErr) {
-        console.warn("[MusicPlayer] audio_resolve_cache 失败，回退直接播放:", proxyErr);
+        log.warn("MusicPlayer", "audio_resolve_cache 失败，回退直接播放", {
+          error: String(proxyErr),
+        });
         // 代理失败时仍尝试直接播放（非 Referer 限制的源可能成功）
       }
     }
@@ -414,24 +400,20 @@ export const useMusicPlayerStore = defineStore("musicPlayer", () => {
       if (playId !== pendingPlayId) {
         return; // 已被新的请求覆盖
       }
-      console.log(
-        "[MusicPlayer] 准备播放",
-        "\n  index:",
-        safeIndex,
-        "\n  name:",
-        track.name,
-        "\n  audioUrl:",
-        url,
-      );
+      log.info("MusicPlayer", "准备播放", {
+        index: safeIndex,
+        name: track.name,
+        audioUrl: url,
+      });
       el.src = url;
       currentTime.value = 0;
       duration.value = 0;
       try {
         await el.play();
-        console.log("[MusicPlayer] el.play() 成功");
+        log.info("MusicPlayer", "el.play() 成功");
       } catch (err) {
         // 自动播放策略导致的异常需要用户交互后重试
-        console.error("[MusicPlayer] el.play() 异常:", err, "\n  src:", el.src);
+        log.error("MusicPlayer", "el.play() 异常", { error: String(err), src: el.src });
         errorText.value = `播放失败：${err instanceof Error ? err.message : String(err)}`;
       }
       persist();

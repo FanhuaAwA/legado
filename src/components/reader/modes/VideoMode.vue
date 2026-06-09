@@ -2,6 +2,7 @@
 import { storeToRefs } from "pinia";
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useAppConfigStore } from "@/stores";
+import { log } from "@/utils/logger";
 import type { IVideoPlayer, VideoPlayerType, VideoSource } from "../video/types";
 import { createVideoPlayer } from "../video/createPlayer";
 import { parseVideoSource } from "../video/types";
@@ -57,18 +58,17 @@ async function initPlayer(content: string) {
       ? currentSource?.m3u8Content === newSource.m3u8Content
       : currentSource?.url === newSource.url);
   if (isSameSource) {
-    console.debug("[VideoMode] initPlayer skip: same source");
+    log.info("VideoMode", "initPlayer skip: same source");
     return;
   }
 
   // 占用当前代次，后续所有异步检查点都必须验证代次一致
   const myGen = ++initGeneration;
-  console.debug(
-    "[VideoMode] initPlayer start gen=%d type=%s url=%s",
-    myGen,
-    videoPlayerType.value,
-    newSource.url,
-  );
+  log.info("VideoMode", "initPlayer start", {
+    gen: myGen,
+    type: videoPlayerType.value,
+    url: newSource.url,
+  });
 
   // 清理旧实例
   destroyPlayer();
@@ -77,7 +77,7 @@ async function initPlayer(content: string) {
   isPausedState.value = true;
 
   if (!content.trim() || !playerContainer.value) {
-    console.debug("[VideoMode] initPlayer abort gen=%d: empty content or no container", myGen);
+    log.info("VideoMode", "initPlayer abort: empty content or no container", { gen: myGen });
     return;
   }
 
@@ -88,18 +88,17 @@ async function initPlayer(content: string) {
 
     // 检查点 1：await createVideoPlayer 期间，可能组件已卸载或新的 initPlayer 已发起
     if (componentDestroyed || myGen !== initGeneration) {
-      console.warn(
-        "[VideoMode] initPlayer discard gen=%d (destroyed=%s currentGen=%d): created player not used, destroying immediately",
-        myGen,
-        componentDestroyed,
-        initGeneration,
-      );
+      log.warn("VideoMode", "initPlayer discard: created player not used, destroying immediately", {
+        gen: myGen,
+        destroyed: componentDestroyed,
+        currentGen: initGeneration,
+      });
       pendingPlayer.destroy();
       return;
     }
 
     player = pendingPlayer;
-    console.debug("[VideoMode] initPlayer mounting gen=%d", myGen);
+    log.info("VideoMode", "initPlayer mounting", { gen: myGen });
 
     // await mount 确保内部播放器实例已创建，再注册事件
     // 若书源直接返回 m3u8 内容，创建 Blob URL 供播放器使用
@@ -108,25 +107,24 @@ async function initPlayer(content: string) {
       const blobUrl = URL.createObjectURL(blob);
       currentBlobUrl = blobUrl;
       currentSource = { ...currentSource, url: blobUrl };
-      console.debug("[VideoMode] created blob URL for inline m3u8 content");
+      log.info("VideoMode", "created blob URL for inline m3u8 content");
     }
 
     await player.mount(playerContainer.value!, currentSource);
 
     // 检查点 2：mount 也是异步的，可能在此期间组件已卸载或代次已更新
     if (componentDestroyed || myGen !== initGeneration) {
-      console.warn(
-        "[VideoMode] initPlayer discard after mount gen=%d (destroyed=%s currentGen=%d)",
-        myGen,
-        componentDestroyed,
-        initGeneration,
-      );
+      log.warn("VideoMode", "initPlayer discard after mount", {
+        gen: myGen,
+        destroyed: componentDestroyed,
+        currentGen: initGeneration,
+      });
       player.destroy();
       player = null;
       return;
     }
 
-    console.debug("[VideoMode] initPlayer ready gen=%d", myGen);
+    log.info("VideoMode", "initPlayer ready", { gen: myGen });
 
     // 注册事件
     player.on("play", onPlay);
@@ -143,7 +141,7 @@ async function initPlayer(content: string) {
     // 若已被更新代次抢占，不覆盖新实例的错误状态
     if (myGen === initGeneration) {
       playerError.value = `播放器初始化失败: ${err instanceof Error ? err.message : String(err)}`;
-      console.error("[VideoMode] initPlayer error gen=%d:", myGen, err);
+      log.error("VideoMode", "initPlayer error", { gen: myGen, error: err });
     }
   }
 }
@@ -161,7 +159,7 @@ function destroyPlayer() {
   if (player) {
     // 上报最终进度
     reportProgress();
-    console.debug("[VideoMode] destroyPlayer: unregistering events and destroying player");
+    log.info("VideoMode", "destroyPlayer: unregistering events and destroying player");
     player.off("play", onPlay);
     player.off("pause", onPause);
     player.off("loadedmetadata", onLoadedMetadata);
@@ -221,7 +219,7 @@ function onEnded() {
 
 function onError() {
   playerError.value = "视频播放出错，请检查视频源是否有效";
-  console.error("[VideoMode] player error event, source url=%s", currentSource?.url);
+  log.error("VideoMode", "player error event", { sourceUrl: currentSource?.url });
 }
 
 function reportProgress() {
@@ -326,7 +324,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   componentDestroyed = true;
-  console.debug("[VideoMode] onBeforeUnmount: destroying player");
+  log.info("VideoMode", "onBeforeUnmount: destroying player");
   destroyPlayer();
 });
 </script>

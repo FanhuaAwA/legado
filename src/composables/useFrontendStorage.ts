@@ -1,15 +1,16 @@
 import { invokeWithTimeout } from "./useInvoke";
 import { transportEmit } from "./useTransport";
+import { log } from "@/utils/logger";
 
 const STORAGE_EVENT = "legado:frontend-storage-changed";
 const TIMEOUT = 10_000;
 
-/** 向日志窗口发送调试信息（同时保留 console.log） */
+/** 向日志窗口发送调试信息（同时记录到结构化日志） */
 export function dbgLog(msg: string, warn = false) {
   if (warn) {
-    console.warn(msg);
+    log.warn("FrontendStorage", msg);
   } else {
-    console.log(msg);
+    log.info("FrontendStorage", msg);
   }
   void transportEmit("app:log", { message: msg }).catch(() => {});
 }
@@ -243,18 +244,19 @@ export async function listFrontendStorageNamespaces(): Promise<FrontendStorageNa
  */
 export async function initFrontendStorage(): Promise<void> {
   try {
-    console.log("[Storage] initFrontendStorage: 开始从后端拉取所有命名空间");
+    log.info("FrontendStorage", "initFrontendStorage: 开始从后端拉取所有命名空间");
     const namespaces = await invokeWithTimeout<FrontendStorageNamespaceSummary[]>(
       "frontend_storage_list_namespaces",
       undefined,
       5_000,
     ).catch((err) => {
-      console.warn("[Storage] initFrontendStorage: list_namespaces 失败 →", String(err));
+      log.warn("FrontendStorage", "initFrontendStorage: list_namespaces 失败", String(err));
       return [] as FrontendStorageNamespaceSummary[];
     });
 
-    console.log(
-      `[Storage] initFrontendStorage: 共 ${namespaces.length} 个命名空间:`,
+    log.info(
+      "FrontendStorage",
+      `initFrontendStorage: 共 ${namespaces.length} 个命名空间`,
       namespaces.map((n) => n.namespace).join(", ") || "（空）",
     );
 
@@ -262,7 +264,7 @@ export async function initFrontendStorage(): Promise<void> {
       namespaces.map(async ({ namespace }) => {
         const state = getNamespaceState(namespace);
         if (state.loaded) {
-          console.log(`[Storage] ${namespace}: 已在缓存，跳过`);
+          log.info("FrontendStorage", `${namespace}: 已在缓存，跳过`);
           return;
         }
         const entries = await invokeWithTimeout<FrontendStorageEntry[]>(
@@ -270,13 +272,14 @@ export async function initFrontendStorage(): Promise<void> {
           { namespace },
           5_000,
         ).catch((err) => {
-          console.warn(`[Storage] ${namespace}: list 失败 →`, String(err));
+          log.warn("FrontendStorage", `${namespace}: list 失败`, String(err));
           return [] as FrontendStorageEntry[];
         });
         state.values = Object.fromEntries(entries.map((e) => [e.key, e.value]));
         state.loaded = true;
-        console.log(
-          `[Storage] ${namespace}: 加载完成，${entries.length} 条记录`,
+        log.info(
+          "FrontendStorage",
+          `${namespace}: 加载完成，${entries.length} 条记录`,
           entries.map((e) => e.key).join(", ") || "（空）",
         );
       }),

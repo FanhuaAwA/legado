@@ -18,16 +18,16 @@ format.baseline = passed
   mixed_with_feature_changes = false
 ```
 
-## 构建门禁状态（2026-06-09 13:20）
+## 构建门禁状态（2026-06-09 17:20）
 
 | 门禁                             | 状态 | 备注                              |
 | -------------------------------- | ---- | --------------------------------- |
 | `cargo check -p reader-core`     | PASS |                                   |
 | `cargo check -p legado-tauri`    | PASS |                                   |
-| `cargo test -p reader-core`      | PASS | 28 passed, 1 live-network ignored |
-| `cargo test -p legado-tauri`     | PASS | 0 tests                           |
+| `cargo test -p reader-core`      | PASS | 32 passed, 1 live-network ignored |
+| `cargo test -p legado-tauri`     | PASS | 5 passed                          |
 | `pnpm build`                     | PASS | eval/chunk-size warning           |
-| `pnpm lint`                      | PASS | 64 warnings, 0 errors             |
+| `pnpm lint`                      | PASS | 73 warnings, 0 errors             |
 | `pnpm run build:android:release` | PASS | unsigned APK                      |
 | `pnpm run build:windows:release` | PASS |                                   |
 
@@ -53,8 +53,8 @@ format.baseline = passed
 | AUDIT-004 | `scripts/copy-build-result.mjs` 存在且正常 | 已确认                           |
 | AUDIT-005 | `booksource_eval` 为 UNSUPPORTED           | 已修复（Iteration 11）           |
 | AUDIT-006 | `config_list_scopes` 返回空                | 已修复（Iteration 9）            |
-| AUDIT-007 | 前端裸 `console.log`                       | 待迁移到结构化日志               |
-| AUDIT-008 | 前端 TODO 和屏蔽逻辑                       | 待评估                           |
+| AUDIT-007 | 前端裸 `console.log`                       | 已迁移完成（2026-06-09） — 剩余4处均为有意使用 |
+| AUDIT-008 | 前端 TODO 和屏蔽逻辑                       | 已评估（9 处均为合法功能门禁）   |
 | AUDIT-009 | reader-core 测试内 `unwrap()`              | 测试中可接受                     |
 
 ## 书源兼容状态

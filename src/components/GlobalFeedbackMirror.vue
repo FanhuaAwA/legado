@@ -3,6 +3,7 @@ import { useMessage, type MessageApi, type MessageOptions, type MessageReactive 
 import { isHarmonyNative } from "@/composables/useEnv";
 import { invokeWithTimeout } from "@/composables/useInvoke";
 import { useScriptBridgeStore } from "@/stores";
+import { log } from "@/utils/logger";
 
 type MessageLevel = "success" | "error" | "warning" | "info";
 
@@ -46,20 +47,20 @@ function mirrorPrompt(level: MessageLevel, content: unknown): void {
       `[UI][${fallbackLevel}][mirror-fallback][${level}] ${text}`,
       "app",
     );
-    console.warn("[GlobalFeedbackMirror] 后端日志转发失败，已回退本地日志:", error);
+    log.warn("GlobalFeedback", "后端日志转发失败，已回退本地日志", error);
   });
 
   if (isHarmonyNative) {
     const line = `[PromptMirror][${level}] ${text}`;
     switch (level) {
       case "error":
-        console.error(line);
+        log.error("GlobalFeedback", line);
         break;
       case "warning":
-        console.warn(line);
+        log.warn("GlobalFeedback", line);
         break;
       default:
-        console.info(line);
+        log.info("GlobalFeedback", line);
         break;
     }
   }

@@ -20,6 +20,7 @@
 import { type DialogOptions, type DialogReactive, useDialog as useNaiveDialog } from "naive-ui";
 
 import { useBackStackStore } from "@/stores";
+import { log } from "@/utils/logger";
 
 type DialogApi = ReturnType<typeof useNaiveDialog>;
 type DialogMethod = "create" | "info" | "success" | "warning" | "error";
@@ -45,7 +46,7 @@ export function useBackAwareDialog(): DialogApi {
         // 用户可能返回 Promise；这里不阻塞，让 Naive UI 自己处理。
         void result;
       } catch (e) {
-        console.error("[useBackAwareDialog] onNegativeClick error", e);
+        log.error("Dialog", e instanceof Error ? e : String(e));
       }
       try {
         instance?.destroy();

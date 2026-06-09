@@ -18,6 +18,7 @@ import {
   getAppUpdateChannelLabel,
   type AppUpdateCheckResult,
 } from "@/utils/appUpdate";
+import { log } from "@/utils/logger";
 import tauriConfig from "../../src-tauri/tauri.conf.json";
 
 const message = useMessage();
@@ -119,7 +120,7 @@ async function openExternalUrl(url: string) {
       return;
     }
   } catch (error) {
-    console.warn("[AppUpdate] 打开外部链接失败，回退到 window.open:", error);
+    log.warn("AppUpdate", "打开外部链接失败，回退到 window.open", { error });
   }
   window.open(url, "_blank", "noopener,noreferrer");
 }

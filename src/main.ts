@@ -1,6 +1,6 @@
 // [BOOT] 前端入口打点：记录 JS 开始执行的时间，用于切割 Android 52s 启动空档
 const _bootT0 = Date.now();
-console.log(`[BOOT][Frontend] main.ts 开始执行 t=${_bootT0}`);
+log.info("App", "main.ts 开始执行", { bootT0: _bootT0 });
 window.__LEGADO_SET_BOOT_STAGE?.("main-ts-started");
 
 import naive from "naive-ui";
@@ -18,6 +18,7 @@ import "./styles/remote.css";
 import "./styles/components.css";
 import { initFrontendStorage } from "./composables/useFrontendStorage";
 import { analyticsPlugin } from "./plugins/analytics";
+import { log } from "@/utils/logger";
 
 // 当前保留 Naive UI 全量注册；若后续恢复 unplugin 按需导入，再同步移除此处。
 const app = createApp(App);
@@ -25,7 +26,7 @@ app.use(createPinia());
 app.use(analyticsPlugin);
 app.config.errorHandler = (err, instance, info) => {
   const details = err instanceof Error ? (err.stack ?? err.message) : String(err);
-  console.error("[BOOT][Frontend] Vue error", { err, info, instance });
+  log.error("App", err instanceof Error ? err : details, { info, instance });
   window.__LEGADO_SHOW_BOOT_ERROR?.(`Vue 渲染异常 (${info}):\n${details}`);
 };
 // 挂载后记录首屏到达时间，并移除骨架屏
@@ -34,12 +35,12 @@ app.use(naive);
 // 在挂载前从后端预取所有持久化数据，确保 useDynamicConfig 的 ready 可立即 resolve，
 // 不再依赖 localStorage 作为同步备份，彻底消除脏数据干扰。
 await initFrontendStorage();
-console.log(`[BOOT][Frontend] 前端存储预取完成 cost=${Date.now() - _bootT0}ms`);
+log.info("App", "前端存储预取完成", { cost: Date.now() - _bootT0 });
 
 try {
   app.mount("#app");
   window.__LEGADO_SET_BOOT_STAGE?.("app-mounted");
-  console.log(`[BOOT][Frontend] App 挂载完成 cost=${Date.now() - _bootT0}ms`);
+  log.info("App", "App 挂载完成", { cost: Date.now() - _bootT0 });
 } catch (err) {
   const details = err instanceof Error ? (err.stack ?? err.message) : String(err);
   window.__LEGADO_SHOW_BOOT_ERROR?.(`App 挂载失败:\n${details}`);

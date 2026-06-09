@@ -15,6 +15,7 @@
  */
 
 import { ref, computed, type ComputedRef } from "vue";
+import { log } from "@/utils/logger";
 
 /** 是否运行在 Tauri 原生壳中 */
 export const isTauri: boolean = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -100,7 +101,7 @@ export async function initPlatformFromRust(): Promise<void> {
       const raw = await invoke<string>("get_platform");
       _platform.value = map[raw] ?? raw;
     } catch (e) {
-      console.warn("[useEnv] get_platform 失败，保持 UA 检测结果:", e);
+      log.warn("Env", "get_platform 失败，保持 UA 检测结果", e);
     }
     return;
   }

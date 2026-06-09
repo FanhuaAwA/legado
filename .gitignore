@@ -48,3 +48,6 @@ reader-rust/
 # Claude 相关文件
 .claude/
 .vscode/sftp.json
+
+# 门禁报告产物
+reports/

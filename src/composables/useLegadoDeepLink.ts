@@ -1,6 +1,7 @@
 // useLegadoDeepLink — 解析 Legado 深链接并注册原生/应用内链接监听。
 import { isTauri, isHarmonyNative } from "./useEnv";
 import { eventListen } from "./useEventBus";
+import { log } from "@/utils/logger";
 
 const LEGADO_SCHEME = "legado:";
 const DEEP_LINK_DEDUPE_MS = 1000;
@@ -241,7 +242,7 @@ export async function installLegadoDeepLinkListener(handler: DeepLinkHandler): P
       const unlisten = await onOpenUrl((urls) => deliver(urls));
       unlisteners.push(unlisten);
     } catch (e) {
-      console.warn("[LegadoDeepLink] Tauri deep-link 初始化失败:", e);
+      log.warn("DeepLink", "Tauri deep-link 初始化失败", e);
     }
   }
 

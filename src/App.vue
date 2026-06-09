@@ -44,6 +44,7 @@ import {
   useShellStatusStore,
   useBookSourceStore,
 } from "./stores";
+import { log } from "@/utils/logger";
 // ScriptDialog 按需懒加载：仅在 Boa 引擎触发弹窗时才加载，不阻塞首屏
 const ScriptDialog = defineAsyncComponent(() => import("./components/ScriptDialog.vue"));
 const FrontendPluginDialog = defineAsyncComponent(
@@ -170,7 +171,7 @@ watch(
       // 安全兜底：最长 15s 后强制移除遮罩，防止异步组件加载失败导致永久转圈
       _maskSafetyTimer = setTimeout(() => {
         if (showLoadingMask.value) {
-          console.warn("[App] 视图加载超时，强制移除遮罩:", _pendingViewId);
+          log.warn("App", "视图加载超时，强制移除遮罩", { viewId: _pendingViewId });
           _pendingViewId = "";
           showLoadingMask.value = false;
         }
@@ -467,7 +468,7 @@ function _onPopState() {
 
 onMounted(() => {
   // [BOOT] App 首屏 mounted 打点，配合 main.ts 的 _bootT0 计算前端首帧耗时
-  console.log(`[BOOT][Frontend] App.vue onMounted t=${Date.now()}`);
+  log.info("App", "App.vue onMounted", { t: Date.now() });
   void ensureAppConfig();
   void shellStatusStore.install();
   // 全局移动端返回（Android/Tauri/Harmony 映射到 popstate）与 Esc/BrowserBack 共用同一套关闭链

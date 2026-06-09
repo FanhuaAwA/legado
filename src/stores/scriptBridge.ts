@@ -15,6 +15,7 @@ import {
 } from "@/features/reader/services/readerParagraphComments";
 import { safeRandomUUID } from "@/utils/uuid";
 import { usePreferencesStore } from "./preferences";
+import { log } from "@/utils/logger";
 
 // ── 类型定义（与 useScriptBridge 保持一致）──────────────────────────────
 
@@ -428,7 +429,7 @@ export const useScriptBridgeStore = defineStore("scriptBridge", () => {
 
   // 确保在 isTauri 环境下，initialize 在首次访问 store 时自动触发
   if (isTauri && !state.initialized) {
-    initialize().catch((e) => console.error("[ScriptBridgeStore] 初始化失败:", e));
+    initialize().catch((e) => log.error("ScriptBridge", e));
   }
 
   return {

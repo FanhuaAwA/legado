@@ -29,6 +29,7 @@
  *   backStack.detach(handler);
  */
 import { defineStore } from "pinia";
+import { log } from "@/utils/logger";
 
 export type BackHandler = () => void;
 
@@ -200,7 +201,7 @@ export const useBackStackStore = defineStore("backStack", () => {
     try {
       entry.handler();
     } catch (e) {
-      console.error("[backStack] handler error", e);
+      log.error("BackStack", e instanceof Error ? e : String(e));
     }
     return true;
   }
