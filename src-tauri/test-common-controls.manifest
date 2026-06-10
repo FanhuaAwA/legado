@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- 仅用于 cargo 测试二进制（见 build.rs）：tauri/test mock runtime 链入的
+     TaskDialogIndirect 来自 Common Controls v6，测试 exe 不经过 tauri-build 的
+     manifest 注入，缺少本文件会在加载时报 STATUS_ENTRYPOINT_NOT_FOUND。 -->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*"
+      />
+    </dependentAssembly>
+  </dependency>
+</assembly>

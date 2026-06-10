@@ -1,5 +1,23 @@
 # AI Iteration Log
 
+## 记录标题：2026-06-10 前后端分离专项（纪律文档 + R-P2-011 + R-P2-008 阶段 1+2 试点）
+
+本轮目标：按用户当日明确要求（项目后期必须支持前后端分离，后端上服务器），建立架构纪律文档体系，修复前端绕层违规，落地 WS 命令服务端试点。用户指定任务按总纲 59.2 优先级 1 执行，R-P2-008/011 提前于 R-P2-003。
+
+当前结论：纪律文档已建立并入手册强制阅读链；R-P2-011 closed；R-P2-008 in_progress（阶段 1+2 试点全部门禁通过 + 真实 exe WS 实连冒烟 PASS）；新发现 R-P2-012（预取链路在所有传输方式下断裂）已登记。项目仍为 incomplete。
+
+本轮三个任务与证据：
+
+1. DOC-SEP-001（commit 6c8c944）：新建 `docs/frontend-backend-separation.md`（形态 A/B 定义、WS 协议契约、7 条硬约束、违规登记、四阶段路线、验收标准）；总纲新增第 60 节并加入第 0 节强制阅读链；README 增架构原则小节。
+2. R-P2-011（commit d265a59）：`src/stores/prefetch.ts` 改环境分流（鸿蒙 → DOM CustomEvent 保留、Tauri/WS → useEventBus 统一事件层）；`src/utils/logger.ts` 评估后保留直连并列入纪律文档第 4 节例外（透传会形成日志放大回路）。证据 `reports/gates/2026-06-10-2018-R-P2-011-transport-bypass/summary.md`。
+3. R-P2-008 阶段 1+2 试点（本 commit）：`src-tauri/src/commands/router.rs`（单一分发入口，复用原命令函数零复制，match 即白名单，62 命令）+ `src-tauri/src/ws_server.rs`（127.0.0.1:7688 `/ws`，useTransport 协议，事件转发）+ `src-tauri/tests/ws_router.rs`（9 集成测试）。新依赖 tokio-tungstenite 0.24 / dev 依赖 tauri["test"]、tempfile（理由见 gate 报告）。Windows 踩坑已修复并固化：tauri/test mock runtime 链入 TaskDialogIndirect（comctl32 v6），测试 exe 缺 manifest 报 STATUS_ENTRYPOINT_NOT_FOUND，build.rs 用 `cargo:rustc-link-arg-tests` 注入 `test-common-controls.manifest`（仅测试目标）。证据 `reports/gates/2026-06-10-2051-R-P2-008-ws-pilot/summary.md`（含实连冒烟输出）。
+
+验证命令：`cargo check -p legado-tauri`、`cargo check -p reader-core`、`cargo test -p legado-tauri`（lib 1 + ws_router 9 passed）、`cargo test -p reader-core`（31 passed / 9 ignored）、`node scripts/ci/check-command-contract.mjs`（164/163/163 无回归）、`pnpm lint`（0/0）、`pnpm build`、真实 exe + Node WebSocket 客户端冒烟（SMOKE PASS）。
+
+下一轮第一件事：R-P2-008 浏览器闭环验收——启动 `pnpm dev`（或 web_server 托管 dist），用真实浏览器打开前端，确认 useTransport 自动探测连上 `ws://localhost:7688/ws`，逐步走「书源列表 → 搜索 → 加书架 → 目录 → 正文 → 进度保存」，把过程中报 NOT_ROUTED 的命令逐个评估入白名单（`src-tauri/src/commands/router.rs` 的 match + `src-tauri/tests/ws_router.rs` 补测试）。注意：浏览器闭环会先撞上 R-P2-012（预取链路断裂）——属预期，按审计文档 R-P2-012 行单独修。之后按序：阶段 3 安全边界（LAN 显式开启 + `?token=` 协议扩展 + capabilities 按 transport），阶段 4 无头二进制（单独立项）。
+
+不得重复做的事：不要再排查测试 exe 的 STATUS_ENTRYPOINT_NOT_FOUND（根因已定位并修复，见 build.rs 注释）；不要把 logger.ts 直连 invoke 当成漏网违规修改（已是登记例外）；不要在 router 中复制命令函数体（必须直接调用原函数或共用 \_impl）。
+
 ## 记录标题：2026-06-10 R-P2-002 lint warnings 分类清零
 
 本轮目标：关闭 R-P2-002，按总纲第 56.10.6 节分类处理前端/脚本 lint warnings，不粗暴删除 `new Function`、书源脚本执行和插件执行能力。

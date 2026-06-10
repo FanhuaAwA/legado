@@ -4,6 +4,7 @@ mod comic_cover;
 mod config;
 mod extension;
 mod fonts;
+pub mod router;
 mod source;
 mod source_update;
 mod sync_misc;

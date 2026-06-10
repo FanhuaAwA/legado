@@ -1,5 +1,7 @@
-mod commands;
-mod state;
+// pub 是为了 tests/ 集成测试与未来无头服务端复用（R-P2-008），bin 入口仍只用 run()
+pub mod commands;
+pub mod state;
+pub mod ws_server;
 
 use reader_core::{ReaderCore, ReaderCoreOptions, SecureMode};
 use state::AppState;
@@ -103,6 +105,9 @@ pub fn run() {
                 "rust:log",
                 serde_json::json!({"message": "reader-core initialized"}),
             );
+            // R-P2-008 阶段 2 试点：应用内 WS 命令服务端（仅 127.0.0.1:7688，
+            // 协议与白名单见 docs/frontend-backend-separation.md）
+            ws_server::start(app_handle.clone());
             Ok(())
         })
         .invoke_handler(commands::handler())
