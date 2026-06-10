@@ -4,7 +4,7 @@ use crate::model::{
 };
 use crate::parser::{
     html,
-    js::{eval_js, eval_js_with_bindings, with_js_lib},
+    js::{eval_js, eval_js_with_bindings, with_js_source},
     jsonpath,
 };
 use crate::util::text::{apply_regex_replace, normalize_source_url};
@@ -85,7 +85,11 @@ impl RuleEngine {
     }
 
     pub fn search_books(&self, source: &BookSource, body: &str, base_url: &str) -> Vec<SearchBook> {
-        with_js_lib(source.js_lib.as_deref(), || {
+        with_js_source(
+            source.js_lib.as_deref(),
+            source.login_url.as_deref(),
+            Some(source.book_source_name.as_str()),
+            || {
             let rule = source.rule_search.clone().unwrap_or_default();
             let (list_rule, reverse) = normalize_list_rule(rule.book_list.as_deref().unwrap_or(""));
             let mode = self.detect_mode(list_rule, body);
@@ -118,7 +122,8 @@ impl RuleEngine {
                 results.reverse();
             }
             results
-        })
+            },
+        )
     }
 
     pub fn explore_books(
@@ -127,7 +132,11 @@ impl RuleEngine {
         body: &str,
         base_url: &str,
     ) -> Vec<SearchBook> {
-        with_js_lib(source.js_lib.as_deref(), || {
+        with_js_source(
+            source.js_lib.as_deref(),
+            source.login_url.as_deref(),
+            Some(source.book_source_name.as_str()),
+            || {
             let rule = source
                 .rule_explore
                 .clone()
@@ -156,7 +165,8 @@ impl RuleEngine {
                 results.reverse();
             }
             results
-        })
+            },
+        )
     }
 
     pub fn book_info(
@@ -166,7 +176,11 @@ impl RuleEngine {
         base_url: &str,
         book_url: &str,
     ) -> Book {
-        with_js_lib(source.js_lib.as_deref(), || {
+        with_js_source(
+            source.js_lib.as_deref(),
+            source.login_url.as_deref(),
+            Some(source.book_source_name.as_str()),
+            || {
             let rule = source.rule_book_info.clone().unwrap_or_default();
             let mut context = HashMap::new();
 
@@ -197,7 +211,8 @@ impl RuleEngine {
                 _ => {}
             }
             parse_book_info_html(source, body, base_url, &rule, book_url, &mut context)
-        })
+            },
+        )
     }
 
     pub fn chapter_list(
@@ -206,7 +221,11 @@ impl RuleEngine {
         body: &str,
         base_url: &str,
     ) -> (Vec<BookChapter>, Vec<String>) {
-        with_js_lib(source.js_lib.as_deref(), || {
+        with_js_source(
+            source.js_lib.as_deref(),
+            source.login_url.as_deref(),
+            Some(source.book_source_name.as_str()),
+            || {
             let rule = source.rule_toc.clone().unwrap_or_default();
             let mut context = HashMap::new();
             let (list_rule, reverse) =
@@ -254,11 +273,16 @@ impl RuleEngine {
                 chapter.index = index as i32;
             }
             (chapters, next_urls)
-        })
+            },
+        )
     }
 
     pub fn content(&self, source: &BookSource, body: &str, base_url: &str) -> String {
-        with_js_lib(source.js_lib.as_deref(), || {
+        with_js_source(
+            source.js_lib.as_deref(),
+            source.login_url.as_deref(),
+            Some(source.book_source_name.as_str()),
+            || {
             let rule = source.rule_content.clone().unwrap_or_default();
             let mut content_body = body.to_string();
 
@@ -367,7 +391,8 @@ impl RuleEngine {
             }
 
             String::new()
-        })
+            },
+        )
     }
 
     /// Process inline JavaScript {{...}} in rules

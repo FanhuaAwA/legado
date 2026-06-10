@@ -1,5 +1,5 @@
 use axum::{response::Json, routing::get, Router};
-use reader_core::parser::js::eval_js;
+use reader_core::parser::js::{eval_js, with_js_source};
 use reader_core::{ReaderCore, ReaderCoreOptions};
 use serde_json::json;
 
@@ -41,6 +41,25 @@ flag
 "#;
     let result = eval_js(script, "", "").unwrap();
     assert_eq!(result, "android-ok");
+}
+
+#[test]
+fn eval_js_handles_login_url_globals_shadowed_by_function_locals() {
+    let script = r#"
+function update() {
+  let $$$ = { z: 9 };
+  return $$$.z;
+}
+original = { z: 3, ml: 0 };
+try {
+  $$$ = JSON.parse("");
+} catch (e) {
+  $$$ = original;
+}
+JSON.stringify({ z: $$$.z, ml: $$$.ml, local: update() })
+"#;
+    let result = eval_js(script, "", "").unwrap();
+    assert_eq!(result, r#"{"z":3,"ml":0,"local":9}"#);
 }
 
 async fn js_search() -> Json<serde_json::Value> {
@@ -260,6 +279,8 @@ fn new_js_apis_work() {
     assert!(eval_js("java.toast('test')", "", "").is_ok());
     assert!(eval_js("java.longToast('test')", "", "").is_ok());
     assert!(eval_js("java.log('test')", "", "").is_ok());
+    assert!(eval_js("java.log(new Error('network error'))", "", "").is_ok());
+    assert!(eval_js("legado.log({ stage: 'compat' })", "", "").is_ok());
 
     // cookie.getKey
     eval_js("cookie.setCookie('ck_test', 'val')", "", "").unwrap();
@@ -272,9 +293,79 @@ fn new_js_apis_work() {
     let result = eval_js("cache.get('del_test')", "", "").unwrap();
     assert!(result.is_empty());
 
-    // source.putLoginInfo
+    // source.putLoginInfo / source.getLoginInfoMap
     eval_js("source.putLoginInfo('li_key', 'li_val')", "", "").unwrap();
-    let result = eval_js("source.getLoginInfoMap()", "", "").unwrap();
-    assert!(result.contains("li_key"));
-    assert!(result.contains("li_val"));
+    let result = eval_js("source.getLoginInfoMap().get('li_key')", "", "").unwrap();
+    assert_eq!(result, "li_val");
+}
+
+#[test]
+fn legado_rule_js_context_exposes_source_metadata_and_login_url() {
+    let result = with_js_source(
+        Some("function fromLib() { return source.bookSourceName; }"),
+        Some("loginReady = 7;"),
+        Some("番茄小说"),
+        || {
+            eval_js(
+                "eval(String(source.loginUrl)); `${fromLib()}:${loginReady}`",
+                "",
+                "https://reading.snssdk.com#mgz0326",
+            )
+        },
+    )
+    .unwrap();
+
+    assert_eq!(result, "番茄小说:7");
+}
+
+#[test]
+fn legado_runtime_key_value_and_json_helpers_match_rule_usage() {
+    let result = eval_js("java.put('tab_type', 3); java.get('tab_type')", "", "").unwrap();
+    assert_eq!(result, "3");
+
+    let result = eval_js(
+        "java.getString('$.data.name')",
+        r#"{"data":{"name":"番茄"}}"#,
+        "",
+    )
+    .unwrap();
+    assert_eq!(result, "番茄");
+
+    let result = eval_js(
+        r#"
+source.setVariable(JSON.stringify({ z: 3, ml: 0 }));
+const data = JSON.parse(source.getVariable());
+data.z + ':' + data.ml
+"#,
+        "",
+        "",
+    )
+    .unwrap();
+    assert_eq!(result, "3:0");
+}
+
+#[test]
+fn legado_android_and_ajaxall_shims_are_available_without_ui_side_effects() {
+    let result = eval_js(
+        r#"
+const javaImport = new JavaImporter();
+javaImport.importPackage(Packages.okhttp3);
+with (javaImport) {
+  brand = String(Packages.android.os.Build.BRAND);
+}
+[
+  brand.length > 0,
+  DigestUtil.md5Hex('hello').length,
+  StrUtil.reverse('abc'),
+  Base64.decode(Base64.encode('ok')),
+  java.ajaxAll([]).length,
+  java.refreshExplore()
+].join('|')
+"#,
+        "",
+        "",
+    )
+    .unwrap();
+
+    assert_eq!(result, "true|32|cba|ok|0|false");
 }

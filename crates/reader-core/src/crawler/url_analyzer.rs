@@ -1,7 +1,7 @@
 use crate::crawler::fetcher::{HttpMethod, RequestSpec};
 use crate::error::error::AppError;
 use crate::model::book_source::BookSource;
-use crate::parser::js::{eval_js, eval_js_url, with_js_lib};
+use crate::parser::js::{eval_js, eval_js_url, with_js_source};
 use crate::util::text::normalize_source_url;
 use encoding_rs::Encoding;
 use regex::Regex;
@@ -23,7 +23,11 @@ pub fn analyze_url(
     base_url: &str,
     source: &BookSource,
 ) -> Result<RequestSpec, AppError> {
-    with_js_lib(source.js_lib.as_deref(), || {
+    with_js_source(
+        source.js_lib.as_deref(),
+        source.login_url.as_deref(),
+        Some(source.book_source_name.as_str()),
+        || {
         let base_url = strip_url_options(&normalize_source_url(base_url)).to_string();
         let mut rule_url = m_url.to_string();
         let mut header_spec = source_header_spec(source)?;
@@ -148,7 +152,8 @@ pub fn analyze_url(
             web_js,
             web_view_delay_time,
         })
-    })
+        },
+    )
 }
 
 fn parse_url_options(options: &str) -> Result<Value, AppError> {
@@ -263,17 +268,24 @@ pub fn absolute_url(base: &str, url: &str) -> String {
 }
 
 fn eval_header_rule(rule: &str, source: &BookSource) -> Result<String, AppError> {
-    let trimmed = rule.trim();
-    if let Some(script) = trimmed.strip_prefix("@js:") {
-        return eval_js(script, "", &source.book_source_url).map_err(AppError::Internal);
-    }
-    if let Some(script) = trimmed
-        .strip_prefix("<js>")
-        .and_then(|value| value.strip_suffix("</js>"))
-    {
-        return eval_js(script, "", &source.book_source_url).map_err(AppError::Internal);
-    }
-    Ok(trimmed.to_string())
+    with_js_source(
+        source.js_lib.as_deref(),
+        source.login_url.as_deref(),
+        Some(source.book_source_name.as_str()),
+        || {
+            let trimmed = rule.trim();
+            if let Some(script) = trimmed.strip_prefix("@js:") {
+                return eval_js(script, "", &source.book_source_url).map_err(AppError::Internal);
+            }
+            if let Some(script) = trimmed
+                .strip_prefix("<js>")
+                .and_then(|value| value.strip_suffix("</js>"))
+            {
+                return eval_js(script, "", &source.book_source_url).map_err(AppError::Internal);
+            }
+            Ok(trimmed.to_string())
+        },
+    )
 }
 
 fn headers_from_value(value: &Value) -> Result<Vec<(String, String)>, AppError> {

@@ -1,3 +1,5 @@
+use reader_core::model::book_source::migrate_legacy_book_source_value;
+use reader_core::parser::js::{eval_js, with_js_source};
 use reader_core::{ReaderCore, ReaderCoreOptions, SourceRuntimeKind};
 
 /// 验证本地书源可成功导入并正确解析字段
@@ -5,6 +7,37 @@ use reader_core::{ReaderCore, ReaderCoreOptions, SourceRuntimeKind};
 fn read_source_fixture(path: &str) -> String {
     std::fs::read_to_string(path)
         .unwrap_or_else(|err| panic!("fixture file must be readable: {path}: {err}"))
+}
+
+fn migrated_source_probe_fields(
+    content: &str,
+) -> (Option<String>, Option<String>, String, String) {
+    let raw: serde_json::Value = serde_json::from_str(content).unwrap();
+    let source = raw
+        .as_array()
+        .and_then(|items| items.first())
+        .cloned()
+        .unwrap_or(raw);
+    let migrated = migrate_legacy_book_source_value(source);
+    let js_lib = migrated
+        .get("jsLib")
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string);
+    let login_url = migrated
+        .get("loginUrl")
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string);
+    let name = migrated
+        .get("bookSourceName")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let url = migrated
+        .get("bookSourceUrl")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string();
+    (js_lib, login_url, name, url)
 }
 
 #[tokio::test]
@@ -263,6 +296,22 @@ async fn fanqie_source_imports_and_parses_fields() {
         .unwrap();
 
     let content = read_source_fixture(r"E:\Book\番茄书源\fqfix0529_45469384.json");
+    let (js_lib, login_url, source_name, source_url) = migrated_source_probe_fields(&content);
+    let login_probe = with_js_source(
+        js_lib.as_deref(),
+        login_url.as_deref(),
+        Some(source_name.as_str()),
+        || {
+            eval_js(
+                "eval(String(source.loginUrl)); JSON.stringify({ z: Get('z'), ml: Get('ml') })",
+                "",
+                &source_url,
+            )
+        },
+    )
+    .expect("番茄 loginUrl 初始化脚本应可执行");
+    eprintln!("番茄 loginUrl 初始化: {login_probe}");
+
     let result = core.import_legacy_json_text(&content, false).await.unwrap();
 
     assert!(result.imported > 0, "番茄书源应能成功导入");
@@ -276,6 +325,66 @@ async fn fanqie_source_imports_and_parses_fields() {
     assert!(fanqie.name.contains("番茄"));
     assert!(matches!(fanqie.runtime, SourceRuntimeKind::LegadoRule));
     assert!(fanqie.enabled);
+}
+
+/// 番茄书源 R-P2-003 诊断：先验证 JS API shim 足以跑通 search → bookInfo。
+///
+/// toc/content 仍依赖规则引擎绑定真实 `book` 对象上下文，按审计队列后续 R-P2
+/// 处理；本测试不把该长期项伪装成已完成。
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live network + local private source fixture"]
+async fn fanqie_source_search_and_book_info() {
+    let temp = tempfile::tempdir().unwrap();
+    let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
+        .await
+        .unwrap();
+
+    let content = read_source_fixture(r"E:\Book\番茄书源\fqfix0529_45469384.json");
+    let (js_lib, login_url, source_name, source_url) = migrated_source_probe_fields(&content);
+    let login_probe = with_js_source(
+        js_lib.as_deref(),
+        login_url.as_deref(),
+        Some(source_name.as_str()),
+        || {
+            eval_js(
+                "eval(String(source.loginUrl)); JSON.stringify({ z: Get('z'), ml: Get('ml') })",
+                "",
+                &source_url,
+            )
+        },
+    )
+    .expect("番茄 loginUrl 初始化脚本应可执行");
+    eprintln!("番茄 loginUrl 初始化: {login_probe}");
+
+    let result = core.import_legacy_json_text(&content, false).await.unwrap();
+    assert!(result.imported > 0, "番茄书源应能成功导入");
+
+    let file_name = &result.files[0];
+    let books = core
+        .search(file_name, "凡人", 1, None)
+        .await
+        .expect("番茄搜索应成功（源站可达时）");
+    assert!(!books.is_empty(), "番茄搜索应返回非空结果");
+    assert!(!books[0].book_url.is_empty(), "番茄 bookUrl 不应为空");
+    eprintln!("番茄搜索: {} (book_url={})", books[0].name, books[0].book_url);
+
+    let detail = core
+        .book_info(file_name, &books[0].book_url, None)
+        .await
+        .expect("番茄 bookInfo 应成功（源站可达时）");
+    assert!(
+        !detail.name.trim().is_empty()
+            || detail
+                .book_url
+                .as_deref()
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false),
+        "番茄详情至少应保留书名或 bookUrl"
+    );
+    eprintln!(
+        "番茄 bookInfo: name='{}' author='{}' kind={:?}",
+        detail.name, detail.author, detail.kind
+    );
 }
 
 #[tokio::test]

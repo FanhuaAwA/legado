@@ -10,7 +10,7 @@ use crate::model::{
     book_source::{BookSource, ExploreKind},
     search::SearchBook,
 };
-use crate::parser::js::{eval_js, eval_js_with_bindings, with_js_lib};
+use crate::parser::js::{eval_js, eval_js_with_bindings, with_js_source};
 use crate::parser::rule_engine::RuleEngine;
 use crate::storage::cache::file_cache::FileCache;
 use crate::util::hash::md5_hex;
@@ -371,9 +371,12 @@ impl BookService {
             .as_deref()
             .filter(|s| !s.trim().is_empty())
         {
-            Some(with_js_lib(source.js_lib.as_deref(), || {
-                eval_js(login_check_js, &res.body, &res.url).unwrap_or_default()
-            }))
+            Some(with_js_source(
+                source.js_lib.as_deref(),
+                source.login_url.as_deref(),
+                Some(source.book_source_name.as_str()),
+                || eval_js(login_check_js, &res.body, &res.url).unwrap_or_default(),
+            ))
         } else {
             None
         };
@@ -1372,7 +1375,11 @@ fn apply_login_check_js(source: &BookSource, res: FetchResponse) -> FetchRespons
         return res;
     };
 
-    with_js_lib(source.js_lib.as_deref(), || {
+    with_js_source(
+        source.js_lib.as_deref(),
+        source.login_url.as_deref(),
+        Some(source.book_source_name.as_str()),
+        || {
         let str_response = StrResponse::from(res.clone());
         let mut bindings = HashMap::new();
         bindings.insert(
@@ -1400,7 +1407,8 @@ fn apply_login_check_js(source: &BookSource, res: FetchResponse) -> FetchRespons
                 res
             }
         }
-    })
+        },
+    )
 }
 
 fn parse_explore_kinds(source: &BookSource) -> Result<Vec<ExploreKind>, AppError> {
@@ -1413,18 +1421,23 @@ fn parse_explore_kinds(source: &BookSource) -> Result<Vec<ExploreKind>, AppError
         return Ok(Vec::new());
     };
 
-    let text = with_js_lib(source.js_lib.as_deref(), || {
-        if let Some(script) = raw.strip_prefix("@js:") {
-            eval_js(script, "", &source.book_source_url).map_err(AppError::Internal)
-        } else if let Some(script) = raw
-            .strip_prefix("<js>")
-            .and_then(|value| value.strip_suffix("</js>"))
-        {
-            eval_js(script, "", &source.book_source_url).map_err(AppError::Internal)
-        } else {
-            Ok(raw.to_string())
-        }
-    })?;
+    let text = with_js_source(
+        source.js_lib.as_deref(),
+        source.login_url.as_deref(),
+        Some(source.book_source_name.as_str()),
+        || {
+            if let Some(script) = raw.strip_prefix("@js:") {
+                eval_js(script, "", &source.book_source_url).map_err(AppError::Internal)
+            } else if let Some(script) = raw
+                .strip_prefix("<js>")
+                .and_then(|value| value.strip_suffix("</js>"))
+            {
+                eval_js(script, "", &source.book_source_url).map_err(AppError::Internal)
+            } else {
+                Ok(raw.to_string())
+            }
+        },
+    )?;
 
     for json_text in [&text, &normalize_relaxed_explore_json(&text)] {
         if let Ok(kinds) = serde_json::from_str::<Vec<ExploreKind>>(json_text) {

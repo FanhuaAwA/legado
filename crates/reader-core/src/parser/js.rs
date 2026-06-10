@@ -13,7 +13,7 @@ use rquickjs::promise::MaybePromise;
 use rquickjs::{Context, Object, Runtime, Value};
 use serde_json::Value as JsonValue;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 use uuid::Uuid;
 
@@ -64,8 +64,19 @@ static JS_DEVICE_ID: Lazy<String> = Lazy::new(|| {
     generated
 });
 type Aes128CbcDecryptor = cbc::Decryptor<Aes128>;
+#[derive(Debug, Clone, Default)]
+struct ActiveJsContext {
+    js_lib: Option<String>,
+    login_url: Option<String>,
+    book_source_name: Option<String>,
+}
+
 thread_local! {
-    static ACTIVE_JS_LIB: RefCell<Option<String>> = const { RefCell::new(None) };
+    static ACTIVE_JS_CONTEXT: RefCell<ActiveJsContext> = const { RefCell::new(ActiveJsContext {
+        js_lib: None,
+        login_url: None,
+        book_source_name: None,
+    }) };
 }
 
 #[derive(Debug, Clone)]
@@ -79,8 +90,21 @@ pub enum JsSourceArg {
 }
 
 pub fn with_js_lib<T>(js_lib: Option<&str>, f: impl FnOnce() -> T) -> T {
-    ACTIVE_JS_LIB.with(|cell| {
-        let previous = cell.replace(js_lib.map(|value| value.to_string()));
+    with_js_source(js_lib, None, None, f)
+}
+
+pub fn with_js_source<T>(
+    js_lib: Option<&str>,
+    login_url: Option<&str>,
+    book_source_name: Option<&str>,
+    f: impl FnOnce() -> T,
+) -> T {
+    ACTIVE_JS_CONTEXT.with(|cell| {
+        let previous = cell.replace(ActiveJsContext {
+            js_lib: js_lib.map(|value| value.to_string()),
+            login_url: login_url.map(|value| value.to_string()),
+            book_source_name: book_source_name.map(|value| value.to_string()),
+        });
         let result = f();
         cell.replace(previous);
         result
@@ -213,7 +237,8 @@ fn eval_js_inner_with_source(
         let globals = ctx.globals();
         let input_value = input.unwrap_or("");
         let base_url_value = base_url.unwrap_or("");
-        let shared_js = active_js_lib_script()?;
+        let active_context = active_js_context();
+        let shared_js = active_js_lib_script(&active_context)?;
 
         globals.set("input", input_value)?;
         globals.set("result", input_value)?;
@@ -233,40 +258,86 @@ fn eval_js_inner_with_source(
         // Legado source object — provides source-scoped variables, login info, and key
         let source_key_val = source_key.unwrap_or("").to_string();
         let source_obj = Object::new(ctx.clone())?;
+        let source_name_value = active_context.book_source_name.clone().unwrap_or_default();
+        let login_url_value = active_context
+            .login_url
+            .clone()
+            .map(|value| prepare_legacy_js_script(&value))
+            .unwrap_or_default();
         let sk_clone = source_key_val.clone();
         source_obj.set("key", source_key_val.clone())?;
+        source_obj.set("bookSourceName", source_name_value.clone())?;
+        source_obj.set("loginUrl", login_url_value.clone())?;
         source_obj.set("getKey", Func::new(move || sk_clone.clone()))?;
 
-        let sk_for_login = source_key_val.clone();
+        let sk_for_login_any = source_key_val.clone();
         source_obj.set(
-            "getLoginInfoMap",
+            "getLoginInfo",
+            Func::new(move || -> bool {
+                let map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+                let prefix = source_login_prefix(&sk_for_login_any);
+                map.keys().any(|key| key.starts_with(&prefix))
+            }),
+        )?;
+
+        let sk_for_login_json = source_key_val.clone();
+        source_obj.set(
+            "__getLoginInfoJson",
             Func::new(move || -> String {
                 let map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
-                let prefix = format!("__source_login_{}", sk_for_login);
-                let items: Vec<String> = map
+                let prefix = source_login_prefix(&sk_for_login_json);
+                let items = map
                     .iter()
                     .filter(|(k, _)| k.starts_with(&prefix))
-                    .map(|(k, v)| format!("{}={}", k.replacen(&prefix, "", 1).trim_start_matches('_'), v))
-                    .collect();
-                items.join("\n")
+                    .map(|(k, v)| (k.replacen(&prefix, "", 1), JsonValue::String(v.clone())))
+                    .collect::<BTreeMap<_, _>>();
+                serde_json::to_string(&items).unwrap_or_else(|_| "{}".to_string())
+            }),
+        )?;
+
+        let sk_for_login_get = source_key_val.clone();
+        source_obj.set(
+            "__getLoginInfoValue",
+            Func::new(move |key: String| -> String {
+                let map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+                map.get(&source_login_key(&sk_for_login_get, &key))
+                    .cloned()
+                    .unwrap_or_default()
+            }),
+        )?;
+
+        let sk_for_login_set = source_key_val.clone();
+        source_obj.set(
+            "__setLoginInfoValue",
+            Func::new(move |key: String, value: Value<'_>| -> bool {
+                let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+                map.insert(
+                    source_login_key(&sk_for_login_set, &key),
+                    js_callback_arg_to_string(value),
+                );
+                true
             }),
         )?;
 
         let sk_for_var = source_key_val.clone();
         source_obj.set(
             "getVariable",
-            Func::new(move |key: String| -> Option<String> {
+            Func::new(move |key: Opt<String>| -> String {
                 let map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
-                let full_key = format!("__source_var_{}_{}", sk_for_var, key);
-                map.get(&full_key).cloned()
+                let full_key = source_variable_key(&sk_for_var, key.0.as_deref());
+                map.get(&full_key).cloned().unwrap_or_default()
             }),
         )?;
         let sk_for_set = source_key_val.clone();
         source_obj.set(
             "setVariable",
-            Func::new(move |key: String, val: String| -> bool {
+            Func::new(move |key_or_value: String, value: Opt<String>| -> bool {
                 let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
-                let full_key = format!("__source_var_{}_{}", sk_for_set, key);
+                let (name, val) = match value.0 {
+                    Some(val) => (Some(key_or_value.as_str()), val),
+                    None => (None, key_or_value),
+                };
+                let full_key = source_variable_key(&sk_for_set, name);
                 map.insert(full_key, val);
                 true
             }),
@@ -274,18 +345,14 @@ fn eval_js_inner_with_source(
         let sk_for_put = source_key_val.clone();
         source_obj.set(
             "putVariable",
-            Func::new(move |key: String, val: String| -> bool {
+            Func::new(move |key_or_value: String, value: Opt<String>| -> bool {
                 let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
-                let full_key = format!("__source_var_{}_{}", sk_for_put, key);
+                let (name, val) = match value.0 {
+                    Some(val) => (Some(key_or_value.as_str()), val),
+                    None => (None, key_or_value),
+                };
+                let full_key = source_variable_key(&sk_for_put, name);
                 map.insert(full_key, val);
-                true
-            }),
-        )?;
-        source_obj.set(
-            "putLoginInfo",
-            Func::new(|key: String, val: String| -> bool {
-                let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
-                map.insert(format!("__source_login_{}", key), val);
                 true
             }),
         )?;
@@ -294,32 +361,38 @@ fn eval_js_inner_with_source(
         let cookie_obj = Object::new(ctx.clone())?;
         cookie_obj.set(
             "getCookie",
-            Func::new(|key: String| -> Option<String> {
-                let map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
-                map.get(&format!("__cookie_{}", key)).cloned()
+            Func::new(|domain: String, name: Opt<String>| -> String {
+                get_cookie_value(&domain, name.0.as_deref())
             }),
         )?;
         cookie_obj.set(
             "setCookie",
-            Func::new(|key: String, val: String| -> bool {
+            Func::new(|domain: String, name_or_value: String, value: Opt<String>| -> bool {
                 let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
-                map.insert(format!("__cookie_{}", key), val);
+                let (name, val) = match value.0 {
+                    Some(val) => (Some(name_or_value.as_str()), val),
+                    None => (None, name_or_value),
+                };
+                map.insert(cookie_key(&domain, name), val);
                 true
             }),
         )?;
         cookie_obj.set(
             "removeCookie",
-            Func::new(|key: String| -> String {
+            Func::new(|domain: String, name: Opt<String>| -> String {
                 let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
-                map.remove(&format!("__cookie_{}", key));
+                map.remove(&cookie_key(&domain, name.0.as_deref()));
+                if name.0.is_none() {
+                    let prefix = format!("__cookie_{}::", domain);
+                    map.retain(|key, _| !key.starts_with(&prefix));
+                }
                 "".to_string()
             }),
         )?;
         cookie_obj.set(
             "getKey",
-            Func::new(|key: String| -> Option<String> {
-                let map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
-                map.get(&format!("__cookie_{}", key)).cloned()
+            Func::new(|domain: String, name: Opt<String>| -> String {
+                get_cookie_value(&domain, name.0.as_deref())
             }),
         )?;
         globals.set("cookie", cookie_obj)?;
@@ -334,9 +407,9 @@ fn eval_js_inner_with_source(
         )?;
         cache_obj.set(
             "put",
-            Func::new(|key: String, val: String| -> bool {
+            Func::new(|key: String, val: Value<'_>| -> bool {
                 let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
-                map.insert(key, val);
+                map.insert(key, js_callback_arg_to_string(val));
                 true
             }),
         )?;
@@ -349,9 +422,9 @@ fn eval_js_inner_with_source(
         )?;
         cache_obj.set(
             "putMemory",
-            Func::new(|key: String, val: String| -> bool {
+            Func::new(|key: String, val: Value<'_>| -> bool {
                 let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
-                map.insert(key, val);
+                map.insert(key, js_callback_arg_to_string(val));
                 true
             }),
         )?;
@@ -429,25 +502,42 @@ fn eval_js_inner_with_source(
         )?;
         java_obj.set(
             "toast",
-            Func::new(|msg: String| -> bool {
+            Func::new(|msg: Opt<Value<'_>>| -> bool {
+                let msg = msg.0.map(js_callback_arg_to_string).unwrap_or_default();
                 tracing::info!(target: "reader_core::js_source::toast", "{msg}");
                 true
             }),
         )?;
         java_obj.set(
             "longToast",
-            Func::new(|msg: String| -> bool {
+            Func::new(|msg: Opt<Value<'_>>| -> bool {
+                let msg = msg.0.map(js_callback_arg_to_string).unwrap_or_default();
                 tracing::info!(target: "reader_core::js_source::toast", "long: {msg}");
                 true
             }),
         )?;
         java_obj.set(
             "log",
-            Func::new(|msg: String| -> bool {
+            Func::new(|msg: Opt<Value<'_>>| -> bool {
+                let msg = msg.0.map(js_callback_arg_to_string).unwrap_or_default();
                 tracing::info!(target: "reader_core::js_source::log", "{msg}");
                 true
             }),
         )?;
+        let input_for_get_string = input_value.to_string();
+        java_obj.set(
+            "getString",
+            Func::new(move |path: String| -> String { java_get_string(&input_for_get_string, &path) }),
+        )?;
+        java_obj.set(
+            "getReadBookConfigMap",
+            Func::new(|| -> String { "{}".to_string() }),
+        )?;
+        java_obj.set(
+            "getThemeConfigMap",
+            Func::new(|| -> String { "{}".to_string() }),
+        )?;
+        java_obj.set("getThemeMode", Func::new(|| -> i32 { 0 }))?;
         java_obj.set(
             "androidId",
             Func::new(|| -> String { JS_DEVICE_ID.clone() }),
@@ -456,7 +546,12 @@ fn eval_js_inner_with_source(
         java_obj.set(
             "get",
             Func::new(|url: String| -> String {
-                java_request_simple("GET", &url, None).unwrap_or_default()
+                if is_http_url(&url) {
+                    java_request_simple("GET", &url, None).unwrap_or_default()
+                } else {
+                    let map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+                    map.get(&java_storage_key(&url)).cloned().unwrap_or_default()
+                }
             }),
         )?;
         java_obj.set(
@@ -467,8 +562,15 @@ fn eval_js_inner_with_source(
         )?;
         java_obj.set(
             "put",
-            Func::new(|url: String, body: String| -> String {
-                java_request_simple("PUT", &url, Some(body)).unwrap_or_default()
+            Func::new(|key: String, value: Value<'_>| -> String {
+                let text = js_callback_arg_to_string(value);
+                if is_http_url(&key) {
+                    java_request_simple("PUT", &key, Some(text)).unwrap_or_default()
+                } else {
+                    let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+                    map.insert(java_storage_key(&key), text.clone());
+                    text
+                }
             }),
         )?;
         java_obj.set(
@@ -499,21 +601,54 @@ fn eval_js_inner_with_source(
             }),
         )?;
         java_obj.set(
-            "ajaxAll",
-            Func::new(|specs: rquickjs::Array<'_>| -> String {
+            "__ajaxAll",
+            Func::new(|specs_json: String| -> String {
+                let specs = serde_json::from_str::<Vec<String>>(&specs_json).unwrap_or_default();
                 let mut results: Vec<String> = Vec::new();
-                for i in 0..specs.len() {
-                    let spec = specs.get::<String>(i).unwrap_or_default();
+                for spec in specs {
                     let result = java_ajax(&spec).unwrap_or_default();
                     results.push(result);
                 }
-                format!("[{}]", results.join(","))
+                serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string())
             }),
         )?;
         java_obj.set(
             "startBrowser",
             Func::new(|url: String| -> String {
                 tracing::warn!(target: "reader_core::js_source", "startBrowser called but not supported on this platform: {url}");
+                "".to_string()
+            }),
+        )?;
+        java_obj.set(
+            "startBrowserAwait",
+            Func::new(|url: String, title: Opt<String>| -> String {
+                tracing::warn!(
+                    target: "reader_core::js_source",
+                    "startBrowserAwait called but not supported on this platform: url={url}, title={:?}",
+                    title.0
+                );
+                "".to_string()
+            }),
+        )?;
+        java_obj.set("showBrowser", Func::new(|_url: String, _title: Opt<String>| -> bool { false }))?;
+        java_obj.set("open", Func::new(|_kind: String, _target: String, _extra: Opt<String>| -> bool { false }))?;
+        java_obj.set("refreshExplore", Func::new(|| -> bool { false }))?;
+        java_obj.set("searchBook", Func::new(|_keyword: String, _source: Opt<String>| -> bool { false }))?;
+        java_obj.set("reLoginView", Func::new(|| -> bool { false }))?;
+        java_obj.set("upConfig", Func::new(|_value: Value<'_>| -> bool { false }))?;
+        java_obj.set("upLoginData", Func::new(|_value: Value<'_>| -> bool { false }))?;
+        java_obj.set("connect", Func::new(|_value: Opt<String>| -> bool { false }))?;
+        java_obj.set(
+            "getCookie",
+            Func::new(|domain: String, name: Opt<String>| -> String {
+                get_cookie_value(&domain, name.0.as_deref())
+            }),
+        )?;
+        java_obj.set(
+            "removeCookie",
+            Func::new(|domain: String, name: Opt<String>| -> String {
+                let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+                map.remove(&cookie_key(&domain, name.0.as_deref()));
                 "".to_string()
             }),
         )?;
@@ -559,6 +694,41 @@ fn eval_js_inner_with_source(
         )?;
         globals.set("java", java_obj)?;
 
+        let digest_obj = Object::new(ctx.clone())?;
+        digest_obj.set("md5Hex", Func::new(|input: String| -> String { md5_hex(&input) }))?;
+        globals.set("DigestUtil", digest_obj)?;
+
+        let str_obj = Object::new(ctx.clone())?;
+        str_obj.set(
+            "reverse",
+            Func::new(|input: String| -> String { input.chars().rev().collect::<String>() }),
+        )?;
+        globals.set("StrUtil", str_obj)?;
+
+        let zip_obj = Object::new(ctx.clone())?;
+        zip_obj.set("gzip", Func::new(|input: String, _charset: Opt<String>| -> String { input }))?;
+        zip_obj.set("unGzip", Func::new(|input: String, _charset: Opt<String>| -> String { input }))?;
+        globals.set("ZipUtil", zip_obj)?;
+
+        let base64_obj = Object::new(ctx.clone())?;
+        base64_obj.set(
+            "encode",
+            Func::new(|input: String| -> String {
+                base64::engine::general_purpose::STANDARD.encode(input)
+            }),
+        )?;
+        base64_obj.set(
+            "decode",
+            Func::new(|input: String| -> String {
+                base64::engine::general_purpose::STANDARD
+                    .decode(input)
+                    .ok()
+                    .and_then(|bytes| String::from_utf8(bytes).ok())
+                    .unwrap_or_default()
+            }),
+        )?;
+        globals.set("Base64", base64_obj)?;
+
         let http_obj = Object::new(ctx.clone())?;
         http_obj.set(
             "get",
@@ -591,7 +761,8 @@ fn eval_js_inner_with_source(
         legado_obj.set("http", http_obj)?;
         legado_obj.set(
             "log",
-            Func::new(|message: String| -> bool {
+            Func::new(|message: Opt<Value<'_>>| -> bool {
+                let message = message.0.map(js_callback_arg_to_string).unwrap_or_default();
                 tracing::debug!(target: "reader_core::js_source", "{message}");
                 true
             }),
@@ -632,6 +803,8 @@ fn eval_js_inner_with_source(
         globals.set("nextChapterUrl", "")?;
         globals.set("rssArticle", Object::new(ctx.clone())?)?;
 
+        install_legado_compat_prelude(ctx.clone())?;
+
         if let Some(bindings) = bindings {
             for (key, value) in bindings {
                 let js_value = ctx.json_parse(value.to_string())?;
@@ -639,11 +812,13 @@ fn eval_js_inner_with_source(
             }
         }
 
-        if !shared_js.trim().is_empty() {
-            eval_script(ctx.clone(), &shared_js)?;
-        }
-
-        let v = eval_script(ctx.clone(), script)?;
+        let script = inline_source_login_url(script, active_context.login_url.as_deref());
+        let script = if shared_js.trim().is_empty() {
+            script
+        } else {
+            format!("{shared_js}\n;\n{script}")
+        };
+        let v = eval_script(ctx.clone(), &script)?;
         js_value_to_string(ctx, v)
     })
 }
@@ -673,6 +848,160 @@ fn js_value_to_string<'js>(ctx: rquickjs::Ctx<'js>, value: Value<'js>) -> anyhow
         }
     };
     Ok(result)
+}
+
+fn active_js_context() -> ActiveJsContext {
+    ACTIVE_JS_CONTEXT.with(|cell| cell.borrow().clone())
+}
+
+fn install_legado_compat_prelude(ctx: rquickjs::Ctx<'_>) -> anyhow::Result<()> {
+    ctx.eval::<(), _>(
+        r#"
+if (typeof globalThis.Packages === 'undefined') {
+  globalThis.Packages = {
+    okhttp3: {},
+    cn: { hutool: { core: { util: {}, codec: {} }, crypto: { digest: {} } } },
+    android: {
+      os: {
+        Build: {
+          BRAND: 'generic',
+          MODEL: 'LegadoTauri',
+          DISPLAY: 'LegadoTauri',
+          VERSION: { SDK_INT: 35, RELEASE: '15' }
+        }
+      }
+    }
+  };
+}
+if (typeof globalThis.JavaImporter === 'undefined') {
+  globalThis.JavaImporter = function JavaImporter() {
+    this.importPackage = function() { return this; };
+    return this;
+  };
+}
+if (typeof globalThis.importPackage === 'undefined') {
+  globalThis.importPackage = function() { return true; };
+}
+source.getLoginInfoMap = function() {
+  const owner = this;
+  return {
+    get(key) {
+      return owner.__getLoginInfoValue(String(key));
+    },
+    set(values) {
+      if (!values || typeof values !== 'object') {
+        return false;
+      }
+      if (values && typeof values === 'object') {
+        Object.keys(values).forEach((key) => owner.__setLoginInfoValue(String(key), values[key]));
+      }
+      return true;
+    },
+    save() {
+      return true;
+    },
+    toJSON() {
+      try {
+        return JSON.parse(owner.__getLoginInfoJson() || '{}');
+      } catch (_) {
+        return {};
+      }
+    },
+    toString() {
+      return JSON.stringify(this.toJSON());
+    }
+  };
+};
+source.putLoginInfo = function(values, value) {
+  if (arguments.length >= 2) {
+    return this.__setLoginInfoValue(String(values), value);
+  }
+  if (typeof values === 'string') {
+    try {
+      values = JSON.parse(values);
+    } catch (_) {
+      return false;
+    }
+  }
+  if (!values || typeof values !== 'object') {
+    return false;
+  }
+  return this.getLoginInfoMap().set(values);
+};
+source.refreshExplore = function() { return false; };
+source.removeLoginHeader = function() { return false; };
+java.ajaxAll = function(specs) {
+  const list = Array.isArray(specs) ? specs : [];
+  return JSON.parse(java.__ajaxAll(JSON.stringify(list))).map(function(text) {
+    return {
+      body: function() { return text; },
+      string: function() { return text; },
+      toString: function() { return text; }
+    };
+  });
+};
+"#,
+    )
+    .map_err(|err| anyhow::anyhow!("JS Exception: {}", catch_js_message(&ctx, &err)))?;
+    Ok(())
+}
+
+fn source_variable_key(source_key: &str, key: Option<&str>) -> String {
+    match key.filter(|value| !value.trim().is_empty()) {
+        Some(key) => format!("__source_var_{}::{}", source_key, key),
+        None => format!("__source_var_{}::__default", source_key),
+    }
+}
+
+fn source_login_prefix(source_key: &str) -> String {
+    format!("__source_login_{}::", source_key)
+}
+
+fn source_login_key(source_key: &str, key: &str) -> String {
+    format!("{}{}", source_login_prefix(source_key), key)
+}
+
+fn java_storage_key(key: &str) -> String {
+    format!("__java_kv_{}", key)
+}
+
+fn cookie_key(domain: &str, name: Option<&str>) -> String {
+    match name.filter(|value| !value.trim().is_empty()) {
+        Some(name) => format!("__cookie_{}::{}", domain, name),
+        None => format!("__cookie_{}", domain),
+    }
+}
+
+fn get_cookie_value(domain: &str, name: Option<&str>) -> String {
+    let map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(name) = name.filter(|value| !value.trim().is_empty()) {
+        if let Some(value) = map.get(&cookie_key(domain, Some(name))) {
+            return value.clone();
+        }
+    }
+    map.get(&cookie_key(domain, None))
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn is_http_url(value: &str) -> bool {
+    value.starts_with("http://") || value.starts_with("https://")
+}
+
+fn java_get_string(input: &str, path: &str) -> String {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let Ok(value) = serde_json::from_str::<JsonValue>(trimmed) else {
+        return String::new();
+    };
+    let path = if path.trim_start().starts_with('$') {
+        path.to_string()
+    } else {
+        format!("$.{}", path.trim_start_matches('.'))
+    };
+    crate::parser::jsonpath::jsonpath_first_string(&value, &path).unwrap_or_default()
 }
 
 fn java_aes_base64_decode_to_string(input: &str, key: &str, algorithm: &str, iv: &str) -> String {
@@ -725,7 +1054,8 @@ fn eval_script<'js>(ctx: rquickjs::Ctx<'js>, script: &str) -> anyhow::Result<Val
     // 首次执行失败时，脚本里已执行的顶层 let/const 已进入该 Context 的全局词法环境，
     // 同一 Context 内重试会因 redeclaration 立即失败（这正是旧版"失败后重试"永远
     // 修不好"let + 未声明赋值"组合脚本的原因）。
-    let prepared = prepend_undeclared_vars(script);
+    let script = prepare_legacy_js_script(script);
+    let prepared = prepend_undeclared_vars(&script);
     if prepared != script {
         match ctx.eval(&*prepared) {
             Ok(v) => return Ok(v),
@@ -734,7 +1064,7 @@ fn eval_script<'js>(ctx: rquickjs::Ctx<'js>, script: &str) -> anyhow::Result<Val
                 // 补全名单误判与脚本内 let/const 冲突时是解析期 redeclaration 错误，
                 // 解析失败不会执行任何代码、Context 仍干净，可安全回退原脚本。
                 if msg.contains("redeclar") {
-                    return ctx.eval(script).map_err(|e2| {
+                    return ctx.eval(&*script).map_err(|e2| {
                         anyhow::anyhow!("JS Exception: {}", catch_js_message(&ctx, &e2))
                     });
                 }
@@ -742,15 +1072,19 @@ fn eval_script<'js>(ctx: rquickjs::Ctx<'js>, script: &str) -> anyhow::Result<Val
             }
         }
     }
-    ctx.eval(script)
+    ctx.eval(&*script)
         .map_err(|err| anyhow::anyhow!("JS Exception: {}", catch_js_message(&ctx, &err)))
 }
 
 fn catch_js_message(ctx: &rquickjs::Ctx<'_>, err: &rquickjs::Error) -> String {
-    ctx.catch()
-        .into_exception()
-        .and_then(|ex| ex.message())
-        .unwrap_or_else(|| err.to_string())
+    if let Some(ex) = ctx.catch().into_exception() {
+        let message = ex.message().unwrap_or_else(|| err.to_string());
+        if let Some(stack) = ex.stack().filter(|value| !value.trim().is_empty()) {
+            return format!("{message}\n{stack}");
+        }
+        return message;
+    }
+    err.to_string()
 }
 
 fn leading_identifier(text: &str) -> String {
@@ -758,6 +1092,115 @@ fn leading_identifier(text: &str) -> String {
         .chars()
         .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '$')
         .collect()
+}
+
+fn prepare_legacy_js_script(script: &str) -> String {
+    // Rhino permits `with(javaImport) { ... }`; QuickJS strict eval rejects `with` at parse time.
+    // The JavaImporter shim exposes imported helpers as globals, so dropping the wrapper preserves
+    // the practical semantics used by Legado book-source scripts.
+    static WITH_RE: Lazy<regex::Regex> =
+        Lazy::new(|| regex::Regex::new(r"\bwith\s*\([^)]*\)\s*\{").unwrap());
+    static THIS_DESTRUCTURE_RE: Lazy<regex::Regex> = Lazy::new(|| {
+        regex::Regex::new(r"\b(const|let|var)\s+\{([^}]*)\}\s*=\s*this\s*;").unwrap()
+    });
+    let script = WITH_RE.replace_all(script, "{").into_owned();
+    let script = THIS_DESTRUCTURE_RE
+        .replace_all(&script, "$1 {$2} = globalThis;")
+        .into_owned();
+    replace_this_member_outside_strings(&script)
+}
+
+fn inline_source_login_url(script: &str, login_url: Option<&str>) -> String {
+    let Some(login_url) = login_url.filter(|value| !value.trim().is_empty()) else {
+        return script.to_string();
+    };
+    static LOGIN_EVAL_RE: Lazy<regex::Regex> = Lazy::new(|| {
+        regex::Regex::new(r"eval\s*\(\s*String\s*\(\s*source\.loginUrl\s*\)\s*\)\s*;?").unwrap()
+    });
+    if !LOGIN_EVAL_RE.is_match(script) {
+        return script.to_string();
+    }
+    let login_url = prepare_legacy_js_script(login_url);
+    let replacement = format!("{login_url}\n");
+    LOGIN_EVAL_RE
+        .replace_all(script, regex::NoExpand(&replacement))
+        .into_owned()
+}
+
+fn replace_this_member_outside_strings(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut i = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut line_comment = false;
+    let mut block_comment = false;
+
+    while i < input.len() {
+        let rest = &input[i..];
+        if line_comment {
+            let ch = rest.chars().next().unwrap();
+            output.push(ch);
+            i += ch.len_utf8();
+            if ch == '\n' {
+                line_comment = false;
+            }
+            continue;
+        }
+        if block_comment {
+            if rest.starts_with("*/") {
+                output.push_str("*/");
+                i += 2;
+                block_comment = false;
+            } else {
+                let ch = rest.chars().next().unwrap();
+                output.push(ch);
+                i += ch.len_utf8();
+            }
+            continue;
+        }
+        if let Some(current_quote) = quote {
+            let ch = rest.chars().next().unwrap();
+            output.push(ch);
+            i += ch.len_utf8();
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == current_quote {
+                quote = None;
+            }
+            continue;
+        }
+
+        if rest.starts_with("//") {
+            output.push_str("//");
+            i += 2;
+            line_comment = true;
+            continue;
+        }
+        if rest.starts_with("/*") {
+            output.push_str("/*");
+            i += 2;
+            block_comment = true;
+            continue;
+        }
+        let ch = rest.chars().next().unwrap();
+        if matches!(ch, '\'' | '"' | '`') {
+            output.push(ch);
+            i += ch.len_utf8();
+            quote = Some(ch);
+            continue;
+        }
+        if rest.starts_with("this.") {
+            output.push_str("globalThis.");
+            i += "this.".len();
+            continue;
+        }
+        output.push(ch);
+        i += ch.len_utf8();
+    }
+
+    output
 }
 
 /// Detect undeclared top-level variable assignments (Legado convention)
@@ -770,30 +1213,33 @@ fn prepend_undeclared_vars(script: &str) -> String {
     let mut assigned = std::collections::BTreeSet::new();
     for line in script.lines() {
         let trimmed = line.trim();
+        let starts_at_column_zero = line == trimmed;
         if trimmed.is_empty() || trimmed.starts_with("//") {
             continue;
         }
-        if let Some(rest) = trimmed
-            .strip_prefix("var ")
-            .or_else(|| trimmed.strip_prefix("let "))
-            .or_else(|| trimmed.strip_prefix("const "))
-        {
-            // `let a = 1, b = 2` 记录 a、b；表达式内逗号会带来多余候选名，
-            // 只会让 declared 集合偏大（少补 var），不会引入 redeclaration。
-            for part in rest.split(',') {
-                let name = leading_identifier(part);
+        if starts_at_column_zero {
+            if let Some(rest) = trimmed
+                .strip_prefix("var ")
+                .or_else(|| trimmed.strip_prefix("let "))
+                .or_else(|| trimmed.strip_prefix("const "))
+            {
+                // `let a = 1, b = 2` 记录 a、b；表达式内逗号会带来多余候选名，
+                // 只会让 declared 集合偏大（少补 var），不会引入 redeclaration。
+                for part in rest.split(',') {
+                    let name = leading_identifier(part);
+                    if !name.is_empty() {
+                        declared.insert(name);
+                    }
+                }
+                continue;
+            }
+            if let Some(rest) = trimmed.strip_prefix("function ") {
+                let name = leading_identifier(rest);
                 if !name.is_empty() {
                     declared.insert(name);
                 }
+                continue;
             }
-            continue;
-        }
-        if let Some(rest) = trimmed.strip_prefix("function ") {
-            let name = leading_identifier(rest);
-            if !name.is_empty() {
-                declared.insert(name);
-            }
-            continue;
         }
         // Check for bare identifier assignment at line start
         if let Some(eq_pos) = trimmed.find('=') {
@@ -866,9 +1312,12 @@ fn is_keyword(s: &str) -> bool {
     )
 }
 
-fn active_js_lib_script() -> anyhow::Result<String> {
-    let js_lib = ACTIVE_JS_LIB.with(|cell| cell.borrow().clone());
-    let Some(js_lib) = js_lib.filter(|value| !value.trim().is_empty()) else {
+fn active_js_lib_script(active_context: &ActiveJsContext) -> anyhow::Result<String> {
+    let Some(js_lib) = active_context
+        .js_lib
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+    else {
         return Ok(String::new());
     };
     let cache_key = md5_hex(&js_lib);

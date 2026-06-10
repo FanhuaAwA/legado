@@ -149,13 +149,19 @@ pub fn migrate_legacy_book_source_value(mut value: Value) -> Value {
         }
     }
 
-    for key in ["searchUrl", "exploreUrl", "loginUrl"] {
+    for key in ["searchUrl", "exploreUrl"] {
         if let Some(Value::String(raw)) = obj.get(key).cloned() {
             obj.insert(
                 key.to_string(),
-                Value::String(convert_legacy_url_rule(&raw)),
+                Value::String(convert_legacy_script_or_url_rule(&raw)),
             );
         }
+    }
+    if let Some(Value::String(raw)) = obj.get("loginUrl").cloned() {
+        obj.insert(
+            "loginUrl".to_string(),
+            Value::String(convert_legacy_login_url_rule(&raw)),
+        );
     }
 
     migrate_rule_object(
@@ -311,6 +317,24 @@ fn convert_legacy_url_rule(raw: &str) -> String {
     }
 }
 
+fn convert_legacy_script_or_url_rule(raw: &str) -> String {
+    let trimmed = raw.trim_start();
+    if trimmed.starts_with("@js:") || trimmed.starts_with("<js>") {
+        raw.to_string()
+    } else {
+        convert_legacy_url_rule(raw)
+    }
+}
+
+fn convert_legacy_login_url_rule(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        convert_legacy_url_rule(raw)
+    } else {
+        raw.to_string()
+    }
+}
+
 fn extract_legacy_header(input: &str) -> Option<(usize, usize, String)> {
     let start = input.find("@Header:")?;
     let object_start = start + "@Header:".len();
@@ -340,4 +364,41 @@ fn extract_legacy_header(input: &str) -> Option<(usize, usize, String)> {
 fn convert_legacy_page_braces(input: &str) -> String {
     let re = regex::Regex::new(r"\{([^{}]*,[^{}]*)\}").unwrap();
     re.replace_all(input, "<$1>").into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migration_preserves_raw_js_login_url_object_literals() {
+        let value = json!({
+            "bookSourceName": "番茄",
+            "bookSourceUrl": "https://reading.snssdk.com",
+            "loginUrl": "original = { 'ci0': -1, 'urls': ['https://a', 'https://b'] }; put(original);",
+            "searchUrl": "https://example.invalid/{1,2}"
+        });
+
+        let migrated = migrate_legacy_book_source_value(value);
+        assert_eq!(
+            migrated["loginUrl"],
+            "original = { 'ci0': -1, 'urls': ['https://a', 'https://b'] }; put(original);"
+        );
+        assert_eq!(migrated["searchUrl"], "https://example.invalid/<1,2>");
+    }
+
+    #[test]
+    fn migration_preserves_js_url_rules_with_code_blocks() {
+        let value = json!({
+            "bookSourceName": "番茄",
+            "bookSourceUrl": "https://reading.snssdk.com",
+            "searchUrl": "@js:\nif (key) {\n  cache.put(\"fq-prefix\", 1)\n}\n'https://example.invalid?q=' + key"
+        });
+
+        let migrated = migrate_legacy_book_source_value(value);
+        assert_eq!(
+            migrated["searchUrl"],
+            "@js:\nif (key) {\n  cache.put(\"fq-prefix\", 1)\n}\n'https://example.invalid?q=' + key"
+        );
+    }
 }
