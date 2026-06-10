@@ -14,7 +14,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tauri::Manager;
 
-use super::bookshelf::{self, ExportBookDataRequest, PrefetchRequest};
+use super::bookshelf::{self, ExportBookDataRequest, PrefetchPayload};
 use super::config;
 use super::source::{self, DeleteItem, HttpProxyRequest};
 use super::system;
@@ -387,8 +387,8 @@ pub async fn dispatch<R: tauri::Runtime>(
             )
         }
         "bookshelf_prefetch_chapters" => {
-            let request = parsed!(raw, { request: PrefetchRequest });
-            reply(bookshelf::bookshelf_prefetch_chapters(state, request).await)
+            let payload = parsed!(raw, { payload: PrefetchPayload });
+            reply(bookshelf::bookshelf_prefetch_chapters_impl(&state, &payload).await)
         }
         "bookshelf_export_book_data" => {
             let request = parsed!(raw, { request: ExportBookDataRequest });

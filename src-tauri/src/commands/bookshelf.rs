@@ -3,7 +3,7 @@ use reader_core::{
     AddBookPayload, CachedChapter, CommandError, EpisodeProgressMap, ShelfBook,
     SourceSwitchRestoreResult, UpdateShelfBookPayload,
 };
-use tauri::State;
+use tauri::{Emitter, State};
 
 type CommandResult<T> = Result<T, CommandError>;
 
@@ -224,29 +224,40 @@ pub struct PrefetchPayload {
 
 #[tauri::command]
 pub async fn bookshelf_prefetch_chapters(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
-    request: PrefetchRequest,
+    payload: PrefetchPayload,
 ) -> CommandResult<i32> {
-    let p = &request.payload;
-    let cancelled = state.tasks.register(&p.task_id);
+    let result = bookshelf_prefetch_chapters_impl(&state, &payload).await;
+    // Emit done event (per-chapter progress requires reader-core callback, deferred)
+    let _ = app.emit(
+        "shelf:prefetch-done",
+        serde_json::json!({
+            "taskId": payload.task_id,
+            "error": result.as_ref().err().map(|e| format!("{e:?}")),
+        }),
+    );
+    result
+}
+
+/// Shared implementation (WS router calls this — no AppHandle needed).
+pub async fn bookshelf_prefetch_chapters_impl(
+    state: &State<'_, AppState>,
+    payload: &PrefetchPayload,
+) -> CommandResult<i32> {
+    let cancelled = state.tasks.register(&payload.task_id);
     let result = state
         .core
         .prefetch_chapters(
-            &p.id,
-            &p.file_name,
-            p.source_dir.as_deref(),
+            &payload.id,
+            &payload.file_name,
+            payload.source_dir.as_deref(),
             Some(cancelled),
         )
         .await
         .map_err(map_err);
-    state.tasks.remove(&p.task_id);
+    state.tasks.remove(&payload.task_id);
     result
-}
-
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PrefetchRequest {
-    payload: PrefetchPayload,
 }
 
 #[tauri::command]
