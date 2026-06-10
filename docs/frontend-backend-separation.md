@@ -55,6 +55,7 @@
 1. **前端业务代码禁止直接 import `@tauri-apps/api`**。所有后端调用走 `invokeWithTimeout`（useInvoke.ts），所有后端事件走 `useEventBus` / `transportListen`，本地文件展示走 `useFileSrc`。允许的例外仅限：
    - 封装层自身（useTransport.ts、useEventBus.ts、useEnv.ts、useFileSrc.ts）。
    - 窗口控制等桌面壳独占行为（如 TitleBar.vue、privacyMode.ts 的 `getCurrentWindow`），必须有 `isTauri` 守卫，且非 Tauri 环境下静默降级、不报错、不阻断功能。
+   - `src/utils/logger.ts` 的 `frontend_log` 链路（评估结论见第 5 节，不得据此扩大例外范围）。
 2. **后端业务逻辑必须写在 `crates/reader-core`**。`src-tauri` 的命令函数只做参数解析与转发。禁止在 `#[tauri::command]` 函数体里写只有 Tauri 壳能执行的业务逻辑（依赖 AppHandle / 窗口 / 系统对话框的命令除外，但它们必须可被能力门禁排除）。
 3. **命令参数与返回值必须 JSON 可序列化**，不得携带本机句柄。后端返回的本机绝对路径只能用于「桌面壳内打开/定位」类场景，前端不得把它当作可直接加载的资源 URL（必须走 useFileSrc 或后端流式接口）。
 4. **桌面独占能力必须经 `capabilities_get` 声明**。依赖系统对话框（pick_dir / pick_save_path）、打开资源管理器、VSCode、原生 TTS、窗口控制、本机 WebView（browser_probe）的功能，在 transport = websocket 时必须声明不可用，前端按能力门禁隐藏或禁用入口，不得让用户点击后报错。
@@ -64,10 +65,10 @@
 
 ## 5. 已知违规与缺口登记
 
-| 位置                                                                    | 问题                                                                                                                                                                             | 处置                                                            |
-| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `src/stores/prefetch.ts`（setupManualListeners / setupSilentListeners） | 直接 `import("@tauri-apps/api/event")` 监听 `shelf:prefetch-*`，catch 回退仅覆盖 Harmony 的 DOM CustomEvent 路径；WS 模式下事件经传输层分发，不触发 DOM 事件，预取进度会静默丢失 | 已登记 R-P2-011，改为 useEventBus / transportListen             |
-| `src/utils/logger.ts`（sendToRust）                                     | 直接 import invoke，非 Tauri 环境降级 console；WS 模式下前端日志不进后端日志文件                                                                                                 | 并入 R-P2-011 评估：改走 transportInvoke 或确认降级可接受并注记 |
+| 位置                                                                    | 问题                                                                                                                                                                             | 处置                                                                                                                                                                                                                                                                                                                                                                                       |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/stores/prefetch.ts`（setupManualListeners / setupSilentListeners） | 直接 `import("@tauri-apps/api/event")` 监听 `shelf:prefetch-*`，catch 回退仅覆盖 Harmony 的 DOM CustomEvent 路径；WS 模式下事件经传输层分发，不触发 DOM 事件，预取进度会静默丢失 | **已修复（2026-06-10 R-P2-011）**：环境分流改为「鸿蒙 → DOM CustomEvent（Index.ets 推送路径不变）；Tauri / WS → useEventBus 统一事件层」，与 shellStatus.ts 既有用法一致                                                                                                                                                                                                                   |
+| `src/utils/logger.ts`（sendToRust）                                     | 直接 import invoke，非 Tauri 环境降级 console；WS 模式下前端日志不进后端日志文件                                                                                                 | **评估后保留直连（2026-06-10 R-P2-011 结论，列入第 4 节例外）**：(1) 日志是传输层自身的底层依赖，改走 transportInvoke 会形成 log → transport 内部 log → frontend_log 的放大回路；(2) WS 多客户端把前端日志汇入同一服务器日志会互相污染，浏览器端日志去向应为 DevTools console 与 useRemoteDebug 通道；(3) Tauri 模式行为不变。若未来 R-P2-008 需要远端收集前端日志，单独立项并解决回路问题 |
 
 ## 6. 实施路线（与审计文档 R-P2-008 对齐，按序执行）
 

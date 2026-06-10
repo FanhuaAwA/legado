@@ -27,6 +27,8 @@ async function sendToRust(
       ? `[${zone}] ${message} | ${typeof data === "string" ? data : JSON.stringify(data)}`
       : `[${zone}] ${message}`;
   try {
+    // 直连 invoke 是经评估的例外（docs/frontend-backend-separation.md 第 5 节）：
+    // 日志是传输层自身的依赖，改走 transportInvoke 会形成日志放大回路
     const { invoke } = await import("@tauri-apps/api/core");
     await invoke("frontend_log", { level: level === "success" ? "info" : level, message: body });
   } catch {

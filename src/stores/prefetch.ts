@@ -1,5 +1,7 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
+import { isHarmonyNative } from "@/composables/useEnv";
+import { eventListen } from "@/composables/useEventBus";
 import { invokeWithTimeout } from "@/composables/useInvoke";
 
 export interface PrefetchPayload {
@@ -106,101 +108,92 @@ export const usePrefetchStore = defineStore("prefetch", () => {
     _onSilentChapterCached = null;
   }
 
-  async function setupManualListeners(tid: string) {
-    try {
-      const { listen } = await import("@tauri-apps/api/event");
-      _progressUnlisten = await listen<PrefetchProgressPayload>("shelf:prefetch-progress", (ev) => {
-        if (ev.payload.taskId !== tid) {
-          return;
-        }
-        manualProgress.value = {
-          done: ev.payload.done,
-          total: ev.payload.total,
-        };
-        _onChapterCached?.(ev.payload.chapterIndex, ev.payload);
-      });
-      _doneUnlisten = await listen<{ taskId: string }>("shelf:prefetch-done", (ev) => {
-        if (ev.payload.taskId !== tid) {
-          return;
-        }
-        manualRunning.value = false;
-        manualTaskId.value = "";
-        cleanupManual();
-      });
-    } catch {
-      // Tauri 事件不可用（WS 模式或鸿蒙 ArkWeb）：回退到 DOM CustomEvent
-      // Index.ets 的 EventBus 监听器会通过 runJavaScript 把进度推送为 shelf:prefetch-* 自定义事件
+  /**
+   * 按运行环境注册 shelf:prefetch-* 监听（R-P2-011：不得直连 @tauri-apps/api/event）。
+   *
+   * - 鸿蒙 ArkWeb：Index.ets 的 EventBus 监听器通过 runJavaScript 把进度推送为
+   *   shelf:prefetch-* DOM CustomEvent，不经过统一传输层，必须走 DOM 监听。
+   * - Tauri / WS：统一事件层（useEventBus → transportListen）。
+   *
+   * @returns [unlistenProgress, unlistenDone]
+   */
+  async function setupPrefetchListeners(
+    tid: string,
+    onProgress: (payload: PrefetchProgressPayload) => void,
+    onDone: () => void,
+  ): Promise<[() => void, () => void]> {
+    if (isHarmonyNative) {
       const progressHandler = (ev: Event) => {
         const payload = parseProgressPayload(customEventDetail(ev));
         if (payload === null || payload.taskId !== tid) {
           return;
         }
-        manualProgress.value = { done: payload.done, total: payload.total };
-        _onChapterCached?.(payload.chapterIndex, payload);
+        onProgress(payload);
       };
       const doneHandler = (ev: Event) => {
         const payload = parseDonePayload(customEventDetail(ev));
         if (payload === null || payload.taskId !== tid) {
           return;
         }
-        manualRunning.value = false;
-        manualTaskId.value = "";
-        cleanupManual();
+        onDone();
       };
       window.addEventListener("shelf:prefetch-progress", progressHandler);
       window.addEventListener("shelf:prefetch-done", doneHandler);
-      _progressUnlisten = () =>
-        window.removeEventListener("shelf:prefetch-progress", progressHandler);
-      _doneUnlisten = () => window.removeEventListener("shelf:prefetch-done", doneHandler);
+      return [
+        () => window.removeEventListener("shelf:prefetch-progress", progressHandler),
+        () => window.removeEventListener("shelf:prefetch-done", doneHandler),
+      ];
     }
+
+    const unlistenProgress = await eventListen<PrefetchProgressPayload>(
+      "shelf:prefetch-progress",
+      (ev) => {
+        if (ev.payload.taskId !== tid) {
+          return;
+        }
+        onProgress(ev.payload);
+      },
+    );
+    const unlistenDone = await eventListen<{ taskId: string }>("shelf:prefetch-done", (ev) => {
+      if (ev.payload.taskId !== tid) {
+        return;
+      }
+      onDone();
+    });
+    return [unlistenProgress, unlistenDone];
+  }
+
+  async function setupManualListeners(tid: string) {
+    const [unlistenProgress, unlistenDone] = await setupPrefetchListeners(
+      tid,
+      (payload) => {
+        manualProgress.value = { done: payload.done, total: payload.total };
+        _onChapterCached?.(payload.chapterIndex, payload);
+      },
+      () => {
+        manualRunning.value = false;
+        manualTaskId.value = "";
+        cleanupManual();
+      },
+    );
+    _progressUnlisten = unlistenProgress;
+    _doneUnlisten = unlistenDone;
   }
 
   async function setupSilentListeners(tid: string) {
-    try {
-      const { listen } = await import("@tauri-apps/api/event");
-      _silentProgressUnlisten = await listen<{
-        taskId: string;
-        chapterIndex: number;
-        error?: string;
-      }>("shelf:prefetch-progress", (ev) => {
-        if (ev.payload.taskId !== tid) {
-          return;
-        }
-        _onSilentChapterCached?.(ev.payload.chapterIndex);
-      });
-      _silentDoneUnlisten = await listen<{ taskId: string }>("shelf:prefetch-done", (ev) => {
-        if (ev.payload.taskId !== tid) {
-          return;
-        }
-        silentRunning.value = false;
-        silentTaskId.value = "";
-        cleanupSilent();
-      });
-    } catch {
-      // Tauri 事件不可用（WS 模式或鸿蒙 ArkWeb）：回退到 DOM CustomEvent
-      const silentProgressHandler = (ev: Event) => {
-        const payload = parseProgressPayload(customEventDetail(ev));
-        if (payload === null || payload.taskId !== tid) {
-          return;
-        }
+    const [unlistenProgress, unlistenDone] = await setupPrefetchListeners(
+      tid,
+      (payload) => {
         _onSilentChapterCached?.(payload.chapterIndex);
-      };
-      const silentDoneHandler = (ev: Event) => {
-        const payload = parseDonePayload(customEventDetail(ev));
-        if (payload === null || payload.taskId !== tid) {
-          return;
-        }
+      },
+      () => {
         silentRunning.value = false;
         silentTaskId.value = "";
         cleanupSilent();
-      };
-      window.addEventListener("shelf:prefetch-progress", silentProgressHandler);
-      window.addEventListener("shelf:prefetch-done", silentDoneHandler);
-      _silentProgressUnlisten = () =>
-        window.removeEventListener("shelf:prefetch-progress", silentProgressHandler);
-      _silentDoneUnlisten = () =>
-        window.removeEventListener("shelf:prefetch-done", silentDoneHandler);
-    }
+      },
+    );
+    _silentProgressUnlisten = unlistenProgress;
+    _silentDoneUnlisten = unlistenDone;
   }
 
   /**
