@@ -159,7 +159,10 @@ async fn handle_connection(
 
 /// 解析一条入站消息并执行命令，返回应回写的 response JSON（非 invoke 消息返回 None）。
 /// pub 仅供 tests/ 集成测试做协议级验证。
-pub async fn handle_invoke<R: tauri::Runtime>(app: &tauri::AppHandle<R>, raw: &str) -> Option<String> {
+pub async fn handle_invoke<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    raw: &str,
+) -> Option<String> {
     let message: InboundMessage = match serde_json::from_str(raw) {
         Ok(m) => m,
         Err(e) => {

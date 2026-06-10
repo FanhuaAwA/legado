@@ -26,7 +26,9 @@ fn parse_args<T: DeserializeOwned>(raw: &Value) -> Result<T, String> {
 }
 
 /// 命令结果统一序列化：Ok → JSON 值；Err → CommandError 的 JSON 字符串（与 Tauri 拒绝值同构）
-fn reply<T: serde::Serialize>(result: Result<T, reader_core::CommandError>) -> Result<Value, String> {
+fn reply<T: serde::Serialize>(
+    result: Result<T, reader_core::CommandError>,
+) -> Result<Value, String> {
     match result {
         Ok(v) => serde_json::to_value(v).map_err(|e| format!("SERIALIZE_ERROR: {e}")),
         Err(e) => Err(serde_json::to_string(&e).unwrap_or_else(|_| "COMMAND_ERROR".to_string())),

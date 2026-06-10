@@ -126,7 +126,10 @@ async fn not_routed_command_produces_error_response() {
         .expect("应有响应");
     let value: Value = serde_json::from_str(&response).expect("响应应为 JSON");
     assert_eq!(value["id"], "req-2");
-    assert!(value["error"].as_str().unwrap_or("").starts_with("NOT_ROUTED"));
+    assert!(value["error"]
+        .as_str()
+        .unwrap_or("")
+        .starts_with("NOT_ROUTED"));
 }
 
 #[tokio::test]
