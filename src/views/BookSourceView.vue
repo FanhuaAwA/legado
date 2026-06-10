@@ -8,6 +8,7 @@ import type {
   InstalledSourcesTabInstance,
   OnlineSourcesTabInstance,
 } from "@/types";
+import { useCapabilities } from "@/composables/useCapabilities";
 import { eventEmit, eventListen } from "@/composables/useEventBus";
 import { invokeWithTimeout } from "@/composables/useInvoke";
 import { useMobileHorizontalSwipe } from "@/composables/useMobileHorizontalSwipe";
@@ -25,6 +26,10 @@ import { isMobile } from "../composables/useEnv";
 const message = useMessage();
 const bookSourceStore = useBookSourceStore();
 const navigationStore = useNavigationStore();
+const capabilities = useCapabilities();
+const repositoryCapability = capabilities.getCapability("repository");
+const repositoryDisabled = computed(() => !repositoryCapability.value.supported);
+void capabilities.loadCapabilities();
 
 // sources / loading / streamingLoaded 直接响应式引用 store，流式批次到达时自动更新
 const { sources, loading, sourceDirs: storeDirs, streamingLoaded } = storeToRefs(bookSourceStore);
@@ -185,21 +190,21 @@ const mobileMenuOptions = computed(() => [
 ]);
 
 const onlineMenuOptions = computed(() => [
-  { label: "获取列表", key: "fetch-online" },
+  { label: "获取列表", key: "fetch-online", disabled: repositoryDisabled.value },
   { label: "添加仓库", key: "add-online-repo" },
   { label: "移除仓库", key: "remove-online-repo" },
-  { label: "重新检查", key: "recheck-online" },
-  { label: "批量安装", key: "install-all-online" },
-  { label: "批量更新", key: "update-all-online" },
-  { label: "批量强制更新", key: "force-update-all-online" },
+  { label: "重新检查", key: "recheck-online", disabled: repositoryDisabled.value },
+  { label: "批量安装", key: "install-all-online", disabled: repositoryDisabled.value },
+  { label: "批量更新", key: "update-all-online", disabled: repositoryDisabled.value },
+  { label: "批量强制更新", key: "force-update-all-online", disabled: repositoryDisabled.value },
 ]);
 
-const onlineBatchOptions = [
-  { label: "重新检查", key: "recheck-online" },
-  { label: "批量安装", key: "install-all-online" },
-  { label: "批量更新", key: "update-all-online" },
-  { label: "批量强制更新", key: "force-update-all-online" },
-];
+const onlineBatchOptions = computed(() => [
+  { label: "重新检查", key: "recheck-online", disabled: repositoryDisabled.value },
+  { label: "批量安装", key: "install-all-online", disabled: repositoryDisabled.value },
+  { label: "批量更新", key: "update-all-online", disabled: repositoryDisabled.value },
+  { label: "批量强制更新", key: "force-update-all-online", disabled: repositoryDisabled.value },
+]);
 
 function handleMobileMenuSelect(key: string) {
   switch (key) {
@@ -388,7 +393,11 @@ onUnmounted(() => {
         </template>
         <template v-else-if="activeTab === 'online'">
           <MobileToolbarMenu :options="onlineMenuOptions" @select="handleOnlineMenuSelect">
-            <n-button size="small" type="primary" @click="onlineRef?.fetchOnlineSources()"
+            <n-button
+              size="small"
+              type="primary"
+              :disabled="repositoryDisabled"
+              @click="onlineRef?.fetchOnlineSources()"
               >获取列表</n-button
             >
             <n-button size="small" quaternary @click="onlineRef?.openAddRepo()">添加仓库</n-button>
@@ -398,7 +407,7 @@ onUnmounted(() => {
               :options="onlineBatchOptions"
               @select="handleOnlineMenuSelect"
             >
-              <n-button size="small" quaternary>批量操作</n-button>
+              <n-button size="small" quaternary :disabled="repositoryDisabled">批量操作</n-button>
             </n-dropdown>
           </MobileToolbarMenu>
         </template>

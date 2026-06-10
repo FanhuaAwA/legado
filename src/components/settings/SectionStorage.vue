@@ -5,6 +5,7 @@ import { computed, onMounted, ref } from "vue";
 import type { StorageDebugDump } from "@/composables/useFrontendStorage";
 import type { ShelfBook } from "@/types";
 import { comicCacheClear, comicCacheSize } from "@/composables/useBookSource";
+import { useCapabilities } from "@/composables/useCapabilities";
 import { hasNativeTransport } from "@/composables/useEnv";
 import { loadStorageDebugDump } from "@/composables/useFrontendStorage";
 import { invokeWithTimeout } from "@/composables/useInvoke";
@@ -24,6 +25,13 @@ const comicCacheClearing = ref(false);
 const coverCacheSizeBytes = ref(0);
 const coverCacheClearing = ref(false);
 const transportReady = ref(hasNativeTransport);
+
+const capabilities = useCapabilities();
+const comicCacheCapability = capabilities.getCapability("comicCache");
+const coverCacheCapability = capabilities.getCapability("coverCache");
+const comicCacheDisabled = computed(() => !comicCacheCapability.value.supported);
+const coverCacheDisabled = computed(() => !coverCacheCapability.value.supported);
+void capabilities.loadCapabilities();
 
 const loadingInspector = ref(false);
 const storageDump = ref<StorageDebugDump | null>(null);
@@ -97,20 +105,29 @@ async function refreshCacheSize() {
   if (!transportReady.value) {
     return;
   }
-  try {
-    comicCacheSizeBytes.value = await comicCacheSize();
-  } catch {
-    /* ignore */
+  await capabilities.loadCapabilities();
+  if (!comicCacheDisabled.value) {
+    try {
+      comicCacheSizeBytes.value = await comicCacheSize();
+    } catch {
+      /* ignore */
+    }
   }
-  try {
-    coverCacheSizeBytes.value = await invokeWithTimeout<number>("cover_cache_size", {}, 10_000);
-  } catch {
-    /* ignore */
+  if (!coverCacheDisabled.value) {
+    try {
+      coverCacheSizeBytes.value = await invokeWithTimeout<number>("cover_cache_size", {}, 10_000);
+    } catch {
+      /* ignore */
+    }
   }
 }
 
 async function handleClearCache() {
   if (!transportReady.value) {
+    return;
+  }
+  if (comicCacheDisabled.value) {
+    message.warning(comicCacheCapability.value.reason);
     return;
   }
   comicCacheClearing.value = true;
@@ -127,6 +144,10 @@ async function handleClearCache() {
 
 async function handleClearCoverCache() {
   if (!transportReady.value) {
+    return;
+  }
+  if (coverCacheDisabled.value) {
+    message.warning(coverCacheCapability.value.reason);
     return;
   }
   coverCacheClearing.value = true;
@@ -211,25 +232,34 @@ onMounted(async () => {
   <SettingSection title="存储" section-id="section-storage" v-if="transportReady">
     <SettingItem
       label="漫画图片缓存"
-      desc="启用后漫画图片经 Rust 后端下载缓存到本地，支持离线查看和预加载；关闭则由浏览器直接加载"
+      :desc="
+        comicCacheDisabled
+          ? comicCacheCapability.reason
+          : '启用后漫画图片经 Rust 后端下载缓存到本地，支持离线查看和预加载；关闭则由浏览器直接加载'
+      "
     >
       <n-switch
         :value="config.comic_cache_enabled"
         size="small"
         :loading="savingKey === 'comic_cache_enabled'"
+        :disabled="comicCacheDisabled"
         @update:value="(v: boolean) => handleSet('comic_cache_enabled', String(v))"
       />
     </SettingItem>
 
     <SettingItem
       label="缓存占用"
-      :desc="`当前漫画图片缓存大小：${formatBytes(comicCacheSizeBytes)}`"
+      :desc="
+        comicCacheDisabled
+          ? comicCacheCapability.reason
+          : `当前漫画图片缓存大小：${formatBytes(comicCacheSizeBytes)}`
+      "
     >
       <n-button
         size="small"
         type="warning"
         :loading="comicCacheClearing"
-        :disabled="comicCacheSizeBytes === 0"
+        :disabled="comicCacheDisabled || comicCacheSizeBytes === 0"
         @click="handleClearCache"
       >
         清理缓存
@@ -238,13 +268,17 @@ onMounted(async () => {
 
     <SettingItem
       label="封面图片缓存"
-      :desc="`书籍封面本地缓存大小：${formatBytes(coverCacheSizeBytes)}`"
+      :desc="
+        coverCacheDisabled
+          ? coverCacheCapability.reason
+          : `书籍封面本地缓存大小：${formatBytes(coverCacheSizeBytes)}`
+      "
     >
       <n-button
         size="small"
         type="warning"
         :loading="coverCacheClearing"
-        :disabled="coverCacheSizeBytes === 0"
+        :disabled="coverCacheDisabled || coverCacheSizeBytes === 0"
         @click="handleClearCoverCache"
       >
         清理封面缓存

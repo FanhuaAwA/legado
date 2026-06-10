@@ -12,6 +12,7 @@ import {
   type BookSourceMeta,
   type UpdateCheckResult,
 } from "@/composables/useBookSource";
+import { useCapabilities } from "@/composables/useCapabilities";
 import { eventListenSync } from "@/composables/useEventBus";
 import {
   ensureFrontendNamespaceLoaded,
@@ -528,6 +529,12 @@ export const useBookSourceStore = defineStore("bookSource", () => {
    * 结果写入 `pendingUpdates`（仅含有更新的条目）。
    */
   async function checkUpdatesIfStale(): Promise<void> {
+    const capabilities = await useCapabilities().loadCapabilities();
+    if (!capabilities.repository.supported) {
+      pendingUpdates.value = [];
+      return;
+    }
+
     const now = Date.now();
     const lastCheckedRaw = getFrontendStorageItem(UPDATE_NS, LAST_CHECK_KEY);
     const lastChecked = lastCheckedRaw ? parseInt(lastCheckedRaw, 10) : 0;

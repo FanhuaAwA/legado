@@ -14,6 +14,7 @@ import {
   browserProbeShow,
   type BrowserCookie,
 } from "../../composables/useBrowserProbe";
+import { useCapabilities } from "../../composables/useCapabilities";
 import { getBookMetaLine, getLatestChapterText } from "../../utils/bookMeta";
 import { isVipChapter } from "../../utils/chapter";
 import BookCoverImg from "../BookCoverImg.vue";
@@ -28,6 +29,14 @@ const props = defineProps<{
 const message = useMessage();
 const { runSearch, runBookInfo, runChapterList, runChapterContent, runExplore } =
   useScriptBridgeStore();
+
+const capabilities = useCapabilities();
+const browserProbeCapability = capabilities.getCapability("browserProbe");
+const browserProbeDisabled = computed(() => !browserProbeCapability.value.supported);
+const browserProbeDisabledReason = computed(
+  () => browserProbeCapability.value.reason || "Browser probe is not available in this build.",
+);
+void capabilities.loadCapabilities();
 
 // ---- 调试状态 ----
 const debugSourceId = ref<string | null>(null);
@@ -185,6 +194,10 @@ async function ensureBrowserProbeSession() {
 }
 
 async function runBrowserProbe() {
+  if (browserProbeDisabled.value) {
+    message.warning(browserProbeDisabledReason.value);
+    return;
+  }
   const url = browserProbeUrl.value.trim() || debugTargetUrl.value;
   if (!url) {
     message.warning("请输入浏览器探测 URL");
@@ -543,17 +556,22 @@ defineExpose({ setDebugSource });
         <!-- 浏览器探测 -->
         <div class="bv-debug__block">
           <div class="bv-debug__block-title">浏览器探测</div>
+          <n-alert v-if="browserProbeDisabled" type="warning" size="small" :show-icon="false">
+            {{ browserProbeDisabledReason }}
+          </n-alert>
           <n-input
             v-model:value="browserProbeUrl"
             placeholder="动态页面 URL（留空使用当前书源 URL）"
             clearable
             size="small"
+            :disabled="browserProbeDisabled"
           />
           <n-input
             v-model:value="browserProbeUserAgent"
             placeholder="单次会话 UA 覆盖（留空跟随全局设置）"
             clearable
             size="small"
+            :disabled="browserProbeDisabled"
           />
           <div class="bv-debug__block-actions">
             <n-input-number
@@ -564,6 +582,7 @@ defineExpose({ setDebugSource });
               :step="20"
               placeholder="宽"
               style="flex: 1"
+              :disabled="browserProbeDisabled"
             />
             <n-input-number
               v-model:value="browserProbeHeight"
@@ -573,6 +592,7 @@ defineExpose({ setDebugSource });
               :step="20"
               placeholder="高"
               style="flex: 1"
+              :disabled="browserProbeDisabled"
             />
           </div>
           <n-input
@@ -581,9 +601,14 @@ defineExpose({ setDebugSource });
             size="small"
             :autosize="{ minRows: 5, maxRows: 9 }"
             placeholder="页面 JS，可使用 return / await"
+            :disabled="browserProbeDisabled"
           />
           <div class="bv-debug__block-actions">
-            <n-switch v-model:value="browserProbeVisible" size="small">
+            <n-switch
+              v-model:value="browserProbeVisible"
+              size="small"
+              :disabled="browserProbeDisabled"
+            >
               <template #checked>可见</template>
               <template #unchecked>隐藏</template>
             </n-switch>
@@ -592,6 +617,7 @@ defineExpose({ setDebugSource });
               type="primary"
               style="flex: 1"
               :loading="browserProbeLoading"
+              :disabled="browserProbeDisabled"
               @click="runBrowserProbe"
               >运行探测</n-button
             >

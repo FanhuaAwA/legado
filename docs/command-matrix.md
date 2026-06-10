@@ -2,7 +2,7 @@
 
 本文件由 `scripts/ci/check-command-contract.mjs` 的 2026-06-10 实测结果半自动重建。旧的 2026-06-09 手工矩阵已删除，后续不得再手工沿用过期统计。
 
-最后实测：2026-06-10 12:08 +0800
+最后实测：2026-06-10 15:50 +0800
 
 实测命令：
 
@@ -38,8 +38,8 @@ node scripts/ci/check-command-contract.mjs
 | Command                      | 分类             | 处置                                                           |
 | ---------------------------- | ---------------- | -------------------------------------------------------------- |
 | `bookshelf_export_book_data` | implemented      | R-P1-004：确认移动端导出是否漏接；若已有替代方案则记录保留原因 |
-| `sync_baidu_start_auth`      | unsupported_stub | R-P1-004/R-P0-001：sync 模块统一隐藏或实现                     |
-| `sync_baidu_token_status`    | unsupported_stub | R-P1-004/R-P0-001：sync 模块统一隐藏或实现                     |
+| `sync_baidu_start_auth`      | unsupported_stub | R-P1-004：onlyBackend sync stub，R-P0-001 前端入口已关闭       |
+| `sync_baidu_token_status`    | unsupported_stub | R-P1-004：onlyBackend sync stub，R-P0-001 前端入口已关闭       |
 
 ## 争议命令裁决
 
@@ -53,7 +53,7 @@ node scripts/ci/check-command-contract.mjs
 
 ## Frontend-Facing Unsupported Stubs
 
-这些命令是 R-P0-001 的 UI 入口隐藏/禁用目标。逐条结果后续必须更新为 `implemented`、`unsupported_hidden` 或 `blocked_by_platform`。
+这些命令是 R-P0-001 的 UI 入口隐藏/禁用目标。逐条结果必须保持为 `implemented`、`unsupported_hidden` 或 `blocked_by_platform`；后端仍为 stub 的功能若未来实现，需要同步把对应项改为 `implemented`。
 
 | 模块                     | Command                              | 当前处置            |
 | ------------------------ | ------------------------------------ | ------------------- |
@@ -79,42 +79,42 @@ node scripts/ci/check-command-contract.mjs
 | tts                      | `tts_preview_voice`                  | blocked_by_platform |
 | video                    | `start_video_proxy`                  | blocked_by_platform |
 | video                    | `stop_video_proxy`                   | blocked_by_platform |
-| browser_probe            | `browser_probe_create`               | pending_ui_hidden   |
-| browser_probe            | `browser_probe_navigate`             | pending_ui_hidden   |
-| browser_probe            | `browser_probe_eval`                 | pending_ui_hidden   |
-| browser_probe            | `browser_probe_run`                  | pending_ui_hidden   |
-| browser_probe            | `browser_probe_get_cookies`          | pending_ui_hidden   |
-| browser_probe            | `browser_probe_set_cookie`           | pending_ui_hidden   |
-| browser_probe            | `browser_probe_set_user_agent`       | pending_ui_hidden   |
-| browser_probe            | `browser_probe_clear_data`           | pending_ui_hidden   |
-| browser_probe            | `browser_probe_show`                 | pending_ui_hidden   |
-| browser_probe            | `browser_probe_hide`                 | pending_ui_hidden   |
-| browser_probe            | `browser_probe_close`                | pending_ui_hidden   |
-| browser_probe            | `browser_probe_close_all`            | pending_ui_hidden   |
-| comic_cover              | `comic_download_images`              | pending_ui_hidden   |
-| comic_cover              | `comic_get_page_sizes`               | pending_ui_hidden   |
-| comic_cover              | `comic_get_cached_page`              | pending_ui_hidden   |
-| comic_cover              | `comic_cache_clear_chapter`          | pending_ui_hidden   |
-| comic_cover              | `comic_cache_clear`                  | pending_ui_hidden   |
-| comic_cover              | `comic_cache_size`                   | pending_ui_hidden   |
-| comic_cover              | `cover_resolve_cache`                | pending_ui_hidden   |
-| comic_cover              | `cover_cache_size`                   | pending_ui_hidden   |
-| comic_cover              | `cover_cache_clear`                  | pending_ui_hidden   |
-| repository/source_update | `booksource_check_update`            | pending_ui_hidden   |
-| repository/source_update | `booksource_apply_update`            | pending_ui_hidden   |
-| repository/source_update | `repository_fetch`                   | pending_ui_hidden   |
-| repository/source_update | `repository_install`                 | pending_ui_hidden   |
-| repository/source_update | `repository_preview_source`          | pending_ui_hidden   |
-| repository/source_update | `repository_check_source_sync`       | pending_ui_hidden   |
-| update/unlock/misc       | `ai_http_proxy_url`                  | pending_ui_hidden   |
-| update/unlock/misc       | `app_update_download`                | pending_ui_hidden   |
-| update/unlock/misc       | `app_update_install_downloaded_file` | pending_ui_hidden   |
-| update/unlock/misc       | `frontend_plugin_http_request`       | pending_ui_hidden   |
-| update/unlock/misc       | `explore_clear_cache`                | pending_ui_hidden   |
-| update/unlock/misc       | `issue_full_mode_challenge`          | pending_ui_hidden   |
-| update/unlock/misc       | `verify_full_mode_challenge`         | pending_ui_hidden   |
-| update/unlock/misc       | `issue_scoped_unlock_challenge`      | pending_ui_hidden   |
-| update/unlock/misc       | `verify_scoped_unlock_challenge`     | pending_ui_hidden   |
+| browser_probe            | `browser_probe_create`               | unsupported_hidden  |
+| browser_probe            | `browser_probe_navigate`             | unsupported_hidden  |
+| browser_probe            | `browser_probe_eval`                 | unsupported_hidden  |
+| browser_probe            | `browser_probe_run`                  | unsupported_hidden  |
+| browser_probe            | `browser_probe_get_cookies`          | unsupported_hidden  |
+| browser_probe            | `browser_probe_set_cookie`           | unsupported_hidden  |
+| browser_probe            | `browser_probe_set_user_agent`       | unsupported_hidden  |
+| browser_probe            | `browser_probe_clear_data`           | unsupported_hidden  |
+| browser_probe            | `browser_probe_show`                 | unsupported_hidden  |
+| browser_probe            | `browser_probe_hide`                 | unsupported_hidden  |
+| browser_probe            | `browser_probe_close`                | unsupported_hidden  |
+| browser_probe            | `browser_probe_close_all`            | unsupported_hidden  |
+| comic_cover              | `comic_download_images`              | blocked_by_platform |
+| comic_cover              | `comic_get_page_sizes`               | blocked_by_platform |
+| comic_cover              | `comic_get_cached_page`              | blocked_by_platform |
+| comic_cover              | `comic_cache_clear_chapter`          | blocked_by_platform |
+| comic_cover              | `comic_cache_clear`                  | blocked_by_platform |
+| comic_cover              | `comic_cache_size`                   | blocked_by_platform |
+| comic_cover              | `cover_resolve_cache`                | blocked_by_platform |
+| comic_cover              | `cover_cache_size`                   | blocked_by_platform |
+| comic_cover              | `cover_cache_clear`                  | blocked_by_platform |
+| repository/source_update | `booksource_check_update`            | unsupported_hidden  |
+| repository/source_update | `booksource_apply_update`            | unsupported_hidden  |
+| repository/source_update | `repository_fetch`                   | unsupported_hidden  |
+| repository/source_update | `repository_install`                 | unsupported_hidden  |
+| repository/source_update | `repository_preview_source`          | unsupported_hidden  |
+| repository/source_update | `repository_check_source_sync`       | unsupported_hidden  |
+| update/unlock/misc       | `ai_http_proxy_url`                  | blocked_by_platform |
+| update/unlock/misc       | `app_update_download`                | unsupported_hidden  |
+| update/unlock/misc       | `app_update_install_downloaded_file` | unsupported_hidden  |
+| update/unlock/misc       | `frontend_plugin_http_request`       | unsupported_hidden  |
+| update/unlock/misc       | `explore_clear_cache`                | blocked_by_platform |
+| update/unlock/misc       | `issue_full_mode_challenge`          | unsupported_hidden  |
+| update/unlock/misc       | `verify_full_mode_challenge`         | unsupported_hidden  |
+| update/unlock/misc       | `issue_scoped_unlock_challenge`      | unsupported_hidden  |
+| update/unlock/misc       | `verify_scoped_unlock_challenge`     | unsupported_hidden  |
 
 ## Implemented Frontend-Facing Commands
 

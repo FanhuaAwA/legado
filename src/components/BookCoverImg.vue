@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
+import { useCapabilities } from "@/composables/useCapabilities";
 import { extractLocalFilePath, isLocalFileRef, toFileSrcSync } from "@/composables/useFileSrc";
 import { invokeWithTimeout } from "@/composables/useInvoke";
 import {
@@ -55,7 +56,14 @@ const lastLoadedSrc = ref<string | undefined>(undefined);
 /** 用序号防止异步竞态：只有最新一次 watch 触发的结果才会生效 */
 let resolveSeq = 0;
 
+const coverCapabilities = useCapabilities();
+
 async function hasCoverCacheTransport(): Promise<boolean> {
+  // 后端封面磁盘缓存能力未实现时直接走网络直读，省掉注定失败的 IPC 往返
+  const state = await coverCapabilities.loadCapabilities();
+  if (!state.coverCache.supported) {
+    return false;
+  }
   const { isTransportAvailable } = await import("@/composables/useTransport");
   return isTransportAvailable();
 }
@@ -123,7 +131,8 @@ watch(
         return;
       } catch {
         if (seq === resolveSeq) {
-          status.value = "error";
+          // 缓存解析失败时回退网络直读，封面可用性优先于缓存
+          applyResolvedSrc(absUrl, false);
         }
         return;
       }

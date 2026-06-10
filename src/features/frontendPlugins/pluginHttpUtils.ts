@@ -1,6 +1,9 @@
 import type { PatchShelfBookPayload, ShelfBook } from "@/composables/useBookshelf";
+import { useCapabilities } from "@/composables/useCapabilities";
 import { invokeWithTimeout } from "@/composables/useInvoke";
 import type { FrontendPluginHttpRequest, FrontendPluginHttpResponse } from "./pluginTypes";
+
+const capabilities = useCapabilities();
 
 export function normalizeHttpHeaders(headers?: Record<string, string>): Array<[string, string]> {
   if (!headers) {
@@ -14,6 +17,8 @@ export function normalizeHttpHeaders(headers?: Record<string, string>): Array<[s
 export async function requestPluginHttp(
   request: FrontendPluginHttpRequest,
 ): Promise<FrontendPluginHttpResponse> {
+  await capabilities.requireCapability("pluginHttp");
+
   return invokeWithTimeout<FrontendPluginHttpResponse>(
     "frontend_plugin_http_request",
     {

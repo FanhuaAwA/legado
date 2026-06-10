@@ -1,7 +1,19 @@
 import { computed, readonly, ref } from "vue";
 import { invokeWithTimeout } from "./useInvoke";
 
-export type CapabilityKey = "sync" | "tts" | "videoProxy";
+export type CapabilityKey =
+  | "sync"
+  | "tts"
+  | "videoProxy"
+  | "browserProbe"
+  | "comicCache"
+  | "coverCache"
+  | "repository"
+  | "appUpdate"
+  | "unlock"
+  | "aiProxy"
+  | "pluginHttp"
+  | "exploreCache";
 
 export interface FeatureCapability {
   supported: boolean;
@@ -9,11 +21,7 @@ export interface FeatureCapability {
   commands: string[];
 }
 
-export interface AppCapabilities {
-  sync: FeatureCapability;
-  tts: FeatureCapability;
-  videoProxy: FeatureCapability;
-}
+export type AppCapabilities = Record<CapabilityKey, FeatureCapability>;
 
 function unsupported(reason: string, commands: string[]): FeatureCapability {
   return {
@@ -23,6 +31,8 @@ function unsupported(reason: string, commands: string[]): FeatureCapability {
   };
 }
 
+// 离线兜底表：capabilities_get 不可达时使用。键集合必须与后端
+// src-tauri/src/commands/system.rs 的 CAPABILITY_SPECS 保持一致。
 const fallbackCapabilities: AppCapabilities = {
   sync: unsupported("Sync backend is not implemented in this build.", [
     "sync_baidu_start_auth",
@@ -57,7 +67,73 @@ const fallbackCapabilities: AppCapabilities = {
     "start_video_proxy",
     "stop_video_proxy",
   ]),
+  browserProbe: unsupported(
+    "Headless browser probe is not implemented in this build; sources requiring WebView verification cannot run it.",
+    [
+      "browser_probe_create",
+      "browser_probe_close",
+      "browser_probe_close_all",
+      "browser_probe_hide",
+      "browser_probe_show",
+      "browser_probe_navigate",
+      "browser_probe_eval",
+      "browser_probe_run",
+      "browser_probe_get_cookies",
+      "browser_probe_set_cookie",
+      "browser_probe_clear_data",
+      "browser_probe_set_user_agent",
+    ],
+  ),
+  comicCache: unsupported(
+    "Comic page cache is not implemented in this build; pages load directly from the network.",
+    [
+      "comic_cache_clear",
+      "comic_cache_clear_chapter",
+      "comic_cache_size",
+      "comic_download_images",
+      "comic_get_cached_page",
+      "comic_get_page_sizes",
+    ],
+  ),
+  coverCache: unsupported(
+    "Cover disk cache is not implemented in this build; covers load directly from the network.",
+    ["cover_cache_clear", "cover_cache_size", "cover_resolve_cache"],
+  ),
+  repository: unsupported(
+    "Source repository browsing and source auto-update are not implemented in this build.",
+    [
+      "repository_fetch",
+      "repository_install",
+      "repository_preview_source",
+      "repository_check_source_sync",
+      "booksource_check_update",
+      "booksource_apply_update",
+    ],
+  ),
+  appUpdate: unsupported(
+    "In-app update download is not implemented in this build; download releases manually.",
+    ["app_update_download", "app_update_install_downloaded_file"],
+  ),
+  unlock: unsupported("Secure-mode unlock challenges are not implemented in this build.", [
+    "issue_full_mode_challenge",
+    "verify_full_mode_challenge",
+    "issue_scoped_unlock_challenge",
+    "verify_scoped_unlock_challenge",
+  ]),
+  aiProxy: unsupported(
+    "AI HTTP proxy is not implemented in this build; AI features use direct connections.",
+    ["ai_http_proxy_url"],
+  ),
+  pluginHttp: unsupported("Frontend plugin HTTP bridge is not implemented in this build.", [
+    "frontend_plugin_http_request",
+  ]),
+  exploreCache: unsupported(
+    "Explore result cache is not implemented in this build; nothing to clear.",
+    ["explore_clear_cache"],
+  ),
 };
+
+const capabilityKeys = Object.keys(fallbackCapabilities) as CapabilityKey[];
 
 const capabilities = ref<AppCapabilities>(fallbackCapabilities);
 const loaded = ref(false);
@@ -80,12 +156,13 @@ function normalizeCapability(value: unknown, fallback: FeatureCapability): Featu
 }
 
 function normalizeCapabilities(value: unknown): AppCapabilities {
-  const record = value && typeof value === "object" ? (value as Partial<AppCapabilities>) : {};
-  return {
-    sync: normalizeCapability(record.sync, fallbackCapabilities.sync),
-    tts: normalizeCapability(record.tts, fallbackCapabilities.tts),
-    videoProxy: normalizeCapability(record.videoProxy, fallbackCapabilities.videoProxy),
-  };
+  const record =
+    value && typeof value === "object" ? (value as Partial<Record<CapabilityKey, unknown>>) : {};
+  const result = {} as AppCapabilities;
+  for (const key of capabilityKeys) {
+    result[key] = normalizeCapability(record[key], fallbackCapabilities[key]);
+  }
+  return result;
 }
 
 async function loadCapabilities(force = false): Promise<AppCapabilities> {

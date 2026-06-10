@@ -47,7 +47,7 @@ pub fn get_platform() -> &'static str {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct FeatureCapability {
     supported: bool,
@@ -55,62 +55,161 @@ pub struct FeatureCapability {
     commands: Vec<&'static str>,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AppCapabilities {
-    sync: FeatureCapability,
-    tts: FeatureCapability,
-    video_proxy: FeatureCapability,
+/// 单一能力域声明。新增功能模块时只需在 CAPABILITY_SPECS 追加一条记录，
+/// 前后端契约（capabilities_get 返回的 key -> FeatureCapability 映射）自动扩展。
+pub struct CapabilitySpec {
+    pub key: &'static str,
+    pub supported: bool,
+    pub reason: &'static str,
+    pub commands: &'static [&'static str],
 }
 
-fn unsupported_capability(reason: &'static str, commands: Vec<&'static str>) -> FeatureCapability {
-    FeatureCapability {
+pub const CAPABILITY_SPECS: &[CapabilitySpec] = &[
+    CapabilitySpec {
+        key: "sync",
         supported: false,
-        reason,
-        commands,
-    }
-}
+        reason: "Sync backend is not implemented in this build.",
+        commands: &[
+            "sync_baidu_start_auth",
+            "sync_baidu_poll_token",
+            "sync_baidu_token_status",
+            "sync_baidu_revoke_auth",
+            "sync_set_credentials",
+            "sync_get_credentials",
+            "sync_clear_credentials",
+            "sync_get_status",
+            "sync_now",
+            "sync_test_connection",
+            "sync_list_conflicts",
+            "sync_resolve_conflict",
+            "sync_notify_lifecycle",
+            "sync_client_state_set",
+            "sync_report_reader_session",
+            "sync_v2_sync_reading_progress",
+        ],
+    },
+    CapabilitySpec {
+        key: "tts",
+        supported: false,
+        reason: "Native TTS backend is not implemented in this build; browser speech remains available.",
+        commands: &[
+            "tts_get_voices",
+            "tts_is_initialized",
+            "tts_is_speaking",
+            "tts_speak",
+            "tts_stop",
+            "tts_preview_voice",
+        ],
+    },
+    CapabilitySpec {
+        key: "videoProxy",
+        supported: false,
+        reason: "Local video proxy is not implemented in this build.",
+        commands: &["start_video_proxy", "stop_video_proxy"],
+    },
+    CapabilitySpec {
+        key: "browserProbe",
+        supported: false,
+        reason: "Headless browser probe is not implemented in this build; sources requiring WebView verification cannot run it.",
+        commands: &[
+            "browser_probe_create",
+            "browser_probe_close",
+            "browser_probe_close_all",
+            "browser_probe_hide",
+            "browser_probe_show",
+            "browser_probe_navigate",
+            "browser_probe_eval",
+            "browser_probe_run",
+            "browser_probe_get_cookies",
+            "browser_probe_set_cookie",
+            "browser_probe_clear_data",
+            "browser_probe_set_user_agent",
+        ],
+    },
+    CapabilitySpec {
+        key: "comicCache",
+        supported: false,
+        reason: "Comic page cache is not implemented in this build; pages load directly from the network.",
+        commands: &[
+            "comic_cache_clear",
+            "comic_cache_clear_chapter",
+            "comic_cache_size",
+            "comic_download_images",
+            "comic_get_cached_page",
+            "comic_get_page_sizes",
+        ],
+    },
+    CapabilitySpec {
+        key: "coverCache",
+        supported: false,
+        reason: "Cover disk cache is not implemented in this build; covers load directly from the network.",
+        commands: &["cover_cache_clear", "cover_cache_size", "cover_resolve_cache"],
+    },
+    CapabilitySpec {
+        key: "repository",
+        supported: false,
+        reason: "Source repository browsing and source auto-update are not implemented in this build.",
+        commands: &[
+            "repository_fetch",
+            "repository_install",
+            "repository_preview_source",
+            "repository_check_source_sync",
+            "booksource_check_update",
+            "booksource_apply_update",
+        ],
+    },
+    CapabilitySpec {
+        key: "appUpdate",
+        supported: false,
+        reason: "In-app update download is not implemented in this build; download releases manually.",
+        commands: &["app_update_download", "app_update_install_downloaded_file"],
+    },
+    CapabilitySpec {
+        key: "unlock",
+        supported: false,
+        reason: "Secure-mode unlock challenges are not implemented in this build.",
+        commands: &[
+            "issue_full_mode_challenge",
+            "verify_full_mode_challenge",
+            "issue_scoped_unlock_challenge",
+            "verify_scoped_unlock_challenge",
+        ],
+    },
+    CapabilitySpec {
+        key: "aiProxy",
+        supported: false,
+        reason: "AI HTTP proxy is not implemented in this build; AI features use direct connections.",
+        commands: &["ai_http_proxy_url"],
+    },
+    CapabilitySpec {
+        key: "pluginHttp",
+        supported: false,
+        reason: "Frontend plugin HTTP bridge is not implemented in this build.",
+        commands: &["frontend_plugin_http_request"],
+    },
+    CapabilitySpec {
+        key: "exploreCache",
+        supported: false,
+        reason: "Explore result cache is not implemented in this build; nothing to clear.",
+        commands: &["explore_clear_cache"],
+    },
+];
 
 #[tauri::command]
-pub fn capabilities_get() -> AppCapabilities {
-    AppCapabilities {
-        sync: unsupported_capability(
-            "Sync backend is not implemented in this build.",
-            vec![
-                "sync_baidu_start_auth",
-                "sync_baidu_poll_token",
-                "sync_baidu_token_status",
-                "sync_baidu_revoke_auth",
-                "sync_set_credentials",
-                "sync_get_credentials",
-                "sync_clear_credentials",
-                "sync_get_status",
-                "sync_now",
-                "sync_test_connection",
-                "sync_list_conflicts",
-                "sync_resolve_conflict",
-                "sync_notify_lifecycle",
-                "sync_client_state_set",
-                "sync_report_reader_session",
-                "sync_v2_sync_reading_progress",
-            ],
-        ),
-        tts: unsupported_capability(
-            "Native TTS backend is not implemented in this build; browser speech remains available.",
-            vec![
-                "tts_get_voices",
-                "tts_is_initialized",
-                "tts_is_speaking",
-                "tts_speak",
-                "tts_stop",
-                "tts_preview_voice",
-            ],
-        ),
-        video_proxy: unsupported_capability(
-            "Local video proxy is not implemented in this build.",
-            vec!["start_video_proxy", "stop_video_proxy"],
-        ),
-    }
+pub fn capabilities_get() -> std::collections::BTreeMap<&'static str, FeatureCapability> {
+    CAPABILITY_SPECS
+        .iter()
+        .map(|spec| {
+            (
+                spec.key,
+                FeatureCapability {
+                    supported: spec.supported,
+                    reason: spec.reason,
+                    commands: spec.commands.to_vec(),
+                },
+            )
+        })
+        .collect()
 }
 
 #[tauri::command]

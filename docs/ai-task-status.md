@@ -2,7 +2,7 @@
 
 本文件记录当前 R 队列状态。事实数字只以当轮命令输出为准，不沿用历史表格。
 
-最后实测：2026-06-10 12:08 +0800
+最后实测：2026-06-10 15:50 +0800
 
 实测命令：
 
@@ -36,16 +36,16 @@ command_contract.classificationScope = frontend-facing registered commands
 
 ## R 队列状态
 
-| ID            | 状态                 | 当前证据                                                                                                    |
-| ------------- | -------------------- | ----------------------------------------------------------------------------------------------------------- |
-| R-P1-003      | closed               | `SectionBackup.vue` zip 过滤已改为 json，见 `reports/gates/2026-06-10-1016-R-batch1/summary.md`             |
-| R-P1-001      | closed               | 契约脚本逐函数分类 + self-test；当前 `browser_probe_create` 判 stub，`backup_inspect` 判 implemented        |
-| R-P0-003      | closed for 书旗/七猫 | 书旗/七猫 full_chain 均 `live_network_pass`；番茄/番茄短剧转入 R-P2-003/004                                 |
-| R-P1-002      | closed               | `web_server_stop_releases_port_for_restart` 回归测试，见 R-batch2 提交                                      |
-| R-P0-002      | closed               | 本文件、`docs/command-matrix.md`、`docs/source-compat-matrix.md` 已按 2026-06-10 实测重写，旧冲突表已删除   |
-| R-P0-001      | open                 | 已建立 `capabilities_get` + `useCapabilities`；sync/tts/video 共 22/58 个前端入口已处置，剩余 36 个继续排队 |
-| R-P1-004      | open                 | 3 个 onlyBackend 命令仍需逐个处置                                                                           |
-| R-P2-001..007 | open                 | Android 签名、lint warnings、番茄/短剧、缓存系统、Harmony 标注、`book` 对象绑定等                           |
+| ID            | 状态                 | 当前证据                                                                                                                                                                                           |
+| ------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R-P1-003      | closed               | `SectionBackup.vue` zip 过滤已改为 json，见 `reports/gates/2026-06-10-1016-R-batch1/summary.md`                                                                                                    |
+| R-P1-001      | closed               | 契约脚本逐函数分类 + self-test；当前 `browser_probe_create` 判 stub，`backup_inspect` 判 implemented                                                                                               |
+| R-P0-003      | closed for 书旗/七猫 | 书旗/七猫 full_chain 均 `live_network_pass`；番茄/番茄短剧转入 R-P2-003/004                                                                                                                        |
+| R-P1-002      | closed               | `web_server_stop_releases_port_for_restart` 回归测试，见 R-batch2 提交                                                                                                                             |
+| R-P0-002      | closed               | 本文件、`docs/command-matrix.md`、`docs/source-compat-matrix.md` 已按 2026-06-10 实测重写，旧冲突表已删除                                                                                          |
+| R-P0-001      | closed               | 58/58 个前端可触达 UNSUPPORTED stub 已逐条归档为 `unsupported_hidden` 或 `blocked_by_platform`；能力声明覆盖 12 个域，见 `reports/gates/2026-06-10-1550-R-P0-001-capabilities-complete/summary.md` |
+| R-P1-004      | open                 | 3 个 onlyBackend 命令仍需逐个处置                                                                                                                                                                  |
+| R-P2-001..007 | open                 | Android 签名、lint warnings、番茄/短剧、缓存系统、Harmony 标注、`book` 对象绑定等                                                                                                                  |
 
 ## 5 个争议命令定真伪
 
@@ -59,18 +59,18 @@ command_contract.classificationScope = frontend-facing registered commands
 
 ## 当前前端可触达 UNSUPPORTED 模块
 
-R-P0-001 的契约口径仍是 58 个前端可触达 stub；本批先把 sync / native TTS / video proxy 共 22 个入口接入 `capabilities_get` + `useCapabilities`，不再裸露点击后直撞 `UNSUPPORTED`。剩余 36 个继续按模块处理。
+R-P0-001 的契约口径仍是 58 个前端可触达 stub；本轮已全部接入 `capabilities_get` + `useCapabilities`，并在 UI/调用层按模块禁用、隐藏、降级或 no-op。注意：这只关闭“点击后直撞 UNSUPPORTED”的入口裸露问题，不代表后端缓存、仓库、更新、解锁等能力已经实现。
 
 | 模块                     | 数量 | 当前处置            | 命令                                                                                                                                                                                                                                                                                                                                                |
 | ------------------------ | ---: | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | sync                     |   14 | unsupported_hidden  | `sync_baidu_poll_token`, `sync_baidu_revoke_auth`, `sync_client_state_set`, `sync_get_status`, `sync_set_credentials`, `sync_clear_credentials`, `sync_get_credentials`, `sync_test_connection`, `sync_now`, `sync_list_conflicts`, `sync_resolve_conflict`, `sync_report_reader_session`, `sync_v2_sync_reading_progress`, `sync_notify_lifecycle` |
 | tts                      |    6 | blocked_by_platform | `tts_stop`, `tts_is_initialized`, `tts_is_speaking`, `tts_speak`, `tts_get_voices`, `tts_preview_voice`                                                                                                                                                                                                                                             |
 | video                    |    2 | blocked_by_platform | `start_video_proxy`, `stop_video_proxy`                                                                                                                                                                                                                                                                                                             |
-| browser_probe            |   12 | pending_ui_hidden   | `browser_probe_create`, `browser_probe_navigate`, `browser_probe_eval`, `browser_probe_run`, `browser_probe_get_cookies`, `browser_probe_set_cookie`, `browser_probe_set_user_agent`, `browser_probe_clear_data`, `browser_probe_show`, `browser_probe_hide`, `browser_probe_close`, `browser_probe_close_all`                                      |
-| comic_cover              |    9 | pending_ui_hidden   | `comic_download_images`, `comic_get_page_sizes`, `comic_get_cached_page`, `comic_cache_clear_chapter`, `comic_cache_clear`, `comic_cache_size`, `cover_resolve_cache`, `cover_cache_size`, `cover_cache_clear`                                                                                                                                      |
-| repository/source_update |    6 | pending_ui_hidden   | `booksource_check_update`, `booksource_apply_update`, `repository_fetch`, `repository_install`, `repository_preview_source`, `repository_check_source_sync`                                                                                                                                                                                         |
-| update/unlock/misc       |    9 | pending_ui_hidden   | `ai_http_proxy_url`, `app_update_download`, `app_update_install_downloaded_file`, `frontend_plugin_http_request`, `explore_clear_cache`, `issue_full_mode_challenge`, `verify_full_mode_challenge`, `issue_scoped_unlock_challenge`, `verify_scoped_unlock_challenge`                                                                               |
+| browser_probe            |   12 | unsupported_hidden  | `browser_probe_create`, `browser_probe_navigate`, `browser_probe_eval`, `browser_probe_run`, `browser_probe_get_cookies`, `browser_probe_set_cookie`, `browser_probe_set_user_agent`, `browser_probe_clear_data`, `browser_probe_show`, `browser_probe_hide`, `browser_probe_close`, `browser_probe_close_all`                                      |
+| comic_cover              |    9 | blocked_by_platform | `comic_download_images`, `comic_get_page_sizes`, `comic_get_cached_page`, `comic_cache_clear_chapter`, `comic_cache_clear`, `comic_cache_size`, `cover_resolve_cache`, `cover_cache_size`, `cover_cache_clear`                                                                                                                                      |
+| repository/source_update |    6 | unsupported_hidden  | `booksource_check_update`, `booksource_apply_update`, `repository_fetch`, `repository_install`, `repository_preview_source`, `repository_check_source_sync`                                                                                                                                                                                         |
+| update/unlock/misc       |    9 | blocked/hidden      | `ai_http_proxy_url` / `explore_clear_cache` 为 `blocked_by_platform` 降级；`app_update_*`、`frontend_plugin_http_request`、`issue_*unlock*`、`verify_*unlock*` 为 `unsupported_hidden`                                                                                                                                                              |
 
 ## 下轮第一件事
 
-R-P0-001：继续用既有 `capabilities_get` / `useCapabilities` 机制推进剩余 36 个入口，下一批优先 browser_probe，然后 comic/cover、repository/source_update、update/unlock/misc。
+R-P1-004：逐个处理 3 个 onlyBackend 命令（`bookshelf_export_book_data`, `sync_baidu_start_auth`, `sync_baidu_token_status`），确认是移动端/后端保留 API、补前端接线，还是归档为无 UI 入口的后端孤儿；随后继续 R-P2 队列。

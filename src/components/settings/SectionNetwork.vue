@@ -4,6 +4,7 @@ import { storeToRefs } from "pinia";
 import { computed, ref, onMounted } from "vue";
 import { BUILTIN_USER_AGENT } from "@/composables/useAppConfig";
 import { browserProbeClearData } from "@/composables/useBrowserProbe";
+import { useCapabilities } from "@/composables/useCapabilities";
 import { isTransportAvailable } from "@/composables/useTransport";
 import { useAppConfigStore, usePreferencesStore } from "@/stores";
 import SettingItem from "./SettingItem.vue";
@@ -17,6 +18,14 @@ const { config, savingKey } = storeToRefs(_appCfg);
 const { setConfig, resetConfig, loadConfig } = _appCfg;
 const prefsStore = usePreferencesStore();
 const searchCfg = computed(() => prefsStore.search);
+
+const capabilities = useCapabilities();
+const browserProbeCapability = capabilities.getCapability("browserProbe");
+const browserProbeDisabled = computed(() => !browserProbeCapability.value.supported);
+const browserProbeDisabledReason = computed(
+  () => browserProbeCapability.value.reason || "Browser probe is not available in this build.",
+);
+void capabilities.loadCapabilities();
 
 // DoH 服务器预设（分国内 / 国际分组）
 const DOH_OPTIONS = [
@@ -91,6 +100,10 @@ function saveProbeUa() {
 }
 
 async function clearBrowserProbeData() {
+  if (browserProbeDisabled.value) {
+    message.warning(browserProbeDisabledReason.value);
+    return;
+  }
   try {
     await browserProbeClearData();
     message.success("已清空浏览器探测数据");
@@ -218,11 +231,15 @@ onMounted(async () => {
         </template>
 
         <div class="probe-panel">
+          <n-alert v-if="browserProbeDisabled" type="warning" :show-icon="false">
+            {{ browserProbeDisabledReason }}
+          </n-alert>
           <div class="probe-row">
             <span>启用浏览器探测</span>
             <n-switch
               :value="config.browser_probe_enabled"
               :loading="savingKey === 'browser_probe_enabled'"
+              :disabled="browserProbeDisabled"
               @update:value="(v: boolean) => handleSet('browser_probe_enabled', String(v))"
             />
           </div>
@@ -231,6 +248,7 @@ onMounted(async () => {
             <n-switch
               :value="config.browser_probe_visible_by_default"
               :loading="savingKey === 'browser_probe_visible_by_default'"
+              :disabled="browserProbeDisabled"
               @update:value="
                 (v: boolean) => handleSet('browser_probe_visible_by_default', String(v))
               "
@@ -241,6 +259,7 @@ onMounted(async () => {
             <n-switch
               :value="config.browser_probe_force_visible"
               :loading="savingKey === 'browser_probe_force_visible'"
+              :disabled="browserProbeDisabled"
               @update:value="(v: boolean) => handleSet('browser_probe_force_visible', String(v))"
             />
           </div>
@@ -253,6 +272,7 @@ onMounted(async () => {
             <n-switch
               :value="config.browser_probe_persist_profile"
               :loading="savingKey === 'browser_probe_persist_profile'"
+              :disabled="browserProbeDisabled"
               @update:value="(v: boolean) => handleSet('browser_probe_persist_profile', String(v))"
             />
           </div>
@@ -263,6 +283,7 @@ onMounted(async () => {
               size="small"
               placeholder="留空则使用上方 HTTP User-Agent"
               class="ua-input"
+              :disabled="browserProbeDisabled"
               @keydown.enter="saveProbeUa"
             />
             <div class="ua-actions">
@@ -270,12 +291,14 @@ onMounted(async () => {
                 size="small"
                 type="primary"
                 :loading="savingKey === 'browser_probe_user_agent'"
+                :disabled="browserProbeDisabled"
                 @click="saveProbeUa"
                 >保存</n-button
               >
               <n-button
                 size="small"
                 :loading="savingKey === 'browser_probe_user_agent'"
+                :disabled="browserProbeDisabled"
                 @click="handleReset('browser_probe_user_agent')"
                 >重置</n-button
               >
@@ -290,6 +313,7 @@ onMounted(async () => {
                 :min="0"
                 :max="600"
                 style="width: 90px"
+                :disabled="browserProbeDisabled"
                 @update:value="
                   (v: number | null) =>
                     v != null && handleSet('browser_probe_timeout_secs', String(v))
@@ -298,7 +322,13 @@ onMounted(async () => {
               <span class="unit-label">秒</span>
             </div>
           </div>
-          <n-button size="small" type="warning" ghost @click="clearBrowserProbeData">
+          <n-button
+            size="small"
+            type="warning"
+            ghost
+            :disabled="browserProbeDisabled"
+            @click="clearBrowserProbeData"
+          >
             清空探测浏览器数据
           </n-button>
         </div>

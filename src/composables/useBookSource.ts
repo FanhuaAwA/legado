@@ -1,4 +1,5 @@
 import { invokeWithTimeout } from "./useInvoke";
+import { useCapabilities } from "./useCapabilities";
 
 // ── 类型定义（与 Rust BookSourceMeta 对应）────────────────────────────────
 
@@ -99,6 +100,12 @@ const SUPPORTED_BOOK_SOURCE_TYPES = new Set([
   "有声",
   "网页",
 ]);
+const capabilities = useCapabilities();
+
+async function isBookSourceCapabilitySupported(key: "comicCache" | "repository"): Promise<boolean> {
+  const state = await capabilities.loadCapabilities();
+  return state[key].supported;
+}
 
 function normalizeMetaValue(value: string): string {
   const trimmed = value.trim();
@@ -675,6 +682,10 @@ export async function comicDownloadImages(
   imageUrls: string[],
   cacheEnabled?: boolean,
 ): Promise<string[]> {
+  if (!(await isBookSourceCapabilitySupported("comicCache"))) {
+    return imageUrls;
+  }
+
   return invokeWithTimeout<string[]>(
     "comic_download_images",
     {
@@ -701,6 +712,10 @@ export async function comicGetPageSizes(
   bookName: string,
   chapterIndex: number,
 ): Promise<Array<[number, number] | null>> {
+  if (!(await isBookSourceCapabilitySupported("comicCache"))) {
+    return [];
+  }
+
   return invokeWithTimeout<Array<[number, number] | null>>(
     "comic_get_page_sizes",
     { fileName, bookUrl, bookName, chapterIndex },
@@ -721,6 +736,8 @@ export async function comicGetCachedPage(
   chapterIndex: number,
   pageIndex: number,
 ): Promise<string> {
+  await capabilities.requireCapability("comicCache");
+
   return invokeWithTimeout<string>(
     "comic_get_cached_page",
     { fileName, bookUrl, bookName, chapterIndex, pageIndex },
@@ -738,6 +755,10 @@ export async function comicCacheClearChapter(
   bookName: string,
   chapterIndex: number,
 ): Promise<number> {
+  if (!(await isBookSourceCapabilitySupported("comicCache"))) {
+    return 0;
+  }
+
   return invokeWithTimeout<number>(
     "comic_cache_clear_chapter",
     { fileName, bookUrl, bookName, chapterIndex },
@@ -751,6 +772,10 @@ export async function comicCacheClearChapter(
  * @returns 释放的字节数
  */
 export async function comicCacheClear(fileName?: string): Promise<number> {
+  if (!(await isBookSourceCapabilitySupported("comicCache"))) {
+    return 0;
+  }
+
   return invokeWithTimeout<number>("comic_cache_clear", { fileName: fileName ?? null }, 30000);
 }
 
@@ -758,6 +783,10 @@ export async function comicCacheClear(fileName?: string): Promise<number> {
  * 获取漫画缓存总大小（字节）
  */
 export async function comicCacheSize(): Promise<number> {
+  if (!(await isBookSourceCapabilitySupported("comicCache"))) {
+    return 0;
+  }
+
   return invokeWithTimeout<number>("comic_cache_size", {}, 10000);
 }
 
@@ -775,6 +804,8 @@ export interface UpdateCheckResult {
  * 检测单个书源是否有更新（需要书源设置了 @updateUrl）
  */
 export async function checkBookSourceUpdate(fileName: string): Promise<UpdateCheckResult> {
+  await capabilities.requireCapability("repository");
+
   return invokeWithTimeout<UpdateCheckResult>("booksource_check_update", { fileName }, 20000);
 }
 
@@ -782,6 +813,8 @@ export async function checkBookSourceUpdate(fileName: string): Promise<UpdateChe
  * 从 @updateUrl 拉取最新内容并覆盖本地文件
  */
 export async function applyBookSourceUpdate(fileName: string): Promise<void> {
+  await capabilities.requireCapability("repository");
+
   return invokeWithTimeout<void>("booksource_apply_update", { fileName }, 20000);
 }
 
@@ -1158,6 +1191,8 @@ export interface RemoteBookSourcePreview {
 
 /** 拉取远程仓库 JSON */
 export async function fetchRepository(url: string): Promise<RepoManifest> {
+  await capabilities.requireCapability("repository");
+
   return invokeWithTimeout<RepoManifest>("repository_fetch", { url }, 35000);
 }
 
@@ -1167,6 +1202,8 @@ export async function installFromRepository(
   fileName: string,
   expectedUuid?: string,
 ): Promise<void> {
+  await capabilities.requireCapability("repository");
+
   return invokeWithTimeout<void>(
     "repository_install",
     { downloadUrl, fileName, expectedUuid: expectedUuid ?? null },
@@ -1179,6 +1216,8 @@ export async function previewRemoteBookSource(
   downloadUrl: string,
   expectedUuid?: string,
 ): Promise<RemoteBookSourcePreview> {
+  await capabilities.requireCapability("repository");
+
   return invokeWithTimeout<RemoteBookSourcePreview>(
     "repository_preview_source",
     { downloadUrl, expectedUuid: expectedUuid ?? null },
@@ -1192,6 +1231,8 @@ export async function checkRepositorySourceSync(
   downloadUrl: string,
   expectedUuid?: string,
 ): Promise<RepoSourceSyncResult> {
+  await capabilities.requireCapability("repository");
+
   return invokeWithTimeout<RepoSourceSyncResult>(
     "repository_check_source_sync",
     { fileName, downloadUrl, expectedUuid: expectedUuid ?? null },

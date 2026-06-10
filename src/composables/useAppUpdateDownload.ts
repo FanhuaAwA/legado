@@ -1,6 +1,8 @@
 import { invokeWithTimeout } from "./useInvoke";
+import { useCapabilities } from "./useCapabilities";
 
 const DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1000;
+const capabilities = useCapabilities();
 
 export interface AppUpdateDownloadRequest {
   requestId: string;
@@ -47,6 +49,8 @@ export interface AppUpdateDownloadProgress {
 export async function downloadAppUpdate(
   request: AppUpdateDownloadRequest,
 ): Promise<AppUpdateDownloadResult> {
+  await capabilities.requireCapability("appUpdate");
+
   return invokeWithTimeout<AppUpdateDownloadResult>(
     "app_update_download",
     { request },
@@ -55,5 +59,7 @@ export async function downloadAppUpdate(
 }
 
 export async function installDownloadedAppUpdate(path: string): Promise<void> {
+  await capabilities.requireCapability("appUpdate");
+
   await invokeWithTimeout<void>("app_update_install_downloaded_file", { path }, 30_000);
 }

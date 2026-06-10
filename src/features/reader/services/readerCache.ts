@@ -3,12 +3,19 @@ import type { ComputedRef, Ref } from "vue";
 import type { ReadingAnchor } from "@/components/reader/composables/usePagination";
 import type { OpenChapterOptions } from "@/components/reader/composables/useReaderChapterOpen";
 import { comicCacheClear, comicCacheClearChapter } from "@/composables/useBookSource";
+import { useCapabilities } from "@/composables/useCapabilities";
 import {
   usePrefetchStore,
   useAppConfigStore,
   type ChapterItem,
   type PrefetchPayload,
 } from "@/stores";
+
+/** 后端漫画缓存能力未实现时跳过缓存清理调用，避免报错中断后续清理流程 */
+async function comicCacheAvailable(): Promise<boolean> {
+  const state = await useCapabilities().loadCapabilities();
+  return state.comicCache.supported;
+}
 
 export interface ReaderPrefetchControllerOptions {
   currentShelfId: ComputedRef<string | undefined>;
@@ -139,15 +146,17 @@ export function createReaderCacheController(options: ReaderCacheControllerOption
     options.clearChapterRuntimeCache(index);
 
     if (options.isComicMode.value) {
-      try {
-        await comicCacheClearChapter(
-          options.getFileName(),
-          options.getBookUrl(),
-          options.getBookName(),
-          index,
-        );
-      } catch (cause) {
-        console.warn("[forceRefresh] 清除漫画章节缓存失败:", cause);
+      if (await comicCacheAvailable()) {
+        try {
+          await comicCacheClearChapter(
+            options.getFileName(),
+            options.getBookUrl(),
+            options.getBookName(),
+            index,
+          );
+        } catch (cause) {
+          console.warn("[forceRefresh] 清除漫画章节缓存失败:", cause);
+        }
       }
       options.cachedIndices.value.delete(index);
     }
@@ -184,7 +193,7 @@ export function createReaderCacheController(options: ReaderCacheControllerOption
 
     options.clearChapterRuntimeCache(index);
 
-    if (options.isComicMode.value) {
+    if (options.isComicMode.value && (await comicCacheAvailable())) {
       try {
         await comicCacheClearChapter(
           options.getFileName(),
@@ -214,7 +223,7 @@ export function createReaderCacheController(options: ReaderCacheControllerOption
     options.clearAllRuntimeCache();
     options.invalidatePages();
 
-    if (options.isComicMode.value) {
+    if (options.isComicMode.value && (await comicCacheAvailable())) {
       try {
         await comicCacheClear(options.getFileName());
       } catch (cause) {

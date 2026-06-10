@@ -3,6 +3,7 @@ import { Download, ExternalLink, PackageCheck } from "lucide-vue-next";
 import { useMessage } from "naive-ui";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import AppDialog from "@/components/base/AppDialog.vue";
+import { useCapabilities } from "@/composables/useCapabilities";
 import {
   downloadAppUpdate,
   installDownloadedAppUpdate,
@@ -23,6 +24,8 @@ import tauriConfig from "../../src-tauri/tauri.conf.json";
 
 const message = useMessage();
 const prefStore = usePreferencesStore();
+const capabilities = useCapabilities();
+const appUpdateCapability = capabilities.getCapability("appUpdate");
 
 const show = ref(false);
 const checking = ref(false);
@@ -82,13 +85,20 @@ const canDownloadInApp = computed(() => {
   const currentPlatform = platform.value;
   return Boolean(
     isTauri &&
+    appUpdateCapability.value.supported &&
     updateResult.value?.asset &&
     (currentPlatform === "Windows" || currentPlatform === "Android"),
   );
 });
 
 const unsupportedPlatformText = computed(() => {
-  if (!updateResult.value?.asset || canDownloadInApp.value) {
+  if (!updateResult.value?.asset) {
+    return "";
+  }
+  if (!appUpdateCapability.value.supported) {
+    return appUpdateCapability.value.reason;
+  }
+  if (canDownloadInApp.value) {
     return "";
   }
   return "当前平台暂未接入应用内下载和安装，请前往发布页查看更新说明。";
@@ -274,6 +284,7 @@ if (isTauri) {
 }
 
 onMounted(() => {
+  void capabilities.loadCapabilities();
   window.addEventListener("legado:show-app-update", handleManualUpdateEvent);
   startupTimer = setTimeout(() => {
     void runStartupCheck();

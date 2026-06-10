@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { reactive, readonly } from "vue";
 import type { CoverImageInput } from "@/utils/coverImage";
+import { useCapabilities } from "@/composables/useCapabilities";
 import { isTauri } from "@/composables/useEnv";
 import { eventListen } from "@/composables/useEventBus";
 import { invokeWithTimeout } from "@/composables/useInvoke";
@@ -395,6 +396,11 @@ export const useScriptBridgeStore = defineStore("scriptBridge", () => {
   }
 
   async function clearExploreCache(fileName?: string) {
+    const capabilities = await useCapabilities().loadCapabilities();
+    if (!capabilities.exploreCache.supported) {
+      return;
+    }
+
     return invokeWithTimeout<void>("explore_clear_cache", { fileName: fileName ?? null }, 5000);
   }
 

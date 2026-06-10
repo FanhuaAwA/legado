@@ -39,6 +39,7 @@ import {
   legacyLocalStorageRemove,
   setFrontendStorageItem,
 } from "./useFrontendStorage";
+import { useCapabilities } from "./useCapabilities";
 import { invokeWithTimeout } from "./useInvoke";
 
 // ── 配置类型 ──────────────────────────────────────────────────────────────
@@ -577,15 +578,19 @@ type JsonRecord = Record<string, unknown>;
 type NativeFetch = typeof fetch;
 
 const LEGADO_REASONING_PROVIDER = "legadoReasoning";
-let backendHttpProxyUrlPromise: Promise<string> | null = null;
+const capabilities = useCapabilities();
+let backendHttpProxyUrlPromise: Promise<string | null> | null = null;
 
-function getBackendHttpProxyUrl(): Promise<string> {
-  backendHttpProxyUrlPromise ??= invokeWithTimeout<string>("ai_http_proxy_url", {}, 5_000).catch(
-    (error) => {
+function getBackendHttpProxyUrl(): Promise<string | null> {
+  backendHttpProxyUrlPromise ??= capabilities
+    .loadCapabilities()
+    .then((state) =>
+      state.aiProxy.supported ? invokeWithTimeout<string>("ai_http_proxy_url", {}, 5_000) : null,
+    )
+    .catch((error) => {
       backendHttpProxyUrlPromise = null;
       throw error;
-    },
-  );
+    });
   return backendHttpProxyUrlPromise;
 }
 
@@ -688,15 +693,23 @@ function createBackendHttpFetch(signal: AbortSignal): NativeFetch {
       throw abortError();
     }
 
-    const url = requestUrl(input);
-    const method = requestMethod(input, init);
-    const body = await requestBody(input, init);
-    const headers = requestHeaders(input, init);
     const proxyUrl = await Promise.race([getBackendHttpProxyUrl(), waitForAbort(signal, init)]);
 
     if (isAborted(signal, init)) {
       throw abortError();
     }
+
+    if (!proxyUrl) {
+      return fetch(input, {
+        ...init,
+        signal: isAbortSignal(init?.signal) ? init.signal : signal,
+      });
+    }
+
+    const url = requestUrl(input);
+    const method = requestMethod(input, init);
+    const body = await requestBody(input, init);
+    const headers = requestHeaders(input, init);
 
     return fetch(`${proxyUrl}?url=${encodeURIComponent(url)}`, {
       method,

@@ -1,5 +1,23 @@
 # AI Iteration Log
 
+## 记录标题：2026-06-10 R-P0-001 能力声明收口完成（58/58）
+
+本轮目标：关闭 R-P0-001 的剩余前端可触达 UNSUPPORTED 入口裸露问题。后端 stub 数量不会因此减少，本轮只处理 UI/调用层门禁、降级和文档逐条归档。
+
+修改文件：
+
+- `src-tauri/src/commands/system.rs`、`src/composables/useCapabilities.ts`：保持 12 个能力域的数据驱动声明，覆盖 sync / tts / videoProxy / browserProbe / comicCache / coverCache / repository / appUpdate / unlock / aiProxy / pluginHttp / exploreCache。
+- `useBrowserProbe.ts`、`useBookSource.ts`、`useAppUpdateDownload.ts`、`pluginHttpUtils.ts`、`useAiAgent.ts`、`scriptBridge.ts`：低层调用在命令前统一检查能力；可降级路径返回原始 URL、空尺寸、0 字节、直连 fetch 或 no-op。
+- `BookSourceView.vue`、`OnlineSourcesTab.vue`、`BookSourceInstallDialog.vue`、`AppUpdateDialog.vue`、`FullModeUnlockDialog.vue`、`ScopedUnlockDialog.vue`：仓库、应用内更新、解锁挑战等可见入口按能力禁用或显示原因。
+- `BookCoverImg.vue`、`ComicMode.vue`、`SectionStorage.vue`、`readerCache.ts`：漫画/封面缓存不可用时走网络直读或跳过缓存清理，不再触发必败 IPC。
+- `docs/command-matrix.md`、`docs/ai-task-status.md`、`E:\Book\legado-tauri-mandatory-completion-audit.md`、`reports/gates/2026-06-10-1550-R-P0-001-capabilities-complete/summary.md`：同步 R-P0-001 closed 状态和逐条证据。
+
+当前结论：R-P0-001 closed。58 个 frontend-facing UNSUPPORTED stub 已逐条标为 `unsupported_hidden` 或 `blocked_by_platform`；项目仍未完成，R-P1-004 和 R-P2 队列继续排队。
+
+验证命令：`node scripts/ci/check-command-contract.mjs --json`、`pnpm exec oxfmt --check .`、`pnpm lint`、`pnpm build`、`cargo check -p legado-tauri`、`cargo check -p reader-core`。
+
+下一轮第一件事：R-P1-004，逐个处理 `bookshelf_export_book_data`、`sync_baidu_start_auth`、`sync_baidu_token_status` 这 3 个 onlyBackend 命令，确认保留、接线或归档原因。
+
 ## 记录标题：2026-06-10 R-P0-001 第一批能力声明接入（sync / TTS / video proxy）
 
 本轮目标：开始关闭 R-P0-001，不实现空壳后端功能，先建立集中式能力声明并让第一批前端入口不再裸露调用 `UNSUPPORTED`。

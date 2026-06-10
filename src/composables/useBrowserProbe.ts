@@ -1,4 +1,5 @@
 import { invokeWithTimeout } from "./useInvoke";
+import { useCapabilities } from "./useCapabilities";
 
 export interface BrowserCreateOptions {
   visible?: boolean;
@@ -38,6 +39,11 @@ export interface BrowserCookie {
 }
 
 const DEFAULT_TIMEOUT = 60_000;
+const capabilities = useCapabilities();
+
+async function requireBrowserProbeCapability(): Promise<void> {
+  await capabilities.requireCapability("browserProbe");
+}
 
 function browserTimeoutMs(options: { timeoutSecs?: number; timeout?: number; timeoutMs?: number }) {
   return (
@@ -45,15 +51,17 @@ function browserTimeoutMs(options: { timeoutSecs?: number; timeout?: number; tim
   );
 }
 
-export function browserProbeCreate(options: BrowserCreateOptions = {}) {
+export async function browserProbeCreate(options: BrowserCreateOptions = {}) {
+  await requireBrowserProbeCapability();
   return invokeWithTimeout<string>("browser_probe_create", { options }, DEFAULT_TIMEOUT);
 }
 
-export function browserProbeNavigate(
+export async function browserProbeNavigate(
   sessionId: string,
   url: string,
   options: BrowserNavigateOptions = {},
 ) {
+  await requireBrowserProbeCapability();
   return invokeWithTimeout<void>(
     "browser_probe_navigate",
     { sessionId, url, options },
@@ -61,11 +69,12 @@ export function browserProbeNavigate(
   );
 }
 
-export function browserProbeEval<T = unknown>(
+export async function browserProbeEval<T = unknown>(
   sessionId: string,
   code: string,
   options: BrowserEvalOptions = {},
 ) {
+  await requireBrowserProbeCapability();
   return invokeWithTimeout<T>(
     "browser_probe_eval",
     { sessionId, code, options },
@@ -73,11 +82,12 @@ export function browserProbeEval<T = unknown>(
   );
 }
 
-export function browserProbeRun<T = unknown>(
+export async function browserProbeRun<T = unknown>(
   url: string,
   code: string,
   options: BrowserRunOptions = {},
 ) {
+  await requireBrowserProbeCapability();
   return invokeWithTimeout<T>(
     "browser_probe_run",
     { url, code, options },
@@ -85,7 +95,8 @@ export function browserProbeRun<T = unknown>(
   );
 }
 
-export function browserProbeGetCookies(url?: string) {
+export async function browserProbeGetCookies(url?: string) {
+  await requireBrowserProbeCapability();
   return invokeWithTimeout<BrowserCookie[]>(
     "browser_probe_get_cookies",
     { url: url ?? null },
@@ -93,30 +104,37 @@ export function browserProbeGetCookies(url?: string) {
   );
 }
 
-export function browserProbeSetCookie(url: string, cookie: BrowserCookie) {
+export async function browserProbeSetCookie(url: string, cookie: BrowserCookie) {
+  await requireBrowserProbeCapability();
   return invokeWithTimeout<void>("browser_probe_set_cookie", { url, cookie }, DEFAULT_TIMEOUT);
 }
 
-export function browserProbeSetUserAgent(userAgent: string) {
+export async function browserProbeSetUserAgent(userAgent: string) {
+  await requireBrowserProbeCapability();
   return invokeWithTimeout<void>("browser_probe_set_user_agent", { userAgent }, DEFAULT_TIMEOUT);
 }
 
-export function browserProbeClearData() {
+export async function browserProbeClearData() {
+  await requireBrowserProbeCapability();
   return invokeWithTimeout<void>("browser_probe_clear_data", {}, DEFAULT_TIMEOUT);
 }
 
-export function browserProbeShow(sessionId: string) {
+export async function browserProbeShow(sessionId: string) {
+  await requireBrowserProbeCapability();
   return invokeWithTimeout<void>("browser_probe_show", { sessionId }, DEFAULT_TIMEOUT);
 }
 
-export function browserProbeHide(sessionId: string) {
+export async function browserProbeHide(sessionId: string) {
+  await requireBrowserProbeCapability();
   return invokeWithTimeout<void>("browser_probe_hide", { sessionId }, DEFAULT_TIMEOUT);
 }
 
-export function browserProbeClose(sessionId: string) {
+export async function browserProbeClose(sessionId: string) {
+  await requireBrowserProbeCapability();
   return invokeWithTimeout<void>("browser_probe_close", { sessionId }, DEFAULT_TIMEOUT);
 }
 
-export function browserProbeCloseAll() {
+export async function browserProbeCloseAll() {
+  await requireBrowserProbeCapability();
   return invokeWithTimeout<void>("browser_probe_close_all", {}, DEFAULT_TIMEOUT);
 }

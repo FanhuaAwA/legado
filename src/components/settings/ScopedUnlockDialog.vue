@@ -2,6 +2,7 @@
 <script setup lang="ts">
 import { useMessage } from "naive-ui";
 import { computed, ref, watch } from "vue";
+import { useCapabilities } from "@/composables/useCapabilities";
 import { invokeWithTimeout } from "@/composables/useInvoke";
 import { useOverlay } from "@/composables/useOverlay";
 import { usePreferencesStore } from "@/stores/preferences";
@@ -20,6 +21,7 @@ const emit = defineEmits<{
 
 const message = useMessage();
 const prefStore = usePreferencesStore();
+const capabilities = useCapabilities();
 
 /** 当前范围是否已解锁（含完全体模式托底） */
 const isUnlocked = computed(
@@ -42,6 +44,12 @@ async function refreshChallenge(errorMessage = "") {
   inputError.value = errorMessage;
 
   try {
+    const state = await capabilities.loadCapabilities();
+    if (!state.unlock.supported) {
+      inputError.value = state.unlock.reason;
+      return;
+    }
+
     challenge.value = await invokeWithTimeout<string>("issue_scoped_unlock_challenge", {
       scope: props.scope,
     });
@@ -62,6 +70,8 @@ async function handleVerify() {
 
   verifying.value = true;
   try {
+    await capabilities.requireCapability("unlock");
+
     const verified = await invokeWithTimeout<boolean>("verify_scoped_unlock_challenge", {
       scope: props.scope,
       challenge: challenge.value,

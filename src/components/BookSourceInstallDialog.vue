@@ -4,6 +4,7 @@ import { X } from "lucide-vue-next";
 import { useMessage } from "naive-ui";
 import { computed, ref, watch } from "vue";
 import { useBackAwareDialog as useDialog } from "@/composables/useBackAwareDialog";
+import { useCapabilities } from "@/composables/useCapabilities";
 import {
   checkRepositorySourceSync,
   installFromRepository,
@@ -39,6 +40,12 @@ const emit = defineEmits<{
 const message = useMessage();
 const dialog = useDialog();
 const navigationStore = useNavigationStore();
+const capabilities = useCapabilities();
+const repositoryCapability = capabilities.getCapability("repository");
+const repositoryDisabled = computed(() => !repositoryCapability.value.supported);
+const repositoryDisabledReason = computed(
+  () => repositoryCapability.value.reason || "Source repository is not available in this build.",
+);
 
 type RemoteSyncStatus = "idle" | "checking" | "same" | "different" | "error";
 
@@ -338,6 +345,12 @@ async function startLoad() {
   resetInstallState();
 
   try {
+    await capabilities.loadCapabilities();
+    if (repositoryDisabled.value) {
+      error.value = repositoryDisabledReason.value;
+      return;
+    }
+
     const data = await previewRemoteBookSource(props.downloadUrl, props.expectedUuid);
     if (runId !== loadRunId) {
       return;
@@ -452,6 +465,11 @@ function buildOverwriteContent(current: RemoteBookSourcePreview) {
 }
 
 async function performInstall(current: RemoteBookSourcePreview) {
+  if (repositoryDisabled.value) {
+    message.warning(repositoryDisabledReason.value);
+    return;
+  }
+
   installing.value = true;
   try {
     const targetFileName = installTargetFileName.value || current.meta.fileName;

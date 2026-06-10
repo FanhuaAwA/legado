@@ -15,6 +15,7 @@ import { storeToRefs } from "pinia";
 import { ref, watch, computed, onMounted, onBeforeUnmount, nextTick, type Ref } from "vue";
 import { useAppConfigStore } from "@/stores";
 import { comicDownloadImages, comicGetPageSizes } from "../../../composables/useBookSource";
+import { useCapabilities } from "../../../composables/useCapabilities";
 
 const props = defineProps<{
   content: string;
@@ -87,6 +88,11 @@ type ComicPageSize = [number, number] | null;
 
 const _appCfg = useAppConfigStore();
 const { comicCacheEnabled } = storeToRefs(_appCfg);
+const capabilities = useCapabilities();
+const comicCacheCapability = capabilities.getCapability("comicCache");
+/** 后端缓存/代理不可用时所有页面直接用原始 URL 直读，跳过注定失败的 IPC 往返 */
+const comicBackendAvailable = computed(() => comicCacheCapability.value.supported);
+void capabilities.loadCapabilities();
 const containerRef = ref<HTMLDivElement | null>(null);
 const pages = ref<ComicPage[]>([]);
 /** 每页原始像素尺寸（来自 Rust 后端 _sizes.json 缓存），用于在图片加载前即设定正确 aspect-ratio */
@@ -417,6 +423,16 @@ async function loadImages(
     return;
   }
 
+  if (!comicBackendAvailable.value) {
+    // 后端漫画缓存/代理不可用：直接用原始 URL 直读，浏览器自行加载
+    resetPages(urls, false, initialPageSizes);
+    await nextTick();
+    await afterInitialRender?.();
+    loading.value = false;
+    loadResolve?.();
+    return;
+  }
+
   // 先用占位承住布局，随后统一向后端换成本地缓存或 proxy URL，避免 WebView 直连 CDN。
   resetPages(urls, true, initialPageSizes);
   await nextTick();
@@ -492,6 +508,13 @@ async function loadAdjacentPages(
     typeof chapterIndex === "number" && chapterIndex >= 0 ? chapterIndex : fallbackIndex;
   const effectiveChapterUrl = chapterUrl || props.chapterUrl;
   targetSizes.value = normalizePageSizes(initialPageSizes, urls.length);
+
+  if (!comicBackendAvailable.value) {
+    // 直读模式：相邻章节同样直接用原始 URL，不走后端
+    target.value = createPages(urls, false);
+    return;
+  }
+
   target.value = createPages(urls, true);
 
   try {
@@ -1094,6 +1117,18 @@ async function retryPage(idx: number) {
   page.retryFailed = false;
   page.failed = false;
   page.loaded = false;
+
+  if (!comicBackendAvailable.value) {
+    // 直读模式：清空再恢复 src，触发浏览器对该页重新加载
+    page.src = "";
+    await nextTick();
+    const current = pages.value[idx];
+    if (current) {
+      current.src = current.remoteUrl;
+    }
+    return;
+  }
+
   // 重新触发整章下载：已缓存的页会被跳过，仅重试失败的页
   try {
     const resolvedSources = await comicDownloadImages(

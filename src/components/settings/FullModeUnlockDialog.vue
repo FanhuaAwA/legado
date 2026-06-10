@@ -3,6 +3,7 @@
 import { useMessage } from "naive-ui";
 import { storeToRefs } from "pinia";
 import { ref, watch } from "vue";
+import { useCapabilities } from "@/composables/useCapabilities";
 import { invokeWithTimeout } from "@/composables/useInvoke";
 import { useOverlay } from "@/composables/useOverlay";
 import { usePreferencesStore } from "@/stores/preferences";
@@ -15,6 +16,7 @@ const emit = defineEmits<{
 const message = useMessage();
 const prefStore = usePreferencesStore();
 const { devTools } = storeToRefs(prefStore);
+const capabilities = useCapabilities();
 
 const challenge = ref("");
 const inputResponse = ref("");
@@ -29,6 +31,12 @@ async function refreshChallenge(errorMessage = "") {
   inputError.value = errorMessage;
 
   try {
+    const state = await capabilities.loadCapabilities();
+    if (!state.unlock.supported) {
+      inputError.value = state.unlock.reason;
+      return;
+    }
+
     challenge.value = await invokeWithTimeout<string>("issue_full_mode_challenge");
   } catch (error) {
     inputError.value = "挑战码生成失败，请稍后重试";
@@ -49,6 +57,8 @@ async function handleVerify() {
 
   verifying.value = true;
   try {
+    await capabilities.requireCapability("unlock");
+
     const verified = await invokeWithTimeout<boolean>("verify_full_mode_challenge", {
       challenge: challenge.value,
       response: inputResponse.value,

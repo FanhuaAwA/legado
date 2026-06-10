@@ -2,6 +2,7 @@
 import { useMessage } from "naive-ui";
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { useBackAwareDialog as useDialog } from "@/composables/useBackAwareDialog";
+import { useCapabilities } from "@/composables/useCapabilities";
 import { isTauri } from "@/composables/useEnv";
 import { useOverlay } from "@/composables/useOverlay";
 import { safeRandomUUID } from "@/utils/uuid";
@@ -48,12 +49,29 @@ const emits = defineEmits<{
 
 const message = useMessage();
 const dialog = useDialog();
+const capabilities = useCapabilities();
+const repositoryCapability = capabilities.getCapability("repository");
+const repositoryDisabled = computed(() => !repositoryCapability.value.supported);
+const repositoryDisabledReason = computed(
+  () => repositoryCapability.value.reason || "Source repository is not available in this build.",
+);
+void capabilities.loadCapabilities();
 
 // 追踪当前状态消息，显示新消息前自动销毁上一条，避免消息堆积
 let statusMsg: ReturnType<typeof message.success> | null = null;
 function showStatusMsg(type: "success" | "info" | "warning" | "error", content: string) {
   statusMsg?.destroy();
   statusMsg = message[type](content);
+}
+
+function ensureRepositoryAvailable(): boolean {
+  if (!repositoryDisabled.value) {
+    return true;
+  }
+  const reason = repositoryDisabledReason.value;
+  onlineError.value = reason;
+  showStatusMsg("warning", reason);
+  return false;
 }
 
 // ---- 仓库配置 ----
@@ -470,6 +488,10 @@ async function refreshSingleSourceSync(src: RepoSourceInfo) {
 async function fetchOnlineSources(
   options: { silentSuccess?: boolean; preserveCurrent?: boolean } = {},
 ) {
+  if (!ensureRepositoryAvailable()) {
+    return;
+  }
+
   const repo = repositories.value.find((r) => r.id === activeRepoId.value);
   if (!repo) {
     message.warning("请先添加并选择一个仓库");
@@ -658,6 +680,10 @@ function getSyncHint(src: RepoSourceInfo) {
 void getSyncHint;
 
 function installSource(src: RepoSourceInfo) {
+  if (!ensureRepositoryAvailable()) {
+    return;
+  }
+
   installDialogUrl.value = src.downloadUrl;
   installDialogExpectedUuid.value = sourceUuid(src);
   showInstallDialog.value = true;
@@ -698,6 +724,10 @@ function resolveInstallFileName(
 }
 
 async function installAll() {
+  if (!ensureRepositoryAvailable()) {
+    return;
+  }
+
   if (!filteredOnline.value.length) {
     message.info("当前没有可安装的书源");
     return;
@@ -742,6 +772,10 @@ async function installAll() {
 }
 
 async function performRepositoryUpdate(src: RepoSourceInfo, force = false, silent = false) {
+  if (!ensureRepositoryAvailable()) {
+    return false;
+  }
+
   if (updatingSet.value.has(src.fileName)) {
     return false;
   }
@@ -797,6 +831,10 @@ function confirmDeleteInstalled(src: RepoSourceInfo) {
 }
 
 async function recheckInstalledSources() {
+  if (!ensureRepositoryAvailable()) {
+    return;
+  }
+
   if (!installedOnlineCount.value) {
     message.info("当前仓库没有已安装书源需要检查");
     return;
@@ -805,6 +843,10 @@ async function recheckInstalledSources() {
 }
 
 async function updateAll(force = false) {
+  if (!ensureRepositoryAvailable()) {
+    return;
+  }
+
   const targets = force
     ? installedOnlineSources.value.slice()
     : installedOnlineSources.value.filter((src) => getSyncState(src)?.status === "update");
@@ -850,6 +892,10 @@ async function updateAll(force = false) {
 }
 
 function confirmForceUpdateAll() {
+  if (!ensureRepositoryAvailable()) {
+    return;
+  }
+
   if (!installedOnlineCount.value) {
     message.info("当前仓库没有可强制更新的已安装书源");
     return;
@@ -970,6 +1016,10 @@ void loadRepoConfig();
       />
     </div>
 
+    <n-alert v-if="repositoryDisabled" type="warning" :show-icon="false" style="margin: 12px 0">
+      {{ repositoryDisabledReason }}
+    </n-alert>
+
     <!-- 仓库描述 -->
     <div class="bv-repo-desc" v-if="onlineManifest">
       <a
@@ -1018,7 +1068,7 @@ void loadRepoConfig();
           :installed="isInstalled(src)"
           :version-diff="getDisplayVersionDiff(src)"
           :local-version="getLocalSource(src)?.version"
-          :bulk-busy="bulkUpdating || bulkForceUpdating"
+          :bulk-busy="bulkUpdating || bulkForceUpdating || repositoryDisabled"
           :deleting="deletingSet.has(src.fileName)"
           @install="installSource(src)"
           @delete="confirmDeleteInstalled(src)"
