@@ -319,6 +319,25 @@ fn eval_js_inner_with_source(
             }),
         )?;
 
+        let sk_for_login_clear = source_key_val.clone();
+        source_obj.set(
+            "__clearLoginInfo",
+            Func::new(move || -> bool {
+                let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+                let prefix = source_login_prefix(&sk_for_login_clear);
+                let keys: Vec<String> = map
+                    .keys()
+                    .filter(|k| k.starts_with(&prefix))
+                    .cloned()
+                    .collect();
+                for key in keys {
+                    map.remove(&key);
+                }
+                tracing::debug!(target: "reader_core::js_source::login", "clearLoginInfo removed keys matching prefix={prefix}");
+                true
+            }),
+        )?;
+
         let sk_for_var = source_key_val.clone();
         source_obj.set(
             "getVariable",
@@ -635,9 +654,37 @@ fn eval_js_inner_with_source(
         java_obj.set("refreshExplore", Func::new(|| -> bool { false }))?;
         java_obj.set("searchBook", Func::new(|_keyword: String, _source: Opt<String>| -> bool { false }))?;
         java_obj.set("reLoginView", Func::new(|| -> bool { false }))?;
-        java_obj.set("upConfig", Func::new(|_value: Value<'_>| -> bool { false }))?;
-        java_obj.set("upLoginData", Func::new(|_value: Value<'_>| -> bool { false }))?;
-        java_obj.set("connect", Func::new(|_value: Opt<String>| -> bool { false }))?;
+        java_obj.set(
+            "upConfig",
+            Func::new(|value: Value<'_>| -> bool {
+                let text = js_callback_arg_to_string(value);
+                let len = text.len();
+                let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+                map.insert("__java_upConfig".to_string(), text);
+                tracing::debug!(target: "reader_core::js_source::config", "upConfig stored {len} bytes");
+                true
+            }),
+        )?;
+        java_obj.set(
+            "upLoginData",
+            Func::new(|value: Value<'_>| -> bool {
+                let text = js_callback_arg_to_string(value);
+                let len = text.len();
+                let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+                map.insert("__java_upLoginData".to_string(), text);
+                tracing::debug!(target: "reader_core::js_source::login", "upLoginData stored {len} bytes");
+                true
+            }),
+        )?;
+        java_obj.set(
+            "connect",
+            Func::new(|spec: Opt<String>| -> String {
+                match spec.0 {
+                    Some(s) => java_request_simple("CONNECT", &s, None).unwrap_or_default(),
+                    None => "".to_string(),
+                }
+            }),
+        )?;
         java_obj.set(
             "getCookie",
             Func::new(|domain: String, name: Opt<String>| -> String {
@@ -857,10 +904,11 @@ fn active_js_context() -> ActiveJsContext {
 fn install_legado_compat_prelude(ctx: rquickjs::Ctx<'_>) -> anyhow::Result<()> {
     ctx.eval::<(), _>(
         r#"
+// ── Packages stub (Android/Rhino compatibility) ──
 if (typeof globalThis.Packages === 'undefined') {
   globalThis.Packages = {
-    okhttp3: {},
-    cn: { hutool: { core: { util: {}, codec: {} }, crypto: { digest: {} } } },
+    okhttp3: null,  // populated below
+    cn: { hutool: { core: { util: null, codec: null }, crypto: { digest: null } } },
     android: {
       os: {
         Build: {
@@ -873,15 +921,208 @@ if (typeof globalThis.Packages === 'undefined') {
     }
   };
 }
-if (typeof globalThis.JavaImporter === 'undefined') {
-  globalThis.JavaImporter = function JavaImporter() {
-    this.importPackage = function() { return this; };
+
+// ── okhttp3 shim — translates OkHttp calls to java.ajax ──
+(function() {
+  var _okhttp = {};
+  var _sharedClient = null;
+
+  _okhttp.MediaType = { parse: function(mt) { return { type: mt }; } };
+
+  _okhttp.RequestBody = {
+    create: function(mediaType, content) {
+      return { mediaType: mediaType, content: String(content) };
+    }
+  };
+
+  _okhttp.FormBody = { Builder: function() {
+    this._pairs = [];
+    this.add = function(name, value) {
+      this._pairs.push(encodeURIComponent(name) + '=' + encodeURIComponent(value));
+      return this;
+    };
+    this.addEncoded = function(name, value) {
+      this._pairs.push(name + '=' + value);
+      return this;
+    };
+    this.build = function() {
+      return { bodyString: this._pairs.join('&'), isForm: true };
+    };
+  }};
+
+  _okhttp.Headers = { Builder: function() {
+    this._headers = {};
+    this.add = function(k, v) { this._headers[k] = String(v); return this; };
+    this.set = function(k, v) { this._headers[k] = String(v); return this; };
+    this.build = function() { return this._headers; };
+  }};
+
+  _okhttp.Request = { Builder: function() {
+    this._url = '';
+    this._method = 'GET';
+    this._headers = {};
+    this._body = null;
+    this.url = function(u) { this._url = String(u); return this; };
+    this.method = function(m, b) { this._method = String(m); if (b !== undefined && b !== null) this._body = b; return this; };
+    this.addHeader = function(k, v) { this._headers[String(k)] = String(v); return this; };
+    this.header = function(k, v) { this._headers[String(k)] = String(v); return this; };
+    this.headers = function(h) { if (h && typeof h === 'object') Object.assign(this._headers, h); return this; };
+    this.post = function(b) { this._method = 'POST'; if (b !== undefined) this._body = b; return this; };
+    this.get = function() { this._method = 'GET'; return this; };
+    this.build = function() {
+      return { url: this._url, method: this._method, headers: this._headers, body: this._body };
+    };
+  }};
+
+  _okhttp.OkHttpClient = function() {
+    var self = this;
+    this.newCall = function(request) {
+      return {
+        execute: function() {
+          var headers = {};
+          if (request.headers && typeof request.headers === 'object') {
+            Object.keys(request.headers).forEach(function(k) {
+              headers[String(k)] = String(request.headers[k]);
+            });
+          }
+          var bodyStr = '';
+          var contentType = headers['Content-Type'] || headers['content-type'] || '';
+          if (request.body) {
+            if (request.body.content !== undefined) {
+              bodyStr = String(request.body.content);
+              if (!contentType && request.body.mediaType && request.body.mediaType.type) {
+                contentType = request.body.mediaType.type;
+                headers['Content-Type'] = contentType;
+              }
+            } else if (request.body.bodyString !== undefined) {
+              bodyStr = request.body.bodyString;
+              if (!contentType) { headers['Content-Type'] = 'application/x-www-form-urlencoded'; }
+            }
+          }
+          // Build ajax spec: method||url||headersJson||body
+          var specParts = [String(request.method || 'GET'), String(request.url || '')];
+          try { specParts.push(JSON.stringify(headers)); } catch(_) { specParts.push('{}'); }
+          specParts.push(bodyStr);
+          var spec = specParts.join('||');
+          var result = '';
+          try { result = java.ajax(spec); } catch(e) { result = ''; }
+          var responseHeaders = {};
+          return {
+            body: function() {
+              return {
+                string: function() { return result; },
+                bytes: function() { return result; },
+                charStream: function() { return result; },
+                contentLength: function() { return result.length; }
+              };
+            },
+            string: function() { return result; },
+            headers: function() { return responseHeaders; },
+            header: function(name) { return ''; },
+            code: function() { return result !== '' ? 200 : 0; },
+            isSuccessful: function() { return result !== ''; },
+            isRedirect: function() { return false; },
+            message: function() { return ''; },
+            protocol: function() { return { toString: function() { return 'HTTP_2'; } }; }
+          };
+        }
+      };
+    };
+    this.dispatcher = function() { return this; };
+    this.cookieJar = function() { return this; };
+  };
+
+  _okhttp.Call = {};
+
+  // Copy okhttp3 onto Packages.okhttp3
+  globalThis.Packages.okhttp3 = _okhttp;
+  // Also expose top-level constructors for JavaImporter compatibility
+  globalThis.OkHttpClient = _okhttp.OkHttpClient;
+  globalThis.Request = _okhttp.Request;
+  globalThis.MediaType = _okhttp.MediaType;
+  globalThis.RequestBody = _okhttp.RequestBody;
+  globalThis.FormBody = _okhttp.FormBody;
+  globalThis.Headers = _okhttp.Headers;
+})();
+
+// ── Hutool shims (merge into existing globals, don't overwrite) ──
+(function() {
+  // Only add hutool wrappers if they don't already exist
+  if (typeof globalThis.DigestUtil === 'undefined') {
+    globalThis.DigestUtil = {};
+  }
+  if (!globalThis.DigestUtil.md5Hex) {
+    globalThis.DigestUtil.md5Hex = function(input) { return java.md5Encode(String(input)); };
+  }
+  globalThis.Packages.cn.hutool.crypto.digest = { DigestUtil: globalThis.DigestUtil };
+
+  // Merge hutool StrUtil helpers into the existing StrUtil (which has .reverse from Rust)
+  if (typeof globalThis.StrUtil === 'undefined') {
+    globalThis.StrUtil = {};
+  }
+  if (!globalThis.StrUtil.format) {
+    globalThis.StrUtil.format = function(fmt) {
+      var args = Array.prototype.slice.call(arguments, 1);
+      return fmt.replace(/\{\}/g, function() { return args.length ? String(args.shift()) : '{}'; });
+    };
+  }
+  if (!globalThis.StrUtil.isEmpty) {
+    globalThis.StrUtil.isEmpty = function(s) { return !s || String(s).trim() === ''; };
+  }
+  if (!globalThis.StrUtil.isNotEmpty) {
+    globalThis.StrUtil.isNotEmpty = function(s) { return !globalThis.StrUtil.isEmpty(s); };
+  }
+  globalThis.Packages.cn.hutool.core.util = { StrUtil: globalThis.StrUtil };
+
+  if (typeof globalThis.URLUtil === 'undefined') {
+    globalThis.URLUtil = {
+      encode: function(s) { return encodeURIComponent(String(s)); },
+      decode: function(s) { try { return decodeURIComponent(String(s)); } catch(_) { return s; } }
+    };
+  }
+  if (typeof globalThis.HexUtil === 'undefined') {
+    globalThis.HexUtil = {
+      decodeHex: function(hex) { return java.hexDecodeToString(String(hex)); },
+      encodeHex: function(s) { return String(s).split('').map(function(c) { return c.charCodeAt(0).toString(16).padStart(2,'0'); }).join(''); },
+      encodeHexStr: function(s) { return globalThis.HexUtil.encodeHex(s); }
+    };
+  }
+  // Keep Base64 from Rust side (already has encode/decode)
+  globalThis.Packages.cn.hutool.core.codec = { Base64: globalThis.Base64 };
+})();
+
+// ── JavaImporter — copies package properties into scope for `with()` ──
+if (typeof globalThis._JavaImporterOriginal === 'undefined') {
+  globalThis._JavaImporterOriginal = globalThis.JavaImporter;
+}
+globalThis.JavaImporter = function JavaImporter() {
+  for (var i = 0; i < arguments.length; i++) {
+    var pkg = arguments[i];
+    if (pkg && typeof pkg === 'object') {
+      for (var key in pkg) {
+        if (pkg.hasOwnProperty(key) && typeof pkg[key] !== 'undefined') {
+          this[key] = pkg[key];
+        }
+      }
+    }
+  }
+  this.importPackage = function(pkg) {
+    if (pkg && typeof pkg === 'object') {
+      for (var key in pkg) {
+        if (pkg.hasOwnProperty(key) && typeof pkg[key] !== 'undefined') {
+          this[key] = pkg[key];
+        }
+      }
+    }
     return this;
   };
-}
+  return this;
+};
 if (typeof globalThis.importPackage === 'undefined') {
   globalThis.importPackage = function() { return true; };
 }
+
+// ── source API layer ──
 source.getLoginInfoMap = function() {
   const owner = this;
   return {
@@ -928,8 +1169,10 @@ source.putLoginInfo = function(values, value) {
   }
   return this.getLoginInfoMap().set(values);
 };
+source.removeLoginHeader = function() {
+  return this.__clearLoginInfo();
+};
 source.refreshExplore = function() { return false; };
-source.removeLoginHeader = function() { return false; };
 java.ajaxAll = function(specs) {
   const list = Array.isArray(specs) ? specs : [];
   return JSON.parse(java.__ajaxAll(JSON.stringify(list))).map(function(text) {
@@ -1100,9 +1343,8 @@ fn prepare_legacy_js_script(script: &str) -> String {
     // the practical semantics used by Legado book-source scripts.
     static WITH_RE: Lazy<regex::Regex> =
         Lazy::new(|| regex::Regex::new(r"\bwith\s*\([^)]*\)\s*\{").unwrap());
-    static THIS_DESTRUCTURE_RE: Lazy<regex::Regex> = Lazy::new(|| {
-        regex::Regex::new(r"\b(const|let|var)\s+\{([^}]*)\}\s*=\s*this\s*;").unwrap()
-    });
+    static THIS_DESTRUCTURE_RE: Lazy<regex::Regex> =
+        Lazy::new(|| regex::Regex::new(r"\b(const|let|var)\s+\{([^}]*)\}\s*=\s*this\s*;").unwrap());
     let script = WITH_RE.replace_all(script, "{").into_owned();
     let script = THIS_DESTRUCTURE_RE
         .replace_all(&script, "$1 {$2} = globalThis;")

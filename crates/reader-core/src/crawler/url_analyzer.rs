@@ -28,130 +28,138 @@ pub fn analyze_url(
         source.login_url.as_deref(),
         Some(source.book_source_name.as_str()),
         || {
-        let base_url = strip_url_options(&normalize_source_url(base_url)).to_string();
-        let mut rule_url = m_url.to_string();
-        let mut header_spec = source_header_spec(source)?;
+            let base_url = strip_url_options(&normalize_source_url(base_url)).to_string();
+            let mut rule_url = m_url.to_string();
+            let mut header_spec = source_header_spec(source)?;
 
-        // Decode proxy URLs BEFORE any processing
-        let trimmed = rule_url.trim();
-        if let Some(payload) = trimmed
-            .strip_prefix("data:;base64,")
-            .or_else(|| trimmed.strip_prefix("DATA:;BASE64,"))
-        {
-            use base64::Engine as _;
-            if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(payload) {
-                if let Ok(decoded) = String::from_utf8(bytes) {
-                    rule_url = decoded;
+            // Decode proxy URLs BEFORE any processing
+            let trimmed = rule_url.trim();
+            if let Some(payload) = trimmed
+                .strip_prefix("data:;base64,")
+                .or_else(|| trimmed.strip_prefix("DATA:;BASE64,"))
+            {
+                use base64::Engine as _;
+                if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(payload) {
+                    if let Ok(decoded) = String::from_utf8(bytes) {
+                        rule_url = decoded;
+                    }
                 }
             }
-        }
 
-        rule_url = eval_url_js_segments(&rule_url, key, page, &source.book_source_url, &base_url)?;
-        rule_url = replace_inline_js(&rule_url, key, page, &source.book_source_url, &base_url)?;
-        rule_url = replace_legacy_placeholders(&rule_url, key, page);
-        rule_url = replace_page_choices(&rule_url, page);
+            rule_url =
+                eval_url_js_segments(&rule_url, key, page, &source.book_source_url, &base_url)?;
+            rule_url = replace_inline_js(&rule_url, key, page, &source.book_source_url, &base_url)?;
+            rule_url = replace_legacy_placeholders(&rule_url, key, page);
+            rule_url = replace_page_choices(&rule_url, page);
 
-        // Decode proxy URLs: data:;base64,<base64> → real URL
-        let trimmed = rule_url.trim();
-        if let Some(payload) = trimmed
-            .strip_prefix("data:;base64,")
-            .or_else(|| trimmed.strip_prefix("DATA:;BASE64,"))
-        {
-            use base64::Engine as _;
-            if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(payload) {
-                if let Ok(decoded) = String::from_utf8(bytes) {
-                    rule_url = decoded;
+            // Decode proxy URLs: data:;base64,<base64> → real URL
+            let trimmed = rule_url.trim();
+            if let Some(payload) = trimmed
+                .strip_prefix("data:;base64,")
+                .or_else(|| trimmed.strip_prefix("DATA:;BASE64,"))
+            {
+                use base64::Engine as _;
+                if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(payload) {
+                    if let Ok(decoded) = String::from_utf8(bytes) {
+                        rule_url = decoded;
+                    }
                 }
             }
-        }
 
-        let (url_part, options) = split_url_options(&rule_url);
-        let mut url = absolute_url(&base_url, url_part.trim());
-        let mut method = HttpMethod::GET;
-        let mut body = None;
-        let mut retry = 2usize;
-        let mut response_type = None;
-        let mut charset = None;
-        let mut server_id = None;
-        let mut web_view = false;
-        let mut web_js = None;
-        let mut web_view_delay_time = 0u64;
+            let (url_part, options) = split_url_options(&rule_url);
+            let mut url = absolute_url(&base_url, url_part.trim());
+            let mut method = HttpMethod::GET;
+            let mut body = None;
+            let mut retry = 2usize;
+            let mut response_type = None;
+            let mut charset = None;
+            let mut server_id = None;
+            let mut web_view = false;
+            let mut web_js = None;
+            let mut web_view_delay_time = 0u64;
 
-        if let Some(options) = options {
-            let options = parse_url_options(options)?;
-            if let Some(raw_method) = options.get("method").and_then(Value::as_str) {
-                if raw_method.eq_ignore_ascii_case("POST") {
-                    method = HttpMethod::POST;
+            if let Some(options) = options {
+                let options = parse_url_options(options)?;
+                if let Some(raw_method) = options.get("method").and_then(Value::as_str) {
+                    if raw_method.eq_ignore_ascii_case("POST") {
+                        method = HttpMethod::POST;
+                    }
                 }
-            }
-            if let Some(value) = options.get("charset").and_then(Value::as_str) {
-                if !value.trim().is_empty() {
-                    charset = Some(value.to_string());
+                if let Some(value) = options.get("charset").and_then(Value::as_str) {
+                    if !value.trim().is_empty() {
+                        charset = Some(value.to_string());
+                    }
                 }
-            }
-            if let Some(value) = options.get("headers") {
-                let extra = headers_from_value(value)?;
-                merge_headers(&mut header_spec, extra);
-            }
-            if let Some(value) = options.get("body") {
-                body = Some(match value {
-                    Value::String(value) => value.clone(),
-                    other => other.to_string(),
-                });
-            }
-            if let Some(value) = options.get("retry") {
-                retry = parse_usize(value).unwrap_or(0);
-            }
-            if let Some(value) = options.get("type").and_then(Value::as_str) {
-                if !value.trim().is_empty() {
-                    response_type = Some(value.to_string());
+                if let Some(value) = options.get("headers") {
+                    let extra = headers_from_value(value)?;
+                    merge_headers(&mut header_spec, extra);
                 }
-            }
-            if let Some(value) = options.get("serverID").or_else(|| options.get("serverId")) {
-                server_id = parse_i64(value);
-            }
-            if let Some(value) = options.get("webView") {
-                web_view = is_truthy_webview(value);
-            }
-            if let Some(value) = options.get("webJs").and_then(Value::as_str) {
-                web_js = Some(value.to_string());
-            }
-            if let Some(value) = options.get("webViewDelayTime") {
-                web_view_delay_time = parse_i64(value).unwrap_or(0).max(0) as u64;
-            }
-            if let Some(script) = options.get("js").and_then(Value::as_str) {
-                if !script.trim().is_empty() {
-                    url = eval_js_url(script, &url, key, page, &source.book_source_url, &base_url)
+                if let Some(value) = options.get("body") {
+                    body = Some(match value {
+                        Value::String(value) => value.clone(),
+                        other => other.to_string(),
+                    });
+                }
+                if let Some(value) = options.get("retry") {
+                    retry = parse_usize(value).unwrap_or(0);
+                }
+                if let Some(value) = options.get("type").and_then(Value::as_str) {
+                    if !value.trim().is_empty() {
+                        response_type = Some(value.to_string());
+                    }
+                }
+                if let Some(value) = options.get("serverID").or_else(|| options.get("serverId")) {
+                    server_id = parse_i64(value);
+                }
+                if let Some(value) = options.get("webView") {
+                    web_view = is_truthy_webview(value);
+                }
+                if let Some(value) = options.get("webJs").and_then(Value::as_str) {
+                    web_js = Some(value.to_string());
+                }
+                if let Some(value) = options.get("webViewDelayTime") {
+                    web_view_delay_time = parse_i64(value).unwrap_or(0).max(0) as u64;
+                }
+                if let Some(script) = options.get("js").and_then(Value::as_str) {
+                    if !script.trim().is_empty() {
+                        url = eval_js_url(
+                            script,
+                            &url,
+                            key,
+                            page,
+                            &source.book_source_url,
+                            &base_url,
+                        )
                         .map_err(AppError::Internal)?;
+                    }
                 }
             }
-        }
 
-        url = encode_get_query(&url, charset.as_deref());
-        if matches!(method, HttpMethod::POST) {
-            if let Some(raw_body) = body.take() {
-                body = Some(encode_post_body(
-                    &raw_body,
-                    charset.as_deref(),
-                    has_header(&header_spec.headers, "content-type"),
-                ));
+            url = encode_get_query(&url, charset.as_deref());
+            if matches!(method, HttpMethod::POST) {
+                if let Some(raw_body) = body.take() {
+                    body = Some(encode_post_body(
+                        &raw_body,
+                        charset.as_deref(),
+                        has_header(&header_spec.headers, "content-type"),
+                    ));
+                }
             }
-        }
 
-        Ok(RequestSpec {
-            url,
-            method,
-            headers: header_spec.headers,
-            body,
-            retry,
-            response_type,
-            charset,
-            proxy: header_spec.proxy,
-            server_id,
-            web_view,
-            web_js,
-            web_view_delay_time,
-        })
+            Ok(RequestSpec {
+                url,
+                method,
+                headers: header_spec.headers,
+                body,
+                retry,
+                response_type,
+                charset,
+                proxy: header_spec.proxy,
+                server_id,
+                web_view,
+                web_js,
+                web_view_delay_time,
+            })
         },
     )
 }

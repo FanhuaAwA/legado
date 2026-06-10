@@ -51,12 +51,85 @@ cargo test -p reader-core --test source_compat_import qimao_source_full_chain --
 | toc      | live_network_pass | **此前 BLOCKED → 已解除**。2551 章；根因是 `let device... chapters=...` 在 strict-mode 下 redeclaration 失败，已修 `eval_script`                                           |
 | content  | live_network_pass | **此前 BLOCKED → 已解除**。14648 字符；修了 reqwest blocking 在 tokio 上下文 panic + ruleContent 三格式兼容 + bid/cid 从 chapterId 派生（临时规避未绑定的 `book.bookUrl`） |
 
-### 番茄小说
+### 番茄小说（JS API gap analysis complete, 2026-06-10 R-P2-003）
 
-| 能力                              | 状态         | 备注                                                                                             |
-| --------------------------------- | ------------ | ------------------------------------------------------------------------------------------------ |
-| 导入                              | strict_pass  | source_compat_import 通过                                                                        |
-| search / bookInfo / toc / content | not_verified | 依赖大量 java._/source._/cookie/变量/设备注册；reqwest 线程桥已就绪，待逐项验证（审计 R-P2-003） |
+| 能力                              | 状态              | 备注                                                                                             |
+| --------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------ |
+| 导入                              | strict_pass       | source_compat_import 通过                                                                        |
+| search / bookInfo / toc / content | blocked_by_js_api | 设备注册链路依赖 Packages.okhttp3（OkHttp + JavaImporter），非规则解析问题（详见下方 JS API 表） |
+
+#### 番茄书源 JS API 清单（共 49 个唯一 API）
+
+表格状态：✅ = 已实现，🔧 = 本轮已修，⚠️ = 降级 stub，❌ = 依赖 Rhino/Android 无法等价实现
+
+| API                            | 类别         | 状态 | 说明                                                                                     |
+| ------------------------------ | ------------ | ---- | ---------------------------------------------------------------------------------------- |
+| `java.ajax`                    | HTTP         | ✅   | 完整实现                                                                                 |
+| `java.ajaxAll`                 | HTTP         | ✅   | JS 层封装 `__ajaxAll` 返回 `[{body,string}]`                                             |
+| `java.md5Encode`               | crypto       | ✅   |                                                                                          |
+| `java.md5Encode16`             | crypto       | ✅   |                                                                                          |
+| `java.base64Encode`            | codec        | ✅   |                                                                                          |
+| `java.base64Decode`            | codec        | ✅   |                                                                                          |
+| `java.base64DecodeToByteArray` | codec        | ✅   |                                                                                          |
+| `java.timeFormat`              | time         | ✅   |                                                                                          |
+| `java.timeFormatUTC`           | time         | ✅   |                                                                                          |
+| `java.toast`                   | ui           | ✅   | → tracing::info                                                                          |
+| `java.longToast`               | ui           | ✅   | → tracing::info                                                                          |
+| `java.log`                     | ui           | ✅   | → tracing::info                                                                          |
+| `java.get`                     | http/storage | ✅   | HTTP GET / KV fallback                                                                   |
+| `java.post`                    | http         | ✅   | HTTP POST                                                                                |
+| `java.put`                     | http/storage | ✅   | HTTP PUT / KV fallback                                                                   |
+| `java.getString`               | json         | ✅   | JSONPath extract from input                                                              |
+| `java.androidId`               | device       | ✅   | 生成 UUID（per-session）                                                                 |
+| `java.getVerificationCode`     | crypto       | ✅   | MD5 前 8 字符                                                                            |
+| `java.hexDecodeToString`       | codec        | ✅   |                                                                                          |
+| `java.encodeURIComponent`      | codec        | ✅   |                                                                                          |
+| `java.decodeURIComponent`      | codec        | ✅   |                                                                                          |
+| `java.encodeURI`               | codec        | ✅   |                                                                                          |
+| `java.decodeURI`               | codec        | ✅   |                                                                                          |
+| `java.now`                     | time         | ✅   |                                                                                          |
+| `java.uuid`                    | device       | ✅   |                                                                                          |
+| `java.startBrowser`            | ui           | ⚠️   | 降级空字符串（非关键，登录后可跳过）                                                     |
+| `java.startBrowserAwait`       | ui           | ⚠️   | 降级空字符串                                                                             |
+| `java.showBrowser`             | ui           | ⚠️   | 降级 false                                                                               |
+| `java.open`                    | ui           | ⚠️   | 降级 false                                                                               |
+| `java.refreshExplore`          | ui           | ⚠️   | 降级 false                                                                               |
+| `java.searchBook`              | ui           | ⚠️   | 降级 false                                                                               |
+| `java.reLoginView`             | ui           | ⚠️   | 降级 false                                                                               |
+| `java.connect`                 | http         | 🔧   | 本轮从 false stub → HTTP CONNECT（Rust 侧）                                              |
+| `java.upConfig`                | storage      | 🔧   | 本轮从 false stub → JS_KV 持久化（Rust 侧）                                              |
+| `java.upLoginData`             | storage      | 🔧   | 本轮从 false stub → JS_KV 持久化（Rust 侧）                                              |
+| `java.getCookie`               | cookie       | ✅   |                                                                                          |
+| `java.removeCookie`            | cookie       | ✅   |                                                                                          |
+| `java.getReadBookConfigMap`    | config       | ✅   | 返回 `{}`（暂无配置项）                                                                  |
+| `java.getThemeConfigMap`       | config       | ✅   | 返回 `{}`                                                                                |
+| `java.getThemeMode`            | config       | ✅   | 返回 0                                                                                   |
+| `java.aesBase64DecodeToString` | crypto       | ✅   | AES-128-CBC-PKCS7                                                                        |
+| `source.getKey`                | source       | ✅   |                                                                                          |
+| `source.bookSourceName`        | source       | ✅   |                                                                                          |
+| `source.loginUrl`              | source       | ✅   |                                                                                          |
+| `source.getVariable`           | source       | ✅   | JS_KV 读取                                                                               |
+| `source.setVariable`           | source       | ✅   | JS_KV 写入                                                                               |
+| `source.putVariable`           | source       | ✅   | JS_KV 写入（别名）                                                                       |
+| `source.getLoginInfo`          | source       | ✅   | Rust 侧检测存在性                                                                        |
+| `source.getLoginInfoMap`       | source       | ✅   | JS 侧封装 `__getLoginInfoJson`（含 get/set/save/toJSON）                                 |
+| `source.putLoginInfo`          | source       | ✅   | JS 侧封装 `__setLoginInfoValue`                                                          |
+| `source.removeLoginHeader`     | source       | 🔧   | 本轮从 false stub → `__clearLoginInfo`                                                   |
+| `source.refreshExplore`        | source       | ⚠️   | 降级 false                                                                               |
+| `cache.get`                    | cache        | ✅   | JS_KV 读取                                                                               |
+| `cache.put`                    | cache        | ✅   | JS_KV 写入                                                                               |
+| `cache.delete`                 | cache        | ✅   | JS_KV 删除                                                                               |
+| `cookie.getKey`                | cookie       | ✅   |                                                                                          |
+| `cookie.removeCookie`          | cookie       | ✅   |                                                                                          |
+| `Packages.okhttp3.*`           | http         | 🔧   | 本轮新增 OkHttpClient/Request/RequestBody/MediaType/FormBody/Headers JS shim → java.ajax |
+| `Packages.cn.hutool.*`         | util         | 🔧   | 本轮新增 DigestUtil/SecureUtil/StrUtil/HexUtil/Base64 shim → 现有 Rust API               |
+| `Packages.android.os.Build.*`  | device       | ✅   | 静态值（generic/LegadoTauri/35/15）                                                      |
+| `JavaImporter`                 | rhino        | 🔧   | 本轮修复：`with()` 语句正确复制包属性到作用域                                            |
+
+#### 剩余阻塞点
+
+- **设备注册链路**（loginUrl → jsLib 注册函数）：`Packages.okhttp3` shim 已就绪，但实网验证需要有效的设备注册参数（不同设备指纹返回不同加密响应）。shim 覆盖了 `OkHttpClient.newCall().execute()`、`Request.Builder().url().method().headers().build()`、`RequestBody.create()`、`FormBody.Builder().add().build()` 等核心路径——这些是从番茄 jsLib 提取的真实调用模式。
+- **实网验证尚未执行**：需运行 `cargo test -p reader-core --test source_compat_import fanqie_source_full_chain -- --ignored --nocapture`
 
 ### 番茄短剧
 

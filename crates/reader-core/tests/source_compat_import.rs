@@ -9,9 +9,7 @@ fn read_source_fixture(path: &str) -> String {
         .unwrap_or_else(|err| panic!("fixture file must be readable: {path}: {err}"))
 }
 
-fn migrated_source_probe_fields(
-    content: &str,
-) -> (Option<String>, Option<String>, String, String) {
+fn migrated_source_probe_fields(content: &str) -> (Option<String>, Option<String>, String, String) {
     let raw: serde_json::Value = serde_json::from_str(content).unwrap();
     let source = raw
         .as_array()
@@ -366,7 +364,10 @@ async fn fanqie_source_search_and_book_info() {
         .expect("番茄搜索应成功（源站可达时）");
     assert!(!books.is_empty(), "番茄搜索应返回非空结果");
     assert!(!books[0].book_url.is_empty(), "番茄 bookUrl 不应为空");
-    eprintln!("番茄搜索: {} (book_url={})", books[0].name, books[0].book_url);
+    eprintln!(
+        "番茄搜索: {} (book_url={})",
+        books[0].name, books[0].book_url
+    );
 
     let detail = core
         .book_info(file_name, &books[0].book_url, None)

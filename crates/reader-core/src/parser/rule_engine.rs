@@ -90,38 +90,41 @@ impl RuleEngine {
             source.login_url.as_deref(),
             Some(source.book_source_name.as_str()),
             || {
-            let rule = source.rule_search.clone().unwrap_or_default();
-            let (list_rule, reverse) = normalize_list_rule(rule.book_list.as_deref().unwrap_or(""));
-            let mode = self.detect_mode(list_rule, body);
-            let mut results = match mode {
-                ParseMode::JsonPath => {
-                    self.search_books_json(source, body, base_url, &rule, list_rule)
-                }
-                ParseMode::XPath => {
-                    self.search_books_xpath(source, body, base_url, &rule, list_rule)
-                }
-                ParseMode::Js => self.search_books_js(source, body, base_url, &rule, list_rule),
-                ParseMode::Regex => {
-                    self.search_books_regex(source, body, base_url, &rule, list_rule)
-                }
-                ParseMode::Css => self.search_books_html(source, body, base_url, &rule, list_rule),
-            };
+                let rule = source.rule_search.clone().unwrap_or_default();
+                let (list_rule, reverse) =
+                    normalize_list_rule(rule.book_list.as_deref().unwrap_or(""));
+                let mode = self.detect_mode(list_rule, body);
+                let mut results = match mode {
+                    ParseMode::JsonPath => {
+                        self.search_books_json(source, body, base_url, &rule, list_rule)
+                    }
+                    ParseMode::XPath => {
+                        self.search_books_xpath(source, body, base_url, &rule, list_rule)
+                    }
+                    ParseMode::Js => self.search_books_js(source, body, base_url, &rule, list_rule),
+                    ParseMode::Regex => {
+                        self.search_books_regex(source, body, base_url, &rule, list_rule)
+                    }
+                    ParseMode::Css => {
+                        self.search_books_html(source, body, base_url, &rule, list_rule)
+                    }
+                };
 
-            if results.is_empty()
-                && source
-                    .book_url_pattern
-                    .as_deref()
-                    .map(|s| s.trim().is_empty())
-                    .unwrap_or(true)
-            {
-                if let Some(detail_book) = self.search_detail_fallback(source, body, base_url) {
-                    results.push(detail_book);
+                if results.is_empty()
+                    && source
+                        .book_url_pattern
+                        .as_deref()
+                        .map(|s| s.trim().is_empty())
+                        .unwrap_or(true)
+                {
+                    if let Some(detail_book) = self.search_detail_fallback(source, body, base_url) {
+                        results.push(detail_book);
+                    }
                 }
-            }
-            if reverse {
-                results.reverse();
-            }
-            results
+                if reverse {
+                    results.reverse();
+                }
+                results
             },
         )
     }
@@ -137,34 +140,37 @@ impl RuleEngine {
             source.login_url.as_deref(),
             Some(source.book_source_name.as_str()),
             || {
-            let rule = source
-                .rule_explore
-                .clone()
-                .filter(|rule| {
-                    rule.book_list
-                        .as_deref()
-                        .is_some_and(|value| !value.trim().is_empty())
-                })
-                .unwrap_or_else(|| source.rule_search.clone().unwrap_or_default());
-            let (list_rule, reverse) = normalize_list_rule(rule.book_list.as_deref().unwrap_or(""));
-            let mode = self.detect_mode(list_rule, body);
-            let mut results = match mode {
-                ParseMode::JsonPath => {
-                    self.search_books_json(source, body, base_url, &rule, list_rule)
+                let rule = source
+                    .rule_explore
+                    .clone()
+                    .filter(|rule| {
+                        rule.book_list
+                            .as_deref()
+                            .is_some_and(|value| !value.trim().is_empty())
+                    })
+                    .unwrap_or_else(|| source.rule_search.clone().unwrap_or_default());
+                let (list_rule, reverse) =
+                    normalize_list_rule(rule.book_list.as_deref().unwrap_or(""));
+                let mode = self.detect_mode(list_rule, body);
+                let mut results = match mode {
+                    ParseMode::JsonPath => {
+                        self.search_books_json(source, body, base_url, &rule, list_rule)
+                    }
+                    ParseMode::XPath => {
+                        self.search_books_xpath(source, body, base_url, &rule, list_rule)
+                    }
+                    ParseMode::Js => self.search_books_js(source, body, base_url, &rule, list_rule),
+                    ParseMode::Regex => {
+                        self.search_books_regex(source, body, base_url, &rule, list_rule)
+                    }
+                    ParseMode::Css => {
+                        self.search_books_html(source, body, base_url, &rule, list_rule)
+                    }
+                };
+                if reverse {
+                    results.reverse();
                 }
-                ParseMode::XPath => {
-                    self.search_books_xpath(source, body, base_url, &rule, list_rule)
-                }
-                ParseMode::Js => self.search_books_js(source, body, base_url, &rule, list_rule),
-                ParseMode::Regex => {
-                    self.search_books_regex(source, body, base_url, &rule, list_rule)
-                }
-                ParseMode::Css => self.search_books_html(source, body, base_url, &rule, list_rule),
-            };
-            if reverse {
-                results.reverse();
-            }
-            results
+                results
             },
         )
     }
@@ -181,36 +187,36 @@ impl RuleEngine {
             source.login_url.as_deref(),
             Some(source.book_source_name.as_str()),
             || {
-            let rule = source.rule_book_info.clone().unwrap_or_default();
-            let mut context = HashMap::new();
+                let rule = source.rule_book_info.clone().unwrap_or_default();
+                let mut context = HashMap::new();
 
-            let mode = self.detect_mode(rule.name.as_deref().unwrap_or(""), body);
-            match mode {
-                ParseMode::JsonPath => {
-                    if let Ok(v) = serde_json::from_str::<Value>(body) {
-                        return parse_book_info_json(
+                let mode = self.detect_mode(rule.name.as_deref().unwrap_or(""), body);
+                match mode {
+                    ParseMode::JsonPath => {
+                        if let Ok(v) = serde_json::from_str::<Value>(body) {
+                            return parse_book_info_json(
+                                source,
+                                &v,
+                                base_url,
+                                &rule,
+                                book_url,
+                                &mut context,
+                            );
+                        }
+                    }
+                    ParseMode::XPath => {
+                        return parse_book_info_xpath(
                             source,
-                            &v,
+                            body,
                             base_url,
                             &rule,
                             book_url,
                             &mut context,
                         );
                     }
+                    _ => {}
                 }
-                ParseMode::XPath => {
-                    return parse_book_info_xpath(
-                        source,
-                        body,
-                        base_url,
-                        &rule,
-                        book_url,
-                        &mut context,
-                    );
-                }
-                _ => {}
-            }
-            parse_book_info_html(source, body, base_url, &rule, book_url, &mut context)
+                parse_book_info_html(source, body, base_url, &rule, book_url, &mut context)
             },
         )
     }
@@ -226,53 +232,53 @@ impl RuleEngine {
             source.login_url.as_deref(),
             Some(source.book_source_name.as_str()),
             || {
-            let rule = source.rule_toc.clone().unwrap_or_default();
-            let mut context = HashMap::new();
-            let (list_rule, reverse) =
-                normalize_list_rule(rule.chapter_list.as_deref().unwrap_or(""));
-            let prepared_body = prepare_toc_body(body, base_url, &rule);
-            let mode = self.detect_mode(list_rule, &prepared_body);
-            let (mut chapters, next_urls) = match mode {
-                ParseMode::JsonPath => parse_chapter_list_json(
-                    &prepared_body,
-                    base_url,
-                    &rule,
-                    list_rule,
-                    &mut context,
-                ),
-                ParseMode::XPath => parse_chapter_list_xpath(
-                    &prepared_body,
-                    base_url,
-                    &rule,
-                    list_rule,
-                    &mut context,
-                ),
-                ParseMode::Js => self.parse_chapter_list_js(
-                    &prepared_body,
-                    base_url,
-                    &rule,
-                    list_rule,
-                    &mut context,
-                ),
-                ParseMode::Regex => {
-                    self.parse_chapter_list_regex(&prepared_body, base_url, &rule, list_rule)
+                let rule = source.rule_toc.clone().unwrap_or_default();
+                let mut context = HashMap::new();
+                let (list_rule, reverse) =
+                    normalize_list_rule(rule.chapter_list.as_deref().unwrap_or(""));
+                let prepared_body = prepare_toc_body(body, base_url, &rule);
+                let mode = self.detect_mode(list_rule, &prepared_body);
+                let (mut chapters, next_urls) = match mode {
+                    ParseMode::JsonPath => parse_chapter_list_json(
+                        &prepared_body,
+                        base_url,
+                        &rule,
+                        list_rule,
+                        &mut context,
+                    ),
+                    ParseMode::XPath => parse_chapter_list_xpath(
+                        &prepared_body,
+                        base_url,
+                        &rule,
+                        list_rule,
+                        &mut context,
+                    ),
+                    ParseMode::Js => self.parse_chapter_list_js(
+                        &prepared_body,
+                        base_url,
+                        &rule,
+                        list_rule,
+                        &mut context,
+                    ),
+                    ParseMode::Regex => {
+                        self.parse_chapter_list_regex(&prepared_body, base_url, &rule, list_rule)
+                    }
+                    ParseMode::Css => parse_chapter_list_html(
+                        &prepared_body,
+                        base_url,
+                        &rule,
+                        list_rule,
+                        &mut context,
+                    ),
+                };
+                apply_toc_format_js(&mut chapters, rule.format_js.as_deref(), base_url);
+                if reverse {
+                    chapters.reverse();
                 }
-                ParseMode::Css => parse_chapter_list_html(
-                    &prepared_body,
-                    base_url,
-                    &rule,
-                    list_rule,
-                    &mut context,
-                ),
-            };
-            apply_toc_format_js(&mut chapters, rule.format_js.as_deref(), base_url);
-            if reverse {
-                chapters.reverse();
-            }
-            for (index, chapter) in chapters.iter_mut().enumerate() {
-                chapter.index = index as i32;
-            }
-            (chapters, next_urls)
+                for (index, chapter) in chapters.iter_mut().enumerate() {
+                    chapter.index = index as i32;
+                }
+                (chapters, next_urls)
             },
         )
     }
@@ -283,114 +289,119 @@ impl RuleEngine {
             source.login_url.as_deref(),
             Some(source.book_source_name.as_str()),
             || {
-            let rule = source.rule_content.clone().unwrap_or_default();
-            let mut content_body = body.to_string();
+                let rule = source.rule_content.clone().unwrap_or_default();
+                let mut content_body = body.to_string();
 
-            if let Some(source_regex) = rule
-                .source_regex
-                .as_deref()
-                .filter(|s| !s.trim().is_empty())
-            {
-                content_body = apply_legado_regex(&content_body, source_regex);
-            }
-            if let Some(web_js) = rule.web_js.as_deref().filter(|s| !s.trim().is_empty()) {
-                if let Ok(processed) =
-                    eval_js(self.strip_mode_prefix(web_js), &content_body, base_url)
+                if let Some(source_regex) = rule
+                    .source_regex
+                    .as_deref()
+                    .filter(|s| !s.trim().is_empty())
                 {
-                    if !processed.trim().is_empty() {
-                        content_body = processed;
+                    content_body = apply_legado_regex(&content_body, source_regex);
+                }
+                if let Some(web_js) = rule.web_js.as_deref().filter(|s| !s.trim().is_empty()) {
+                    if let Ok(processed) =
+                        eval_js(self.strip_mode_prefix(web_js), &content_body, base_url)
+                    {
+                        if !processed.trim().is_empty() {
+                            content_body = processed;
+                        }
                     }
                 }
-            }
 
-            if let Some(content_rule) = rule.content.clone() {
-                if matches!(
-                    self.detect_mode(&content_rule, &content_body),
-                    ParseMode::Js
-                ) {
-                    let script = self.strip_mode_prefix(&content_rule);
-                    let js_ok = match eval_js(script, &content_body, base_url) {
-                        Ok(res)
-                            if !res.trim().is_empty() && res.contains('<') && res.contains('>') =>
-                        {
-                            return res;
-                        }
-                        Ok(_) => false,  // returned empty or non-HTML
-                        Err(_) => false, // JS failed
-                    };
-                    // Fallback: if JS failed or returned non-HTML, try JSONPath
-                    if !js_ok && content_body.trim_start().starts_with('{') {
-                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content_body) {
-                            if let Some(content_text) =
-                                v.pointer("/data/content").and_then(|val| val.as_str())
+                if let Some(content_rule) = rule.content.clone() {
+                    if matches!(
+                        self.detect_mode(&content_rule, &content_body),
+                        ParseMode::Js
+                    ) {
+                        let script = self.strip_mode_prefix(&content_rule);
+                        let js_ok = match eval_js(script, &content_body, base_url) {
+                            Ok(res)
+                                if !res.trim().is_empty()
+                                    && res.contains('<')
+                                    && res.contains('>') =>
                             {
-                                if !content_text.trim().is_empty() {
-                                    return content_text.to_string();
-                                }
+                                return res;
                             }
-                            // Also try common proxy API patterns
-                            for path in &["/data/content", "/content", "/data", "/msg"] {
-                                if let Some(text) = v.pointer(path).and_then(|val| val.as_str()) {
-                                    if !text.trim().is_empty() && text.contains('<') {
-                                        return text.to_string();
+                            Ok(_) => false,  // returned empty or non-HTML
+                            Err(_) => false, // JS failed
+                        };
+                        // Fallback: if JS failed or returned non-HTML, try JSONPath
+                        if !js_ok && content_body.trim_start().starts_with('{') {
+                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content_body)
+                            {
+                                if let Some(content_text) =
+                                    v.pointer("/data/content").and_then(|val| val.as_str())
+                                {
+                                    if !content_text.trim().is_empty() {
+                                        return content_text.to_string();
+                                    }
+                                }
+                                // Also try common proxy API patterns
+                                for path in &["/data/content", "/content", "/data", "/msg"] {
+                                    if let Some(text) = v.pointer(path).and_then(|val| val.as_str())
+                                    {
+                                        if !text.trim().is_empty() && text.contains('<') {
+                                            return text.to_string();
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                }
 
-                let content_rule = self.process_inline_js(&content_rule, &content_body, base_url);
+                    let content_rule =
+                        self.process_inline_js(&content_rule, &content_body, base_url);
 
-                let mode = self.detect_mode(&content_rule, &content_body);
-                let mut content = match mode {
-                    ParseMode::JsonPath => {
-                        if let Ok(v) = serde_json::from_str::<Value>(&content_body) {
-                            jsonpath::jsonpath_first_string(
-                                &v,
-                                self.strip_mode_prefix(&content_rule),
-                            )
-                            .unwrap_or_default()
-                        } else {
-                            String::new()
+                    let mode = self.detect_mode(&content_rule, &content_body);
+                    let mut content = match mode {
+                        ParseMode::JsonPath => {
+                            if let Ok(v) = serde_json::from_str::<Value>(&content_body) {
+                                jsonpath::jsonpath_first_string(
+                                    &v,
+                                    self.strip_mode_prefix(&content_rule),
+                                )
+                                .unwrap_or_default()
+                            } else {
+                                String::new()
+                            }
                         }
-                    }
-                    ParseMode::XPath => {
-                        html::select_xpath(&content_body, self.strip_mode_prefix(&content_rule))
-                            .first()
-                            .cloned()
-                            .unwrap_or_default()
-                    }
-                    _ => {
-                        let doc = html::parse_document(&content_body);
-                        let result =
-                            html::select_all_text(&doc, self.strip_mode_prefix(&content_rule));
-                        result.unwrap_or_default()
-                    }
-                };
+                        ParseMode::XPath => {
+                            html::select_xpath(&content_body, self.strip_mode_prefix(&content_rule))
+                                .first()
+                                .cloned()
+                                .unwrap_or_default()
+                        }
+                        _ => {
+                            let doc = html::parse_document(&content_body);
+                            let result =
+                                html::select_all_text(&doc, self.strip_mode_prefix(&content_rule));
+                            result.unwrap_or_default()
+                        }
+                    };
 
-                if let Some(replace) = rule.replace_regex.as_deref() {
-                    content = apply_legado_regex(&content, replace);
-                }
+                    if let Some(replace) = rule.replace_regex.as_deref() {
+                        content = apply_legado_regex(&content, replace);
+                    }
 
-                if let Some(callback) = rule
-                    .call_back_js
-                    .as_deref()
-                    .filter(|s| !s.trim().is_empty())
-                {
-                    if let Ok(processed) =
-                        eval_js(self.strip_mode_prefix(callback), &content, base_url)
+                    if let Some(callback) = rule
+                        .call_back_js
+                        .as_deref()
+                        .filter(|s| !s.trim().is_empty())
                     {
-                        if !processed.trim().is_empty() {
-                            content = processed;
+                        if let Ok(processed) =
+                            eval_js(self.strip_mode_prefix(callback), &content, base_url)
+                        {
+                            if !processed.trim().is_empty() {
+                                content = processed;
+                            }
                         }
                     }
+
+                    return content;
                 }
 
-                return content;
-            }
-
-            String::new()
+                String::new()
             },
         )
     }

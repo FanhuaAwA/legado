@@ -1380,33 +1380,33 @@ fn apply_login_check_js(source: &BookSource, res: FetchResponse) -> FetchRespons
         source.login_url.as_deref(),
         Some(source.book_source_name.as_str()),
         || {
-        let str_response = StrResponse::from(res.clone());
-        let mut bindings = HashMap::new();
-        bindings.insert(
-            "result".to_string(),
-            serde_json::to_value(&str_response).unwrap_or_else(|_| json!({})),
-        );
-        match eval_js_with_bindings(script, &res.body, &res.url, &bindings) {
-            Ok(output) if !output.trim().is_empty() => {
-                if let Ok(next) = serde_json::from_str::<StrResponse>(&output) {
-                    FetchResponse::from(next)
-                } else {
-                    FetchResponse {
-                        body: output,
-                        ..res
+            let str_response = StrResponse::from(res.clone());
+            let mut bindings = HashMap::new();
+            bindings.insert(
+                "result".to_string(),
+                serde_json::to_value(&str_response).unwrap_or_else(|_| json!({})),
+            );
+            match eval_js_with_bindings(script, &res.body, &res.url, &bindings) {
+                Ok(output) if !output.trim().is_empty() => {
+                    if let Ok(next) = serde_json::from_str::<StrResponse>(&output) {
+                        FetchResponse::from(next)
+                    } else {
+                        FetchResponse {
+                            body: output,
+                            ..res
+                        }
                     }
                 }
+                Ok(_) => res,
+                Err(err) => {
+                    tracing::warn!(
+                        "loginCheckJs failed for {}: {:?}",
+                        source.book_source_name,
+                        err
+                    );
+                    res
+                }
             }
-            Ok(_) => res,
-            Err(err) => {
-                tracing::warn!(
-                    "loginCheckJs failed for {}: {:?}",
-                    source.book_source_name,
-                    err
-                );
-                res
-            }
-        }
         },
     )
 }
