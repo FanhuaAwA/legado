@@ -1,5 +1,31 @@
 # AI Iteration Log
 
+## 记录标题：2026-06-10 R-batch1 书源 content 链路打通 + 契约脚本修复
+
+本轮目标：在剩余额度内完成项目最困难部分 —— 书源全链路 content 的实网打通。
+
+读取文件：legado-tauri-mandatory-completion-audit.md（R 队列）、parser/js.rs、parser/rule_engine.rs、service/book_service.rs、scripts/ci/check-command-contract.mjs、书旗/七猫书源 JSON。
+
+修改文件：
+- crates/reader-core/src/parser/js.rs：①新增 `send_text_blocking`，把所有 reqwest::blocking 请求（java.ajax / java request / legado.http / jsLib 远程加载）改走独立 OS 线程，修复异步规则路径下 "Cannot drop a runtime in a context where blocking is not allowed" panic。②`eval_script` 改为「首次 eval 前补 var」+ `prepend_undeclared_vars` 排除已声明名 + redeclaration 安全回退，修复 `let + 未声明赋值` 组合脚本永久失败。
+- crates/reader-core/tests/js_compat.rs：2 个 strict-mode 回归测试。
+- crates/reader-core/tests/source_compat_import.rs：qimao_source_full_chain 改 strict（移除 silent pass）+ into_path→keep。
+- scripts/ci/check-command-contract.mjs：stub 分类器重写为逐函数括号配平 + 内置自检夹具。
+- src/components/settings/SectionBackup.vue：filterExts zip→json。
+- 书旗/七猫书源 JSON：ruleContent 按实测站点行为更新（先备份 .backup.json）。
+
+验证命令与结果：oxfmt PASS(370) / lint PASS(0 errors) / build PASS / cargo check 两 crate PASS / cargo test -p reader-core PASS(36 passed) / cargo test -p legado-tauri PASS / 契约 self-test PASS。
+
+通过项（实网 strict）：
+- 书旗全链路：search→toc(4785章)→content(12904字符) live_network_pass（此前 content PARTIAL）。
+- 七猫全链路：search→toc(2551章)→content(14648字符) live_network_pass（此前 toc/content BLOCKED）。
+
+失败项：无。证据见 reports/gates/2026-06-10-1016-R-batch1/summary.md。
+
+下轮第一件事：R-P0-002 —— 用本轮实测数字重写 docs/ai-task-status.md、command-matrix.md，消除自相矛盾；5 个争议命令（booksource_cancel/call_fn/run_tests/purchase_chapter、storage_debug_dump）逐个实测定真伪。然后 R-P1-002（web_server_stop 验证修复），再 R-P0-001（58 个 stub 集中式能力声明与 UI 隐藏）。
+
+不得重复做的事：reqwest 线程桥已就绪，不要再排查 java.ajax 的 tokio panic；strict-mode let+未声明已修，不要再加其他绕过；书旗/七猫 content 已通，不要再改其 ruleContent。
+
 ## 记录标题：2026-06-09 Iteration 19
 
 **本轮目标**：Phase 2-3 书源全链路验证 — 七猫重验 + 书旗 content 修复

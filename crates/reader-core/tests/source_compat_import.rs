@@ -111,6 +111,10 @@ async fn shuqi_source_full_chain() {
 }
 
 /// 七猫书源全链路验证：search → bookInfo → chapterList → content
+///
+/// strict 模式 — 手动运行（取消 ignore）时四段链路必须真实通过，不得 eprintln 后
+/// return 让测试假 PASS。需要实网；CI 默认 ignore。
+/// 2026-06-10 实测通过：search → toc(2551 章) → content(14k+ 字符)。
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "live network: requires 七猫源站可用"]
 async fn qimao_source_full_chain() {
@@ -125,63 +129,48 @@ async fn qimao_source_full_chain() {
 
     let file_name = &result.files[0];
 
-    // Step 1: 搜索
-    let books = match core.search(file_name, "凡人", 1, None).await {
-        Ok(b) => {
-            assert!(!b.is_empty(), "七猫搜索应返回结果");
-            b
-        }
-        Err(e) => {
-            eprintln!("七猫搜索失败（网络/源站问题）: {e:?}");
-            drop(core);
-            return;
-        }
-    };
+    // Step 1: 搜索 — strict
+    let books = core
+        .search(file_name, "凡人", 1, None)
+        .await
+        .expect("七猫搜索应成功（源站可达时）");
+    assert!(!books.is_empty(), "七猫搜索应返回非空结果");
     let book_url = &books[0].book_url;
+    assert!(!book_url.is_empty(), "bookUrl 不应为空");
     eprintln!("七猫搜索: {} (book_url={})", books[0].name, book_url);
 
-    // Step 2: bookInfo
-    let detail = match core.book_info(file_name, book_url, None).await {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("七猫 bookInfo 失败: {e:?}");
-            drop(core);
-            return;
-        }
-    };
-    // 七猫 ruleBookInfo 为空对象，bookInfo 不返回书名（数据来自搜索）
-    eprintln!("七猫 bookInfo: name='{}' author='{}' kind={:?}", detail.name, detail.author, detail.kind);
+    // Step 2: bookInfo — 七猫 ruleBookInfo 为空对象，HTTP 必须成功，字段可空
+    let detail = core
+        .book_info(file_name, book_url, None)
+        .await
+        .expect("七猫 bookInfo HTTP 应成功");
+    eprintln!(
+        "七猫 bookInfo: name='{}' author='{}' kind={:?}",
+        detail.name, detail.author, detail.kind
+    );
 
-    // Step 3: chapterList
-    let chapters = match core.chapter_list(file_name, book_url, None).await {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("七猫 chapterList 失败: {e:?}");
-            drop(core);
-            return;
-        }
-    };
-    assert!(!chapters.is_empty(), "目录不应为空");
+    // Step 3: chapterList — strict
+    let chapters = core
+        .chapter_list(file_name, book_url, None)
+        .await
+        .expect("七猫 chapterList 应成功");
+    assert!(!chapters.is_empty(), "七猫目录不应为空");
     eprintln!("七猫目录: 共 {} 章", chapters.len());
 
-    // Step 4: content（依赖 java.ajax）
-    if let Some(first) = chapters.first() {
-        match core.chapter_content(file_name, &first.url, None).await {
-            Ok(body) => {
-                if body.is_empty() {
-                    eprintln!("七猫 content: 正文为空 — ruleContent 规则可能需要更新");
-                } else {
-                    eprintln!("七猫 content: 正文长度={} 字符", body.len());
-                }
-            }
-            Err(e) => {
-                eprintln!("七猫 content 获取失败（可能付费）: {e:?}");
-            }
-        }
-    }
+    // Step 4: content — strict（依赖 java.ajax / jsLib / hex / 派生 bid-cid）
+    let first = chapters.first().expect("应有第一章");
+    let body = core
+        .chapter_content(file_name, &first.url, None)
+        .await
+        .expect("七猫 chapterContent HTTP 应成功");
+    assert!(
+        !body.is_empty(),
+        "七猫正文不应为空（content 链路已于 2026-06-10 修复）"
+    );
+    eprintln!("七猫 content: 正文长度={} 字符", body.len());
+
     drop(core);
-    // Clean up tempdir in blocking context to avoid tokio runtime conflict
-    let tmp_path = temp.into_path();
+    let tmp_path = temp.keep();
     tokio::task::spawn_blocking(move || {
         let _ = std::fs::remove_dir_all(&tmp_path);
     })

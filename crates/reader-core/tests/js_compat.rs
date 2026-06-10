@@ -16,6 +16,33 @@ fn java_aes_base64_decode_to_string_decrypts_legado_paths() {
     assert_eq!(result, "http://api.lemiyigou.com/655/655791/70398.json");
 }
 
+/// 回归：顶层 let 与未声明赋值并存的 Legado 脚本（Rhino 非严格语义，七猫 ruleToc 形态）。
+/// 旧实现先 eval 再失败重试，但首次执行已把 let 写入全局词法环境，
+/// 同一 Context 重试必因 redeclaration 失败。var 补全必须发生在首次 eval 之前。
+#[test]
+fn eval_js_handles_let_plus_undeclared_assignment() {
+    let script = r#"
+function pick() { return 2; }
+let factor = pick();
+chapters = [{ title: "c1" }, { title: "c2" }];
+chapters.length * factor
+"#;
+    let result = eval_js(script, "", "").unwrap();
+    assert_eq!(result, "4");
+}
+
+/// 回归：var 补全名单必须排除 let/const 已声明名，否则补出的 var 与 let 冲突导致整段解析失败。
+#[test]
+fn eval_js_does_not_redeclare_let_names() {
+    let script = r#"
+let device = "android";
+flag = device + "-ok";
+flag
+"#;
+    let result = eval_js(script, "", "").unwrap();
+    assert_eq!(result, "android-ok");
+}
+
 async fn js_search() -> Json<serde_json::Value> {
     Json(json!({
         "list": [{

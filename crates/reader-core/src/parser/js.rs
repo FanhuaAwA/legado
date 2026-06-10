@@ -21,14 +21,39 @@ static JS_KV: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| Mutex::new(Has
 static JS_LIB_CACHE: Lazy<Mutex<HashMap<String, String>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 static JS_HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
-    Client::builder()
-        .cookie_store(true)
-        .gzip(true)
-        .brotli(true)
-        .deflate(true)
-        .build()
-        .expect("failed to build JS HTTP client")
+    // reqwest::blocking 客户端不能在 tokio 异步上下文中构建；Lazy 首次触发点
+    // 可能位于异步规则引擎线程，因此固定在独立线程上完成构建。
+    std::thread::spawn(|| {
+        Client::builder()
+            .cookie_store(true)
+            .gzip(true)
+            .brotli(true)
+            .deflate(true)
+            .build()
+            .expect("failed to build JS HTTP client")
+    })
+    .join()
+    .expect("JS HTTP client init thread panicked")
 });
+
+/// 在独立 OS 线程上执行 reqwest::blocking 请求并返回响应文本。
+///
+/// reqwest::blocking 的 send 内部每次创建并 drop 一个临时 tokio runtime；书源 JS
+/// （java.ajax / legado.http 等）会从异步规则引擎路径进入本模块，此时当前线程是
+/// tokio worker，直接 send 会 panic：
+/// "Cannot drop a runtime in a context where blocking is not allowed"。
+/// 统一切到普通线程后阻塞调用合法，调用方线程仅等待 join。
+fn send_text_blocking(req: reqwest::blocking::RequestBuilder) -> anyhow::Result<String> {
+    std::thread::scope(|scope| {
+        scope
+            .spawn(move || -> anyhow::Result<String> {
+                let response = req.send()?;
+                Ok(response.text().unwrap_or_default())
+            })
+            .join()
+            .map_err(|_| anyhow::anyhow!("js http worker thread panicked"))?
+    })
+}
 static JS_DEVICE_ID: Lazy<String> = Lazy::new(|| {
     let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(existing) = map.get("__device_id") {
@@ -695,64 +720,98 @@ fn is_safe_js_identifier(value: &str) -> bool {
 }
 
 fn eval_script<'js>(ctx: rquickjs::Ctx<'js>, script: &str) -> anyhow::Result<Value<'js>> {
-    match ctx.eval(script) {
-        Ok(v) => Ok(v),
-        Err(first_err) => {
-            // rquickjs eval runs in strict mode, but Legado book source scripts
-            // often use undeclared global variables (Rhino allows this).
-            // Collect exception info, then retry with var declarations prepended.
-            let first_msg = ctx
-                .catch()
-                .into_exception()
-                .and_then(|ex| ex.message())
-                .unwrap_or_else(|| first_err.to_string());
-
-            let fixed = prepend_undeclared_vars(script);
-            if fixed != script {
-                match ctx.eval(&*fixed) {
-                    Ok(v) => return Ok(v),
-                    Err(_) => {} // fall through
+    // Legado 书源脚本沿用 Rhino 非严格语义，常见未声明全局赋值（chapters = ...），
+    // rquickjs eval 为严格模式会抛 "x is not defined"。var 补全必须在首次 eval 之前：
+    // 首次执行失败时，脚本里已执行的顶层 let/const 已进入该 Context 的全局词法环境，
+    // 同一 Context 内重试会因 redeclaration 立即失败（这正是旧版"失败后重试"永远
+    // 修不好"let + 未声明赋值"组合脚本的原因）。
+    let prepared = prepend_undeclared_vars(script);
+    if prepared != script {
+        match ctx.eval(&*prepared) {
+            Ok(v) => return Ok(v),
+            Err(err) => {
+                let msg = catch_js_message(&ctx, &err);
+                // 补全名单误判与脚本内 let/const 冲突时是解析期 redeclaration 错误，
+                // 解析失败不会执行任何代码、Context 仍干净，可安全回退原脚本。
+                if msg.contains("redeclar") {
+                    return ctx.eval(script).map_err(|e2| {
+                        anyhow::anyhow!("JS Exception: {}", catch_js_message(&ctx, &e2))
+                    });
                 }
+                return Err(anyhow::anyhow!("JS Exception: {}", msg));
             }
-            Err(anyhow::anyhow!("JS Exception: {}", first_msg))
         }
     }
+    ctx.eval(script)
+        .map_err(|err| anyhow::anyhow!("JS Exception: {}", catch_js_message(&ctx, &err)))
+}
+
+fn catch_js_message(ctx: &rquickjs::Ctx<'_>, err: &rquickjs::Error) -> String {
+    ctx.catch()
+        .into_exception()
+        .and_then(|ex| ex.message())
+        .unwrap_or_else(|| err.to_string())
+}
+
+fn leading_identifier(text: &str) -> String {
+    text.trim_start()
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '$')
+        .collect()
 }
 
 /// Detect undeclared top-level variable assignments (Legado convention)
 /// and prepend `var` declarations so they work in strict-mode rquickjs.
+///
+/// 已用 var/let/const/function 声明过的名字必须排除，否则补出的 `var x;`
+/// 会与脚本内 `let x` 冲突，整段脚本解析失败。
 fn prepend_undeclared_vars(script: &str) -> String {
-    let mut names = std::collections::BTreeSet::new();
+    let mut declared = std::collections::BTreeSet::new();
+    let mut assigned = std::collections::BTreeSet::new();
     for line in script.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with("//") {
             continue;
         }
-        // Match: identifier =  (but not var/let/const identifier =)
         if let Some(rest) = trimmed
             .strip_prefix("var ")
             .or_else(|| trimmed.strip_prefix("let "))
             .or_else(|| trimmed.strip_prefix("const "))
         {
-            // Extract the declared name to avoid double-declaring
-            if let Some(_name) = rest.split(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '$').next() {
-                // Already declared, don't add
-                continue;
+            // `let a = 1, b = 2` 记录 a、b；表达式内逗号会带来多余候选名，
+            // 只会让 declared 集合偏大（少补 var），不会引入 redeclaration。
+            for part in rest.split(',') {
+                let name = leading_identifier(part);
+                if !name.is_empty() {
+                    declared.insert(name);
+                }
             }
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("function ") {
+            let name = leading_identifier(rest);
+            if !name.is_empty() {
+                declared.insert(name);
+            }
+            continue;
         }
         // Check for bare identifier assignment at line start
         if let Some(eq_pos) = trimmed.find('=') {
+            // 跳过 ==、===、=> 等非赋值形态
+            if matches!(trimmed[eq_pos + 1..].chars().next(), Some('=') | Some('>')) {
+                continue;
+            }
             let candidate = trimmed[..eq_pos].trim();
             if is_valid_identifier(candidate) && !is_keyword(candidate) {
-                names.insert(candidate.to_string());
+                assigned.insert(candidate.to_string());
             }
         }
     }
+    let names: Vec<String> = assigned.difference(&declared).cloned().collect();
     if names.is_empty() {
         return script.to_string();
     }
-    let decls: Vec<String> = names.into_iter().collect();
-    format!("var {};\n{}", decls.join(", "), script)
+    format!("var {};\n{}", names.join(", "), script)
 }
 
 fn is_valid_identifier(s: &str) -> bool {
@@ -854,8 +913,7 @@ fn compile_js_lib(js_lib: &str) -> anyhow::Result<String> {
 fn resolve_js_lib_entry(entry: &str) -> anyhow::Result<String> {
     let value = entry.trim();
     if value.starts_with("http://") || value.starts_with("https://") {
-        let response = JS_HTTP_CLIENT.get(value).send()?;
-        return Ok(response.text().unwrap_or_default());
+        return send_text_blocking(JS_HTTP_CLIENT.get(value));
     }
     Ok(value.to_string())
 }
@@ -924,8 +982,7 @@ fn java_ajax(spec: &str) -> anyhow::Result<String> {
         }
     }
 
-    let response = req.send()?;
-    Ok(response.text().unwrap_or_default())
+    send_text_blocking(req)
 }
 
 fn java_request_simple(method: &str, url: &str, body: Option<String>) -> anyhow::Result<String> {
@@ -934,8 +991,7 @@ fn java_request_simple(method: &str, url: &str, body: Option<String>) -> anyhow:
     if let Some(body) = body {
         req = req.body(body);
     }
-    let response = req.send()?;
-    Ok(response.text().unwrap_or_default())
+    send_text_blocking(req)
 }
 
 fn legado_http_request(
@@ -950,8 +1006,7 @@ fn legado_http_request(
     if let Some(body) = body {
         req = req.body(body);
     }
-    let response = req.send()?;
-    Ok(response.text().unwrap_or_default())
+    send_text_blocking(req)
 }
 
 fn js_callback_arg_to_string(value: Value<'_>) -> String {
@@ -1018,8 +1073,7 @@ fn legado_http_request_options(options: &str) -> anyhow::Result<String> {
             req = req.body(body.to_string());
         }
     }
-    let response = req.send()?;
-    Ok(response.text().unwrap_or_default())
+    send_text_blocking(req)
 }
 
 fn apply_header_json(

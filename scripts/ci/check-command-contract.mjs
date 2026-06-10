@@ -89,41 +89,156 @@ function collectRegisteredCommands() {
   return cmds;
 }
 
-// ── 检测 unsupported stubs ────────────────────────────────
-function detectStubs() {
-  const stubs = new Set();
-  const cmdDir = resolve(projectRoot, "src-tauri", "src", "commands");
-  for (const fname of readdirSync(cmdDir)) {
-    if (!fname.endsWith(".rs")) continue;
-    const content = readFileSync(join(cmdDir, fname), "utf-8");
-    // Match: #[tauri::command] pub async fn xxx(...) -> CommandResult<...> { Err(u("...")) }
-    // or: Err(unsupported("..."))
-    const re =
-      /#\[tauri::command\][\s\S]*?pub\s+(?:async\s+)?fn\s+(\w+)\s*\([\s\S]*?\)\s*->\s*CommandResult[\s\S]*?\{\s*(?:Err\((?:u|unsupported)\()/g;
-    let m;
-    while ((m = re.exec(content)) !== null) {
-      stubs.add(m[1]);
+// ── 逐函数分类（stub / impl）───────────────────────────────
+// 旧版用无界 [\s\S]*? 全文正则，会跨函数错位匹配：真实实现被后方 stub 的
+// Err(unsupported( 标记为 stub，真正的 stub 反而被 lastIndex 跳过。
+// 现改为：按 #[tauri::command] 切块 → 括号配平提取函数体 → 判定函数体整体
+// 是否为单个 UNSUPPORTED Err 表达式。
+
+/** 提取从 openIdx（指向 '{'）开始的配平大括号内容，返回 [body, endIdx]；失败返回 null */
+function extractBraceBody(text, openIdx) {
+  let depth = 0;
+  let inStr = null; // '"' | null（Rust 命令体内不含带大括号的原始字符串，简单状态机足够）
+  for (let i = openIdx; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (ch === "\\") i++;
+      else if (ch === inStr) inStr = null;
+      continue;
+    }
+    if (ch === '"') inStr = '"';
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return [text.slice(openIdx + 1, i), i];
     }
   }
-  return stubs;
+  return null;
 }
 
-// ── 检测已实现 command ─────────────────────────────────────
-function detectImplemented() {
-  const impl = new Set();
-  const stubs = detectStubs();
+/** 函数体是否为「整体一个 UNSUPPORTED Err 表达式」 */
+function bodyIsUnsupportedStub(body) {
+  const cleaned = body
+    .split("\n")
+    .map((l) => l.replace(/\/\/.*$/, ""))
+    .join("\n")
+    .trim();
+  if (/^Err\s*\(\s*(?:u|unsupported)\s*\(/.test(cleaned)) return true;
+  if (/^Err\s*\(\s*CommandError\s*[{(]/.test(cleaned) && cleaned.includes("UNSUPPORTED"))
+    return true;
+  return false;
+}
+
+/** 解析单个 Rust 源文件，返回 Map<fnName, "stub"|"impl"> */
+function classifyFileCommands(content) {
+  const result = new Map();
+  const attrRe = /#\[tauri::command\]/g;
+  let am;
+  while ((am = attrRe.exec(content)) !== null) {
+    const after = content.slice(am.index);
+    const fnm = after.match(/^\s*#\[tauri::command\][^]*?pub\s+(?:async\s+)?fn\s+(\w+)/);
+    if (!fnm) continue;
+    const name = fnm[1];
+    // 从 fn 名之后找第一个不在圆括号内的 '{'（即函数体开括号）
+    const fnNameEnd = am.index + fnm[0].length;
+    let parenDepth = 0;
+    let bodyOpen = -1;
+    let inStr = null;
+    for (let i = fnNameEnd; i < content.length; i++) {
+      const ch = content[i];
+      if (inStr) {
+        if (ch === "\\") i++;
+        else if (ch === inStr) inStr = null;
+        continue;
+      }
+      if (ch === '"') inStr = '"';
+      else if (ch === "(") parenDepth++;
+      else if (ch === ")") parenDepth--;
+      else if (ch === "{" && parenDepth === 0) {
+        bodyOpen = i;
+        break;
+      } else if (ch === "#" && content.slice(i, i + 17) === "#[tauri::command]") {
+        break; // 防御：撞上下一个命令说明本函数无函数体
+      }
+    }
+    if (bodyOpen < 0) continue;
+    const extracted = extractBraceBody(content, bodyOpen);
+    if (!extracted) continue;
+    result.set(name, bodyIsUnsupportedStub(extracted[0]) ? "stub" : "impl");
+  }
+  return result;
+}
+
+/** 扫描全部 command 文件，返回 { stubs:Set, impls:Set } */
+function classifyAllCommands() {
+  const stubs = new Set();
+  const impls = new Set();
   const cmdDir = resolve(projectRoot, "src-tauri", "src", "commands");
   for (const fname of readdirSync(cmdDir)) {
     if (!fname.endsWith(".rs")) continue;
     const content = readFileSync(join(cmdDir, fname), "utf-8");
-    const re = /#\[tauri::command\][\s\S]*?pub\s+(?:async\s+)?fn\s+(\w+)\s*\(/g;
-    let m;
-    while ((m = re.exec(content)) !== null) {
-      const name = m[1];
-      if (!stubs.has(name) && !FALSE_BACKEND_SYMBOLS.has(name)) impl.add(name);
+    for (const [name, kind] of classifyFileCommands(content)) {
+      if (FALSE_BACKEND_SYMBOLS.has(name)) continue;
+      if (kind === "stub") stubs.add(name);
+      else impls.add(name);
     }
   }
-  return impl;
+  return { stubs, impls };
+}
+
+// ── 分类器内置自检（夹具回归，分类错误时脚本自身报错）──────
+function selfTestClassifier() {
+  const fixture = `
+fn unsupported(f: &str) -> CommandError { CommandError { code: "UNSUPPORTED".into(), message: f.into(), detail: None, retryable: false } }
+
+#[tauri::command]
+pub async fn fixture_real_impl(state: State<'_, AppState>) -> CommandResult<Report> {
+    let stats = build_stats(&state).map_err(|e| CommandError { code: "IO_ERROR".into(), message: e.to_string(), detail: None, retryable: false })?;
+    Ok(Report { stats })
+}
+
+#[tauri::command] pub async fn fixture_oneline_stub() -> CommandResult<()> { Err(unsupported("浏览器探测")) }
+
+#[tauri::command]
+pub async fn fixture_struct_stub(_req: Req) -> CommandResult<Vec<Option<[u32; 2]>>> {
+    Err(CommandError {
+        code: "UNSUPPORTED".into(),
+        message: "尚未实现 {占位}".into(),
+        detail: Some("not_implemented".into()),
+        retryable: false,
+    })
+}
+
+#[tauri::command]
+pub async fn fixture_impl_after_stub() -> CommandResult<String> {
+    let v = compute();
+    Ok(v)
+}
+`;
+  const got = classifyFileCommands(fixture);
+  const expect = [
+    ["fixture_real_impl", "impl"],
+    ["fixture_oneline_stub", "stub"],
+    ["fixture_struct_stub", "stub"],
+    ["fixture_impl_after_stub", "impl"],
+  ];
+  for (const [name, kind] of expect) {
+    if (got.get(name) !== kind) {
+      console.error(
+        `SELF-TEST FAILED: ${name} expected=${kind} got=${got.get(name) ?? "missing"} — 分类器损坏，输出不可信`,
+      );
+      process.exit(2);
+    }
+  }
+}
+selfTestClassifier();
+
+function detectStubs() {
+  return classifyAllCommands().stubs;
+}
+
+function detectImplemented() {
+  return classifyAllCommands().impls;
 }
 
 // ── 主逻辑 ──────────────────────────────────────────────────

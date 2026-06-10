@@ -164,7 +164,7 @@ async function chooseSavePath(name = defaultBackupName()): Promise<string | null
     const { invokeWithTimeout } = await import("@/composables/useInvoke");
     const target = await invokeWithTimeout<string | null>(
       "bookshelf_pick_save_path",
-      { defaultName: name, filterName: "JSON 备份", filterExts: ["zip"] },
+      { defaultName: name, filterName: "JSON 备份", filterExts: ["json"] },
       60_000,
     );
     return target ?? null;
