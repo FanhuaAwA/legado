@@ -1,0 +1,47 @@
+name: Discord DM Notify
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send Discord DM
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_USER_ID: ${{ secrets.DISCORD_USER_ID }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          AUTHOR: ${{ github.actor }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          COMMIT_URL: ${{ github.event.head_commit.url }}
+        run: |
+          # 用 jq 构造 JSON，避免提交信息里的引号/换行拼坏请求体
+          DM_CHANNEL_ID=$(jq -n --arg uid "$DISCORD_USER_ID" '{recipient_id: $uid}' \
+            | curl -s -X POST "https://discord.com/api/v10/users/@me/channels" \
+              -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d @- \
+            | jq -r '.id')
+
+          if [ -z "$DM_CHANNEL_ID" ] || [ "$DM_CHANNEL_ID" = "null" ]; then
+            echo "无法创建 DM 频道：检查 DISCORD_BOT_TOKEN / DISCORD_USER_ID secrets，且机器人需与用户同服务器" >&2
+            exit 1
+          fi
+
+          CONTENT=$(printf '📦 **%s** 有新的推送\n🌿 分支：`%s`\n👤 提交人：%s\n📝 提交信息：%s\n🔗 %s' \
+            "$REPO" "$BRANCH" "$AUTHOR" "$COMMIT_MESSAGE" "$COMMIT_URL")
+          # Discord 消息上限 2000 字符，超长提交信息截断
+          CONTENT="${CONTENT:0:1900}"
+
+          jq -n --arg content "$CONTENT" '{content: $content}' \
+            | curl -s --fail-with-body \
+              -X POST "https://discord.com/api/v10/channels/$DM_CHANNEL_ID/messages" \
+              -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d @-
