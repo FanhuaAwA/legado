@@ -4,6 +4,7 @@ import { ChevronLeft, Link, Keyboard, ArrowUp, Copy, Check } from "lucide-vue-ne
 import { storeToRefs } from "pinia";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { ChapterItem, ChapterGroup } from "@/types";
+import { useCapabilities } from "@/composables/useCapabilities";
 import { isTauri } from "@/composables/useEnv";
 import { useAppConfigStore, groupChapters, useScriptBridgeStore } from "@/stores";
 import type { ReaderBookInfo } from "../types";
@@ -71,6 +72,9 @@ const videoModeRef = ref<{
 
 const _appCfg = useAppConfigStore();
 const { videoAutoNext, videoSeekStepSecs } = storeToRefs(_appCfg);
+const appCapabilities = useCapabilities();
+const videoProxyCapability = appCapabilities.getCapability("videoProxy");
+void appCapabilities.loadCapabilities();
 
 const _bridge = useScriptBridgeStore();
 const logScrollRef = ref<HTMLElement | null>(null);
@@ -364,10 +368,22 @@ function guessProxyPlaybackType(source: VideoSource): ProxyPlaybackType {
   return "mp4";
 }
 
+function videoProxyUnsupportedReason(): string {
+  return videoProxyCapability.value.reason || "Local video proxy is not implemented in this build.";
+}
+
+async function isVideoProxySupported(): Promise<boolean> {
+  await appCapabilities.loadCapabilities();
+  return videoProxyCapability.value.supported;
+}
+
 async function stopActiveVideoProxy() {
   const port = activeProxyPort;
   activeProxyPort = null;
   if (port === null) {
+    return;
+  }
+  if (!(await isVideoProxySupported())) {
     return;
   }
   try {
@@ -378,6 +394,9 @@ async function stopActiveVideoProxy() {
 }
 
 async function stopDetachedVideoProxy(port: number) {
+  if (!(await isVideoProxySupported())) {
+    return;
+  }
   try {
     await invokeWithTimeout<void>("stop_video_proxy", { port }, 5000);
   } catch {
@@ -414,6 +433,14 @@ watch(
     if (!isTauri) {
       proxyLoading.value = false;
       proxyError.value = "当前环境不支持本地视频代理，请在 Tauri 客户端播放";
+      return;
+    }
+
+    if (!(await isVideoProxySupported())) {
+      if (generation === proxyGeneration) {
+        proxyLoading.value = false;
+        proxyError.value = videoProxyUnsupportedReason();
+      }
       return;
     }
 

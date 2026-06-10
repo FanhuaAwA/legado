@@ -1,4 +1,5 @@
 import { computed, readonly, ref } from "vue";
+import { useCapabilities } from "./useCapabilities";
 import { useDynamicConfig } from "./useDynamicConfig";
 import { eventListen } from "./useEventBus";
 import {
@@ -109,6 +110,9 @@ interface SystemTtsSpeakPayload {
 }
 
 const frontendPlugins = useFrontendPlugins();
+const appCapabilities = useCapabilities();
+const nativeTtsCapability = appCapabilities.getCapability("tts");
+void appCapabilities.loadCapabilities();
 
 const systemEngine: TtsEngineRecord = {
   id: SYSTEM_ENGINE_ID,
@@ -279,6 +283,10 @@ async function waitForBrowserVoices(): Promise<TtsVoice[]> {
 async function stopSystemSpeech(): Promise<void> {
   if ("speechSynthesis" in window) {
     window.speechSynthesis.cancel();
+  }
+  await appCapabilities.loadCapabilities();
+  if (!nativeTtsCapability.value.supported) {
+    return;
   }
   try {
     await invokeWithTimeout<void>("tts_stop", undefined, COMMAND_TIMEOUT_MS);
@@ -464,6 +472,12 @@ async function speakWithBrowserSpeech(
 }
 
 async function speakWithSystemEngine(text: string, context: TtsSpeakContext): Promise<void> {
+  await appCapabilities.loadCapabilities();
+  if (!nativeTtsCapability.value.supported) {
+    await speakWithBrowserSpeech(text, context, context.signal);
+    return;
+  }
+
   const payload: SystemTtsSpeakPayload = {
     text,
     language: context.language,
@@ -941,15 +955,20 @@ async function loadVoices(): Promise<void> {
   try {
     await refreshEngines();
     if (selectedEngine.value.id === SYSTEM_ENGINE_ID) {
-      try {
-        const voices = await invokeWithTimeout<TtsVoice[]>(
-          "tts_get_voices",
-          { language: undefined },
-          COMMAND_TIMEOUT_MS,
-        );
-        availableVoices.value = voices;
-      } catch {
+      await appCapabilities.loadCapabilities();
+      if (!nativeTtsCapability.value.supported) {
         availableVoices.value = await waitForBrowserVoices();
+      } else {
+        try {
+          const voices = await invokeWithTimeout<TtsVoice[]>(
+            "tts_get_voices",
+            { language: undefined },
+            COMMAND_TIMEOUT_MS,
+          );
+          availableVoices.value = voices;
+        } catch {
+          availableVoices.value = await waitForBrowserVoices();
+        }
       }
     } else {
       availableVoices.value = normalizePluginVoices(
@@ -1147,6 +1166,21 @@ async function previewVoice(voiceId = selectedVoiceId.value): Promise<void> {
     return;
   }
   if (selectedEngine.value.id === SYSTEM_ENGINE_ID) {
+    await appCapabilities.loadCapabilities();
+    if (!nativeTtsCapability.value.supported) {
+      await speakWithBrowserSpeech(
+        "这是一段系统朗读试听。",
+        {
+          voiceId,
+          language: availableVoices.value.find((voice) => voice.id === voiceId)?.language,
+          rate: playbackRate.value,
+          volume: volume.value,
+          pitch: pitch.value,
+        },
+        new AbortController().signal,
+      );
+      return;
+    }
     try {
       await invokeWithTimeout(
         "tts_preview_voice",

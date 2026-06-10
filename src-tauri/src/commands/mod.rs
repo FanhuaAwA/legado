@@ -14,6 +14,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         // system
         system::frontend_log,
         system::get_platform,
+        system::capabilities_get,
         system::open_dir_in_explorer,
         system::script_dialog_result,
         system::audio_resolve_cache,

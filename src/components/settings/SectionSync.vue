@@ -4,6 +4,7 @@ import { storeToRefs } from "pinia";
 import QRCode from "qrcode";
 import { computed, onMounted, ref } from "vue";
 import { useBackAwareDialog as useDialog } from "@/composables/useBackAwareDialog";
+import { useCapabilities } from "@/composables/useCapabilities";
 import { invokeWithTimeout } from "@/composables/useInvoke";
 import { useOverlay } from "@/composables/useOverlay";
 import {
@@ -22,6 +23,13 @@ const _appCfg = useAppConfigStore();
 const { config, savingKey } = storeToRefs(_appCfg);
 const { setConfig, loadConfig } = _appCfg;
 const sync = useSync();
+const capabilities = useCapabilities();
+const syncCapability = capabilities.getCapability("sync");
+const syncDisabled = computed(() => !syncCapability.value.supported);
+const syncDisabledReason = computed(
+  () => syncCapability.value.reason || "Sync backend is not implemented in this build.",
+);
+void capabilities.loadCapabilities();
 
 const password = ref("");
 const status = ref<SyncStatus | null>(null);
@@ -103,7 +111,18 @@ async function refresh() {
   }
 }
 
+function ensureSyncEnabledForUi(): boolean {
+  if (!syncDisabled.value) {
+    return true;
+  }
+  message.warning(syncDisabledReason.value);
+  return false;
+}
+
 async function handleSet(key: string, value: string) {
+  if (key.startsWith("sync_") && !ensureSyncEnabledForUi()) {
+    return;
+  }
   try {
     await setConfig(key, value);
     if (key.startsWith("sync_")) {
@@ -115,17 +134,26 @@ async function handleSet(key: string, value: string) {
 }
 
 async function saveCredentials() {
+  if (!ensureSyncEnabledForUi()) {
+    return;
+  }
   await sync.setCredentials(password.value);
   message.success("同步密码已保存到本机同步配置");
 }
 
 async function clearSyncCredentials() {
+  if (!ensureSyncEnabledForUi()) {
+    return;
+  }
   await sync.clearCredentials();
   password.value = "";
   message.success("同步密码已清除");
 }
 
 async function testConnection() {
+  if (!ensureSyncEnabledForUi()) {
+    return;
+  }
   testing.value = true;
   try {
     if (password.value) {
@@ -145,6 +173,9 @@ async function testConnection() {
 }
 
 async function runSync(mode: "sync" | "pull" | "push", strategy?: "local" | "remote") {
+  if (!ensureSyncEnabledForUi()) {
+    return;
+  }
   syncing.value = true;
   try {
     const result = await sync.syncNow(mode, strategy);
@@ -162,6 +193,9 @@ async function runSync(mode: "sync" | "pull" | "push", strategy?: "local" | "rem
 }
 
 async function showQr() {
+  if (!ensureSyncEnabledForUi()) {
+    return;
+  }
   dialog.warning({
     title: "确认生成明文同步二维码",
     content:
@@ -203,6 +237,9 @@ async function copyQrText() {
 }
 
 async function startScan() {
+  if (!ensureSyncEnabledForUi()) {
+    return;
+  }
   scanVisible.value = true;
   await new Promise((resolve) => requestAnimationFrame(resolve));
   if (!videoRef.value) {
@@ -218,6 +255,9 @@ async function startScan() {
 }
 
 async function importPayload(payload: SyncQrPayload) {
+  if (!ensureSyncEnabledForUi()) {
+    return;
+  }
   await sync.importQrPayload(payload);
   await loadConfig();
   await refresh();
@@ -240,6 +280,10 @@ function promptImportText() {
 // ── 百度网盘授权流程 ──────────────────────────────────────────────
 
 async function loadBaiduTokenStatus() {
+  if (syncDisabled.value) {
+    baiduTokenStatus.value = null;
+    return;
+  }
   try {
     const result = await invokeWithTimeout<{
       valid: boolean;
@@ -253,6 +297,9 @@ async function loadBaiduTokenStatus() {
 }
 
 async function startBaiduAuth() {
+  if (!ensureSyncEnabledForUi()) {
+    return;
+  }
   try {
     const result = await invokeWithTimeout<{
       device_code: string;
@@ -272,6 +319,9 @@ async function startBaiduAuth() {
 }
 
 async function pollBaiduToken() {
+  if (!ensureSyncEnabledForUi()) {
+    return;
+  }
   if (!baiduDeviceCode.value) {
     return;
   }
@@ -298,6 +348,9 @@ async function pollBaiduToken() {
 }
 
 async function revokeBaiduAuth() {
+  if (!ensureSyncEnabledForUi()) {
+    return;
+  }
   try {
     await invokeWithTimeout<void>("sync_baidu_revoke_auth", undefined, 8000);
     baiduTokenStatus.value = null;
@@ -309,6 +362,12 @@ async function revokeBaiduAuth() {
 
 onMounted(async () => {
   await loadConfig();
+  await capabilities.loadCapabilities();
+  if (syncDisabled.value) {
+    status.value = await sync.getStatus();
+    conflicts.value = [];
+    return;
+  }
   const credentials = await sync.getCredentials().catch(() => ({ password: "" }));
   password.value = credentials.password;
   await refresh();
@@ -320,9 +379,14 @@ onMounted(async () => {
 
 <template>
   <SettingSection title="跨设备同步" section-id="section-sync">
+    <n-alert v-if="syncDisabled" type="warning" class="sync-disabled-alert" :show-icon="false">
+      {{ syncDisabledReason }}
+    </n-alert>
+
     <SettingItem label="启用同步" desc="使用 WebDAV / FTP / 百度网盘同步小文件数据">
       <n-switch
         :value="config.sync_enabled"
+        :disabled="syncDisabled"
         :loading="savingKey === 'sync_enabled'"
         @update:value="(v: boolean) => handleSet('sync_enabled', String(v))"
       />
@@ -338,6 +402,7 @@ onMounted(async () => {
           <n-select
             :value="config.sync_provider"
             size="small"
+            :disabled="syncDisabled"
             :options="providerOptions"
             @update:value="(v: string) => handleSet('sync_provider', v)"
           />
@@ -351,6 +416,7 @@ onMounted(async () => {
           <n-input
             :value="config.sync_webdav_url"
             size="small"
+            :disabled="syncDisabled"
             placeholder="https://..."
             @update:value="(v: string) => handleSet('sync_webdav_url', v.trim())"
           />
@@ -360,6 +426,7 @@ onMounted(async () => {
           <n-input
             :value="config.sync_webdav_username"
             size="small"
+            :disabled="syncDisabled"
             placeholder="用户名"
             @update:value="(v: string) => handleSet('sync_webdav_username', v.trim())"
           />
@@ -374,11 +441,18 @@ onMounted(async () => {
             v-model:value="password"
             size="small"
             type="password"
+            :disabled="syncDisabled"
             show-password-on="click"
             placeholder="WebDAV 密码或应用 Token"
           />
-          <n-button size="small" @click="saveCredentials">保存</n-button>
-          <n-button size="small" type="warning" @click="clearSyncCredentials">清除</n-button>
+          <n-button size="small" :disabled="syncDisabled" @click="saveCredentials">保存</n-button>
+          <n-button
+            size="small"
+            type="warning"
+            :disabled="syncDisabled"
+            @click="clearSyncCredentials"
+            >清除</n-button
+          >
         </SettingItem>
 
         <SettingItem
@@ -389,12 +463,14 @@ onMounted(async () => {
           <n-input
             :value="config.sync_webdav_root_dir"
             size="small"
+            :disabled="syncDisabled"
             @update:value="
               (v: string) => handleSet('sync_webdav_root_dir', v.trim() || 'legado-sync')
             "
           />
           <n-switch
             :value="config.sync_webdav_allow_http"
+            :disabled="syncDisabled"
             :loading="savingKey === 'sync_webdav_allow_http'"
             @update:value="(v: boolean) => handleSet('sync_webdav_allow_http', String(v))"
           />
@@ -407,6 +483,7 @@ onMounted(async () => {
             <n-input
               :value="config.sync_baidu_app_name"
               size="small"
+              :disabled="syncDisabled"
               placeholder="legado-tauri"
               @update:value="
                 (v: string) => handleSet('sync_baidu_app_name', v.trim() || 'legado-tauri')
@@ -418,6 +495,7 @@ onMounted(async () => {
             <n-input
               :value="config.sync_webdav_root_dir"
               size="small"
+              :disabled="syncDisabled"
               placeholder="legado-sync"
               @update:value="
                 (v: string) => handleSet('sync_webdav_root_dir', v.trim() || 'legado-sync')
@@ -434,20 +512,25 @@ onMounted(async () => {
             </span>
             <span v-else class="sync-baidu-status sync-baidu-status--none">未授权</span>
 
-            <n-button size="small" type="primary" @click="startBaiduAuth">授权百度网盘</n-button>
+            <n-button size="small" type="primary" :disabled="syncDisabled" @click="startBaiduAuth"
+              >授权百度网盘</n-button
+            >
             <n-button
               v-if="baiduTokenStatus?.valid"
               size="small"
               type="warning"
+              :disabled="syncDisabled"
               @click="revokeBaiduAuth"
               >退出授权</n-button
             >
-            <n-button size="small" quaternary @click="loadBaiduTokenStatus">刷新状态</n-button>
+            <n-button size="small" quaternary :disabled="syncDisabled" @click="loadBaiduTokenStatus"
+              >刷新状态</n-button
+            >
           </SettingItem>
         </template>
 
         <SettingItem label="同步范围" :vertical="true">
-          <n-checkbox-group v-model:value="enabledScopeKeys">
+          <n-checkbox-group v-model:value="enabledScopeKeys" :disabled="syncDisabled">
             <n-space>
               <n-checkbox v-for="item in scopeOptions" :key="item.key" :value="item.key">
                 {{ item.label }}
@@ -459,16 +542,19 @@ onMounted(async () => {
         <SettingItem label="自动触发" desc="移动端默认只建议启动和回前台同步">
           <n-switch
             :value="config.sync_trigger_on_startup"
+            :disabled="syncDisabled"
             @update:value="(v: boolean) => handleSet('sync_trigger_on_startup', String(v))"
           />
           <span class="sync-inline-hint">启动</span>
           <n-switch
             :value="config.sync_trigger_on_resume"
+            :disabled="syncDisabled"
             @update:value="(v: boolean) => handleSet('sync_trigger_on_resume', String(v))"
           />
           <span class="sync-inline-hint">回前台</span>
           <n-switch
             :value="config.sync_mobile_wifi_only"
+            :disabled="syncDisabled"
             @update:value="(v: boolean) => handleSet('sync_mobile_wifi_only', String(v))"
           />
           <span class="sync-inline-hint">Wi-Fi 优先</span>
@@ -480,12 +566,24 @@ onMounted(async () => {
       label="当前状态"
       :desc="`上次成功：${formatTime(status?.lastSuccessAt ?? 0)}；冲突：${status?.conflictCount ?? 0}`"
     >
-      <n-button size="small" :loading="testing" @click="testConnection">测试连接</n-button>
-      <n-button size="small" type="primary" :loading="syncing" @click="runSync('sync')">
+      <n-button size="small" :disabled="syncDisabled" :loading="testing" @click="testConnection"
+        >测试连接</n-button
+      >
+      <n-button
+        size="small"
+        type="primary"
+        :disabled="syncDisabled"
+        :loading="syncing"
+        @click="runSync('sync')"
+      >
         立即同步
       </n-button>
-      <n-button size="small" :loading="syncing" @click="runSync('pull')">仅拉取</n-button>
-      <n-button size="small" :loading="syncing" @click="runSync('push')">仅推送</n-button>
+      <n-button size="small" :disabled="syncDisabled" :loading="syncing" @click="runSync('pull')"
+        >仅拉取</n-button
+      >
+      <n-button size="small" :disabled="syncDisabled" :loading="syncing" @click="runSync('push')"
+        >仅推送</n-button
+      >
     </SettingItem>
 
     <SettingItem
@@ -495,7 +593,7 @@ onMounted(async () => {
       <n-button
         size="small"
         type="warning"
-        :disabled="!conflicts.length"
+        :disabled="syncDisabled || !conflicts.length"
         @click="runSync('sync', 'remote')"
       >
         保留服务器
@@ -503,18 +601,20 @@ onMounted(async () => {
       <n-button
         size="small"
         type="warning"
-        :disabled="!conflicts.length"
+        :disabled="syncDisabled || !conflicts.length"
         @click="runSync('sync', 'local')"
       >
         保留本地
       </n-button>
-      <n-button size="small" @click="refresh">刷新冲突</n-button>
+      <n-button size="small" :disabled="syncDisabled" @click="refresh">刷新冲突</n-button>
     </SettingItem>
 
     <SettingItem label="二维码配置" desc="扫码可复制完整同步配置，包括明文密码或 Token">
-      <n-button size="small" @click="showQr">生成二维码</n-button>
-      <n-button size="small" @click="startScan">扫码导入</n-button>
-      <n-button size="small" quaternary @click="promptImportText">粘贴导入</n-button>
+      <n-button size="small" :disabled="syncDisabled" @click="showQr">生成二维码</n-button>
+      <n-button size="small" :disabled="syncDisabled" @click="startScan">扫码导入</n-button>
+      <n-button size="small" quaternary :disabled="syncDisabled" @click="promptImportText"
+        >粘贴导入</n-button
+      >
     </SettingItem>
 
     <div v-if="conflicts.length" class="sync-conflicts">
@@ -583,7 +683,11 @@ onMounted(async () => {
         </div>
       </div>
       <template #footer>
-        <n-button type="primary" :loading="baiduPolling" @click="pollBaiduToken"
+        <n-button
+          type="primary"
+          :disabled="syncDisabled"
+          :loading="baiduPolling"
+          @click="pollBaiduToken"
           >已完成授权</n-button
         >
         <n-button @click="baiduAuthVisible = false">取消</n-button>
@@ -596,6 +700,10 @@ onMounted(async () => {
 .sync-inline-hint {
   font-size: var(--fs-12);
   color: var(--color-text-muted);
+}
+
+.sync-disabled-alert {
+  margin-bottom: var(--space-3);
 }
 
 .sync-panel-stack {

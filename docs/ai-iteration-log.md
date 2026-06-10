@@ -1,5 +1,26 @@
 # AI Iteration Log
 
+## 记录标题：2026-06-10 R-P0-001 第一批能力声明接入（sync / TTS / video proxy）
+
+本轮目标：开始关闭 R-P0-001，不实现空壳后端功能，先建立集中式能力声明并让第一批前端入口不再裸露调用 `UNSUPPORTED`。
+
+修改文件：
+
+- `src-tauri/src/commands/system.rs`：新增 `capabilities_get`，声明 sync、native TTS、video proxy 的 `supported=false`、原因和归属命令清单。
+- `src-tauri/src/commands/mod.rs`：注册 `system::capabilities_get`。
+- `src/composables/useCapabilities.ts`：新增前端单一能力读取点，后端不可用时使用保守 fallback。
+- `src/composables/useSync.ts`：所有 sync 命令调用前先查能力；明确操作抛出统一原因，状态查询返回 disabled 状态，生命周期/阅读进度后台上报静默跳过或返回 disabled。
+- `src/components/settings/SectionSync.vue`：同步设置页顶部显示能力声明原因，所有同步/百度授权/二维码/冲突处理入口禁用。
+- `src/composables/useTts.ts`：native `tts_*` 仅在能力 supported 时调用；当前构建直接降级到浏览器 `speechSynthesis`。
+- `src/components/reader/modes/VideoPlayerPage.vue`：本地视频代理 unsupported 时不调用 `start_video_proxy` / `stop_video_proxy`，播放器显示能力声明原因。
+- `docs/command-matrix.md`、`docs/ai-task-status.md`：更新契约统计和 R-P0-001 第一批处置状态。
+
+当前结论：R-P0-001 仍未关闭。58 个前端可触达 stub 中，sync 14 个标为 `unsupported_hidden`，TTS 6 个与 video proxy 2 个标为 `blocked_by_platform`，合计 22/58 已接入集中式能力声明；剩余 36 个继续排队。
+
+已通过的快速验证：`node scripts/ci/check-command-contract.mjs --json` PASS（161 frontend / 163 registered / 160 both / 58 frontend stub / 60 registered stub）；`cargo check -p legado-tauri` PASS；`pnpm exec vue-tsc -p tsconfig.app.json --noEmit` PASS；`pnpm exec oxfmt .` PASS（371 files）。
+
+下一轮第一件事：继续 R-P0-001，沿用 `capabilities_get` / `useCapabilities`，优先处理 browser_probe 12 个入口，再处理 comic/cover 9 个、repository/source_update 6 个、update/unlock/misc 9 个。不要把本批 22 个已处置入口重新当成裸露入口；也不要把 `frontend_unsupported_stub_count=58` 误读为本批未做，因为后端 stub 总数不会因 UI 隐藏而下降。
+
 ## 记录标题：2026-06-10 R-P0-002 状态文档同步 + 契约口径澄清
 
 本轮目标：关闭 R-P0-002，消除三份状态文档自相矛盾和过期数字，给 5 个争议命令逐个定真伪。

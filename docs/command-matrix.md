@@ -2,7 +2,7 @@
 
 本文件由 `scripts/ci/check-command-contract.mjs` 的 2026-06-10 实测结果半自动重建。旧的 2026-06-09 手工矩阵已删除，后续不得再手工沿用过期统计。
 
-最后实测：2026-06-10 11:43 +0800
+最后实测：2026-06-10 12:08 +0800
 
 实测命令：
 
@@ -15,14 +15,14 @@ node scripts/ci/check-command-contract.mjs
 
 | 指标                              | 数值 | 说明                                                                             |
 | --------------------------------- | ---: | -------------------------------------------------------------------------------- |
-| frontendTotal                     |  160 | 前端 invoke 调用去重后数量                                                       |
-| registeredTotal                   |  162 | `generate_handler!` 注册命令数量                                                 |
-| bothCount                         |  159 | 前后端同名匹配数量                                                               |
+| frontendTotal                     |  161 | 前端 invoke 调用去重后数量                                                       |
+| registeredTotal                   |  163 | `generate_handler!` 注册命令数量                                                 |
+| bothCount                         |  160 | 前后端同名匹配数量                                                               |
 | onlyFrontend                      |    1 | `js_eval`，安全阻断，有意不注册                                                  |
 | onlyBackend                       |    3 | `bookshelf_export_book_data`, `sync_baidu_start_auth`, `sync_baidu_token_status` |
-| registered_implemented_count      |  102 | 全部已注册命令中的实现数量，含后台孤儿                                           |
+| registered_implemented_count      |  103 | 全部已注册命令中的实现数量，含后台孤儿                                           |
 | registered_unsupported_stub_count |   60 | 全部已注册命令中的 UNSUPPORTED stub，含后台孤儿                                  |
-| frontend_implemented_count        |  101 | 前端可触达且已实现                                                               |
+| frontend_implemented_count        |  102 | 前端可触达且已实现                                                               |
 | frontend_unsupported_stub_count   |   58 | 前端可触达但仅返回 UNSUPPORTED，R-P0-001 验收口径                                |
 
 `classification` 数组的口径是 `frontend-facing registered commands`。需要全注册命令时使用 `registeredClassification`。
@@ -55,66 +55,66 @@ node scripts/ci/check-command-contract.mjs
 
 这些命令是 R-P0-001 的 UI 入口隐藏/禁用目标。逐条结果后续必须更新为 `implemented`、`unsupported_hidden` 或 `blocked_by_platform`。
 
-| 模块                     | Command                              | 当前处置          |
-| ------------------------ | ------------------------------------ | ----------------- |
-| sync                     | `sync_baidu_poll_token`              | pending_ui_hidden |
-| sync                     | `sync_baidu_revoke_auth`             | pending_ui_hidden |
-| sync                     | `sync_client_state_set`              | pending_ui_hidden |
-| sync                     | `sync_get_status`                    | pending_ui_hidden |
-| sync                     | `sync_set_credentials`               | pending_ui_hidden |
-| sync                     | `sync_clear_credentials`             | pending_ui_hidden |
-| sync                     | `sync_get_credentials`               | pending_ui_hidden |
-| sync                     | `sync_test_connection`               | pending_ui_hidden |
-| sync                     | `sync_now`                           | pending_ui_hidden |
-| sync                     | `sync_list_conflicts`                | pending_ui_hidden |
-| sync                     | `sync_resolve_conflict`              | pending_ui_hidden |
-| sync                     | `sync_report_reader_session`         | pending_ui_hidden |
-| sync                     | `sync_v2_sync_reading_progress`      | pending_ui_hidden |
-| sync                     | `sync_notify_lifecycle`              | pending_ui_hidden |
-| tts                      | `tts_stop`                           | pending_ui_hidden |
-| tts                      | `tts_is_initialized`                 | pending_ui_hidden |
-| tts                      | `tts_is_speaking`                    | pending_ui_hidden |
-| tts                      | `tts_speak`                          | pending_ui_hidden |
-| tts                      | `tts_get_voices`                     | pending_ui_hidden |
-| tts                      | `tts_preview_voice`                  | pending_ui_hidden |
-| video                    | `start_video_proxy`                  | pending_ui_hidden |
-| video                    | `stop_video_proxy`                   | pending_ui_hidden |
-| browser_probe            | `browser_probe_create`               | pending_ui_hidden |
-| browser_probe            | `browser_probe_navigate`             | pending_ui_hidden |
-| browser_probe            | `browser_probe_eval`                 | pending_ui_hidden |
-| browser_probe            | `browser_probe_run`                  | pending_ui_hidden |
-| browser_probe            | `browser_probe_get_cookies`          | pending_ui_hidden |
-| browser_probe            | `browser_probe_set_cookie`           | pending_ui_hidden |
-| browser_probe            | `browser_probe_set_user_agent`       | pending_ui_hidden |
-| browser_probe            | `browser_probe_clear_data`           | pending_ui_hidden |
-| browser_probe            | `browser_probe_show`                 | pending_ui_hidden |
-| browser_probe            | `browser_probe_hide`                 | pending_ui_hidden |
-| browser_probe            | `browser_probe_close`                | pending_ui_hidden |
-| browser_probe            | `browser_probe_close_all`            | pending_ui_hidden |
-| comic_cover              | `comic_download_images`              | pending_ui_hidden |
-| comic_cover              | `comic_get_page_sizes`               | pending_ui_hidden |
-| comic_cover              | `comic_get_cached_page`              | pending_ui_hidden |
-| comic_cover              | `comic_cache_clear_chapter`          | pending_ui_hidden |
-| comic_cover              | `comic_cache_clear`                  | pending_ui_hidden |
-| comic_cover              | `comic_cache_size`                   | pending_ui_hidden |
-| comic_cover              | `cover_resolve_cache`                | pending_ui_hidden |
-| comic_cover              | `cover_cache_size`                   | pending_ui_hidden |
-| comic_cover              | `cover_cache_clear`                  | pending_ui_hidden |
-| repository/source_update | `booksource_check_update`            | pending_ui_hidden |
-| repository/source_update | `booksource_apply_update`            | pending_ui_hidden |
-| repository/source_update | `repository_fetch`                   | pending_ui_hidden |
-| repository/source_update | `repository_install`                 | pending_ui_hidden |
-| repository/source_update | `repository_preview_source`          | pending_ui_hidden |
-| repository/source_update | `repository_check_source_sync`       | pending_ui_hidden |
-| update/unlock/misc       | `ai_http_proxy_url`                  | pending_ui_hidden |
-| update/unlock/misc       | `app_update_download`                | pending_ui_hidden |
-| update/unlock/misc       | `app_update_install_downloaded_file` | pending_ui_hidden |
-| update/unlock/misc       | `frontend_plugin_http_request`       | pending_ui_hidden |
-| update/unlock/misc       | `explore_clear_cache`                | pending_ui_hidden |
-| update/unlock/misc       | `issue_full_mode_challenge`          | pending_ui_hidden |
-| update/unlock/misc       | `verify_full_mode_challenge`         | pending_ui_hidden |
-| update/unlock/misc       | `issue_scoped_unlock_challenge`      | pending_ui_hidden |
-| update/unlock/misc       | `verify_scoped_unlock_challenge`     | pending_ui_hidden |
+| 模块                     | Command                              | 当前处置            |
+| ------------------------ | ------------------------------------ | ------------------- |
+| sync                     | `sync_baidu_poll_token`              | unsupported_hidden  |
+| sync                     | `sync_baidu_revoke_auth`             | unsupported_hidden  |
+| sync                     | `sync_client_state_set`              | unsupported_hidden  |
+| sync                     | `sync_get_status`                    | unsupported_hidden  |
+| sync                     | `sync_set_credentials`               | unsupported_hidden  |
+| sync                     | `sync_clear_credentials`             | unsupported_hidden  |
+| sync                     | `sync_get_credentials`               | unsupported_hidden  |
+| sync                     | `sync_test_connection`               | unsupported_hidden  |
+| sync                     | `sync_now`                           | unsupported_hidden  |
+| sync                     | `sync_list_conflicts`                | unsupported_hidden  |
+| sync                     | `sync_resolve_conflict`              | unsupported_hidden  |
+| sync                     | `sync_report_reader_session`         | unsupported_hidden  |
+| sync                     | `sync_v2_sync_reading_progress`      | unsupported_hidden  |
+| sync                     | `sync_notify_lifecycle`              | unsupported_hidden  |
+| tts                      | `tts_stop`                           | blocked_by_platform |
+| tts                      | `tts_is_initialized`                 | blocked_by_platform |
+| tts                      | `tts_is_speaking`                    | blocked_by_platform |
+| tts                      | `tts_speak`                          | blocked_by_platform |
+| tts                      | `tts_get_voices`                     | blocked_by_platform |
+| tts                      | `tts_preview_voice`                  | blocked_by_platform |
+| video                    | `start_video_proxy`                  | blocked_by_platform |
+| video                    | `stop_video_proxy`                   | blocked_by_platform |
+| browser_probe            | `browser_probe_create`               | pending_ui_hidden   |
+| browser_probe            | `browser_probe_navigate`             | pending_ui_hidden   |
+| browser_probe            | `browser_probe_eval`                 | pending_ui_hidden   |
+| browser_probe            | `browser_probe_run`                  | pending_ui_hidden   |
+| browser_probe            | `browser_probe_get_cookies`          | pending_ui_hidden   |
+| browser_probe            | `browser_probe_set_cookie`           | pending_ui_hidden   |
+| browser_probe            | `browser_probe_set_user_agent`       | pending_ui_hidden   |
+| browser_probe            | `browser_probe_clear_data`           | pending_ui_hidden   |
+| browser_probe            | `browser_probe_show`                 | pending_ui_hidden   |
+| browser_probe            | `browser_probe_hide`                 | pending_ui_hidden   |
+| browser_probe            | `browser_probe_close`                | pending_ui_hidden   |
+| browser_probe            | `browser_probe_close_all`            | pending_ui_hidden   |
+| comic_cover              | `comic_download_images`              | pending_ui_hidden   |
+| comic_cover              | `comic_get_page_sizes`               | pending_ui_hidden   |
+| comic_cover              | `comic_get_cached_page`              | pending_ui_hidden   |
+| comic_cover              | `comic_cache_clear_chapter`          | pending_ui_hidden   |
+| comic_cover              | `comic_cache_clear`                  | pending_ui_hidden   |
+| comic_cover              | `comic_cache_size`                   | pending_ui_hidden   |
+| comic_cover              | `cover_resolve_cache`                | pending_ui_hidden   |
+| comic_cover              | `cover_cache_size`                   | pending_ui_hidden   |
+| comic_cover              | `cover_cache_clear`                  | pending_ui_hidden   |
+| repository/source_update | `booksource_check_update`            | pending_ui_hidden   |
+| repository/source_update | `booksource_apply_update`            | pending_ui_hidden   |
+| repository/source_update | `repository_fetch`                   | pending_ui_hidden   |
+| repository/source_update | `repository_install`                 | pending_ui_hidden   |
+| repository/source_update | `repository_preview_source`          | pending_ui_hidden   |
+| repository/source_update | `repository_check_source_sync`       | pending_ui_hidden   |
+| update/unlock/misc       | `ai_http_proxy_url`                  | pending_ui_hidden   |
+| update/unlock/misc       | `app_update_download`                | pending_ui_hidden   |
+| update/unlock/misc       | `app_update_install_downloaded_file` | pending_ui_hidden   |
+| update/unlock/misc       | `frontend_plugin_http_request`       | pending_ui_hidden   |
+| update/unlock/misc       | `explore_clear_cache`                | pending_ui_hidden   |
+| update/unlock/misc       | `issue_full_mode_challenge`          | pending_ui_hidden   |
+| update/unlock/misc       | `verify_full_mode_challenge`         | pending_ui_hidden   |
+| update/unlock/misc       | `issue_scoped_unlock_challenge`      | pending_ui_hidden   |
+| update/unlock/misc       | `verify_scoped_unlock_challenge`     | pending_ui_hidden   |
 
 ## Implemented Frontend-Facing Commands
 
@@ -183,6 +183,7 @@ booksource_save
 booksource_save_draft
 booksource_search
 booksource_toggle
+capabilities_get
 config_clear
 config_delete_key
 config_dump_scope

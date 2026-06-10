@@ -1,6 +1,7 @@
 import { BrowserQRCodeReader } from "@zxing/browser";
 import QRCode from "qrcode";
 import { useAppConfig, type AppConfig } from "./useAppConfig";
+import { useCapabilities } from "./useCapabilities";
 import { eventListen, eventListenSync } from "./useEventBus";
 import {
   ensureFrontendNamespaceLoaded,
@@ -198,24 +199,62 @@ export function installSyncClientStateListener() {
 
 export function useSync() {
   const { config, setConfig, loadConfig } = useAppConfig();
+  const capabilities = useCapabilities();
+  const syncCapability = capabilities.getCapability("sync");
+  void capabilities.loadCapabilities();
 
-  function getStatus(): Promise<SyncStatus> {
+  function unsupportedReason(): string {
+    return syncCapability.value.reason || "Sync backend is not implemented in this build.";
+  }
+
+  function disabledStatus(): SyncStatus {
+    return {
+      enabled: false,
+      running: false,
+      lastSuccessAt: 0,
+      lastFailedAt: 0,
+      lastError: unsupportedReason(),
+      dirtyDomains: [],
+      conflictCount: 0,
+      lastRunSummary: "disabled",
+    };
+  }
+
+  async function isSyncSupported(): Promise<boolean> {
+    await capabilities.loadCapabilities();
+    return syncCapability.value.supported;
+  }
+
+  async function ensureSyncSupported(): Promise<void> {
+    if (!(await isSyncSupported())) {
+      throw new Error(unsupportedReason());
+    }
+  }
+
+  async function getStatus(): Promise<SyncStatus> {
+    if (!(await isSyncSupported())) {
+      return disabledStatus();
+    }
     return invokeWithTimeout<SyncStatus>("sync_get_status", undefined, 10000);
   }
 
   async function setCredentials(password: string): Promise<void> {
+    await ensureSyncSupported();
     await invokeWithTimeout<void>("sync_set_credentials", { password }, 10000);
   }
 
   async function clearCredentials(): Promise<void> {
+    await ensureSyncSupported();
     await invokeWithTimeout<void>("sync_clear_credentials", undefined, 10000);
   }
 
   async function getCredentials(): Promise<SyncCredentials> {
+    await ensureSyncSupported();
     return invokeWithTimeout<SyncCredentials>("sync_get_credentials", undefined, 10000);
   }
 
   async function testConnection(password?: string) {
+    await ensureSyncSupported();
     return invokeWithTimeout<{ ok: boolean; message: string }>(
       "sync_test_connection",
       { password: password ?? null },
@@ -227,6 +266,7 @@ export function useSync() {
     mode: "sync" | "pull" | "push" = "sync",
     conflictStrategy?: "local" | "remote",
   ): Promise<SyncRunSummary> {
+    await ensureSyncSupported();
     await pushClientState();
     return invokeWithTimeout<SyncRunSummary>(
       "sync_now",
@@ -235,15 +275,20 @@ export function useSync() {
     );
   }
 
-  function listConflicts(): Promise<SyncConflict[]> {
+  async function listConflicts(): Promise<SyncConflict[]> {
+    if (!(await isSyncSupported())) {
+      return [];
+    }
     return invokeWithTimeout<SyncConflict[]>("sync_list_conflicts", undefined, 10000);
   }
 
-  function resolveConflict(conflictId: string, action: string): Promise<void> {
+  async function resolveConflict(conflictId: string, action: string): Promise<void> {
+    await ensureSyncSupported();
     return invokeWithTimeout<void>("sync_resolve_conflict", { conflictId, action }, 10000);
   }
 
   async function generateQrPayload(): Promise<SyncQrPayload> {
+    await ensureSyncSupported();
     const credentials = await getCredentials();
     return {
       type: "legado-sync-config",
@@ -287,6 +332,7 @@ export function useSync() {
   }
 
   async function importQrPayload(payload: SyncQrPayload): Promise<void> {
+    await ensureSyncSupported();
     if (payload.type !== "legado-sync-config" || payload.version !== 1) {
       throw new Error("不是有效的 Legado 同步配置二维码");
     }
@@ -321,11 +367,20 @@ export function useSync() {
     return JSON.parse(result.getText()) as SyncQrPayload;
   }
 
-  function reportReaderSession(session: ReaderSessionPayload): Promise<void> {
+  async function reportReaderSession(session: ReaderSessionPayload): Promise<void> {
+    if (!(await isSyncSupported())) {
+      return;
+    }
     return invokeWithTimeout<void>("sync_report_reader_session", { session }, 5000);
   }
 
-  function syncCurrentReadingProgress(bookId: string): Promise<SyncV2ProgressResult> {
+  async function syncCurrentReadingProgress(bookId: string): Promise<SyncV2ProgressResult> {
+    if (!(await isSyncSupported())) {
+      return {
+        status: "disabled",
+        message: unsupportedReason(),
+      };
+    }
     return invokeWithTimeout<SyncV2ProgressResult>(
       "sync_v2_sync_reading_progress",
       { bookId },
@@ -333,7 +388,10 @@ export function useSync() {
     );
   }
 
-  function notifyLifecycle(event: "startup" | "resume" | "background"): Promise<void> {
+  async function notifyLifecycle(event: "startup" | "resume" | "background"): Promise<void> {
+    if (!(await isSyncSupported())) {
+      return;
+    }
     return invokeWithTimeout<void>("sync_notify_lifecycle", { event }, 10000).catch(() => {});
   }
 
@@ -342,6 +400,7 @@ export function useSync() {
   }
 
   return {
+    syncCapability,
     getStatus,
     setCredentials,
     clearCredentials,
