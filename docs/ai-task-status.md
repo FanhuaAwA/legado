@@ -31,7 +31,7 @@ command_contract = 160 frontend, 162 registered, 159 matched, 1 onlyFrontend(js_
 - **R-P1-002**：`web_server_stop` 端口/线程泄漏修复（关闭标志 + 非阻塞轮询），含回归测试。
 - **R-P1-003**：`SectionBackup.vue` 文件选择器 zip→json。
 
-新登记：R-P2-007（规则引擎 content/toc JS 未绑定 `book` 对象，七猫已书源侧规避）。
+新登记：R-P2-007（规则引擎 content/toc JS 未绑定 `book` 对象，七猫已书源侧临时规避：bid/cid 从 `chapterId` 派生，段评失败不阻断正文；后续绑定 `book.bookUrl` 后需优先改回从 `book.bookUrl` 取 bid，仅保留 `chapterId` 回退，并重跑七猫全链路）。
 
 待办（下一轮）：R-P0-002（重写本文件下方 STUB/审计表的自相矛盾、5 个争议命令逐个实测定真伪）、R-P0-001（58 个 stub 集中式能力声明与 UI 隐藏，最大缺口）、R-P2-003/004（番茄/番茄短剧）。
 

@@ -42,7 +42,7 @@
 | search | live_network_pass | 搜索"凡人"返回书籍列表 |
 | bookInfo | live_network_pass | ruleBookInfo={}，HTTP 成功 |
 | toc | live_network_pass | **此前 BLOCKED → 已解除**。2551 章；根因是 `let device... chapters=...` 在 strict-mode 下 redeclaration 失败，已修 `eval_script` |
-| content | live_network_pass | **此前 BLOCKED → 已解除**。14648 字符；修了 reqwest blocking 在 tokio 上下文 panic + ruleContent 三格式兼容 + bid/cid 从 chapterId 派生（不依赖未绑定的 `book.bookUrl`） |
+| content | live_network_pass | **此前 BLOCKED → 已解除**。14648 字符；修了 reqwest blocking 在 tokio 上下文 panic + ruleContent 三格式兼容 + bid/cid 从 chapterId 派生（临时规避未绑定的 `book.bookUrl`） |
 
 ### 番茄小说
 
@@ -78,7 +78,8 @@
 
 ## 已知项目能力缺口（区别于书源规则过期）
 
-- 规则引擎（Legado JSON 源）的 content/toc JS 执行未绑定 `book` 对象（`book.bookUrl` 等为 undefined）。本轮七猫通过「从 chapterId 派生 bid/cid」在书源侧规避；通用修复需在 rule_engine content 路径绑定当前 book 上下文。JS 源运行时（非 Legado 规则）路径不受影响。
+- 规则引擎（Legado JSON 源）的 content/toc JS 执行未绑定 `book` 对象（`book.bookUrl` 等为 undefined）。本轮七猫通过「从 chapterId 派生 bid/cid」在书源侧临时规避，并让段评增强失败时不阻断正文；通用修复需在 rule_engine content 路径绑定当前 book 上下文。JS 源运行时（非 Legado 规则）路径不受影响。
+- TODO：完成 R-P2-007 后，复查七猫 `ruleContent`，优先改回从 `book.bookUrl` 获取 `bid`，仅保留 `chapterId` 派生作为兼容回退；回切后必须重跑 `qimao_source_full_chain`。
 
 ## 验证命令
 
