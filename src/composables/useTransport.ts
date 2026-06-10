@@ -57,6 +57,26 @@ function writeCustomWsUrlToLocation(url: string | null): void {
   window.history.replaceState({}, "", nextUrl.toString());
 }
 
+function formatTransportError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  if (typeof error === "number" || typeof error === "boolean" || typeof error === "bigint") {
+    return error.toString();
+  }
+  if (error === null || error === undefined) {
+    return "未知错误";
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return Object.prototype.toString.call(error);
+  }
+}
+
 /** 获取用户配置的自定义 WS 后端地址（空字符串表示未配置） */
 export function getCustomWsUrl(): string {
   return readCustomWsUrlFromLocation();
@@ -289,7 +309,7 @@ class WsTransport {
       } catch (e) {
         clearTimeout(timer);
         this.pending.delete(id);
-        reject(new Error(`发送命令失败: ${e}`));
+        reject(new Error(`发送命令失败: ${formatTransportError(e)}`));
       }
     });
   }
@@ -466,8 +486,10 @@ function ensureHarmonyBridgeRuntime(): HarmonyUiBridgeRuntime {
   } satisfies HarmonyUiBridgeRuntime;
 
   const globalBridge = {
-    invoke: bridgeObj.invoke,
-    listen: bridgeObj.listen,
+    invoke: <T>(cmd: string, args?: Record<string, unknown>, timeoutMs?: number) =>
+      bridgeObj.invoke<T>(cmd, args, timeoutMs),
+    listen: <T = unknown>(event: string, handler: HarmonyEventHandler<T>) =>
+      bridgeObj.listen<T>(event, handler),
     resolve(reqId: string, ok: boolean, data: unknown) {
       const pendingReq = pending.get(reqId);
       if (!pendingReq) {

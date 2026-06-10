@@ -203,6 +203,7 @@ function findBookSourceEntryFunctions(content: string): string[] {
 function validateJavaScriptSyntax(content: string): string | null {
   try {
     const source = content.replace(/^\uFEFF/, "").replace(/^#!.*(?:\r?\n|$)/, "");
+    // oxlint-disable-next-line no-implied-eval -- book-source scripts are user-authored code; this only compiles them for syntax validation.
     const syntaxCheck = new Function(source);
     void syntaxCheck;
     return null;

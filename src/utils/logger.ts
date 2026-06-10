@@ -41,24 +41,24 @@ export const log = {
     const msg = messageOrError instanceof Error ? messageOrError.message : messageOrError;
     const extra =
       messageOrError instanceof Error
-        ? { stack: messageOrError.stack, ...((data as object) ?? {}) }
+        ? { stack: messageOrError.stack, ...(data as object | undefined) }
         : data;
-    sendToRust("error", zone, msg, extra);
+    void sendToRust("error", zone, msg, extra);
   },
 
   warn(zone: string, message: string, data?: unknown) {
-    sendToRust("warn", zone, message, data);
+    void sendToRust("warn", zone, message, data);
   },
 
   info(zone: string, message: string, data?: unknown) {
-    sendToRust("info", zone, message, data);
+    void sendToRust("info", zone, message, data);
   },
 
   success(zone: string, message: string, data?: unknown) {
-    sendToRust("success", zone, message, data);
+    void sendToRust("success", zone, message, data);
   },
 
   debug(zone: string, message: string, data?: unknown) {
-    sendToRust("debug", zone, message, data);
+    void sendToRust("debug", zone, message, data);
   },
 };

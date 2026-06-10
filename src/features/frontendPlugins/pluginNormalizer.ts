@@ -140,7 +140,7 @@ export interface RuntimeTtsEngineDefinition {
   description: string;
   category: string;
   getVoices?: (api: FrontendPluginApi) => TtsVoiceDefinition[] | Promise<TtsVoiceDefinition[]>;
-  preload?: (context: TtsSpeakContext, api: FrontendPluginApi) => unknown | Promise<unknown>;
+  preload?: (context: TtsSpeakContext, api: FrontendPluginApi) => unknown;
   speak: (context: TtsSpeakContext, api: FrontendPluginApi) => void | Promise<void>;
   stop?: (api: FrontendPluginApi) => void | Promise<void>;
   pause?: (api: FrontendPluginApi) => void | Promise<void>;
@@ -370,6 +370,7 @@ export function extractLegacyExports(
   source: string,
   legado: Record<string, unknown>,
 ): LegacyPluginExports {
+  // oxlint-disable-next-line no-implied-eval -- legacy plugin files expose globals that must run in the plugin compatibility wrapper.
   const runner = new Function(
     "legado",
     `${source}

@@ -46,7 +46,7 @@ export function useBookshelfReaderLauncher(message: MessageApi) {
       readerStore.setChapters([]);
     }
     // 异步加载集数播放进度（不阻塞打开）
-    readerStore.loadEpisodeProgress(book.id).catch(() => {});
+    void readerStore.loadEpisodeProgress(book.id).catch(() => {});
 
     if (!readerStore.readerChapters.length) {
       // 本地 TXT 书籍没有书源，章节列表丢失时直接提示重新导入
@@ -138,16 +138,22 @@ export function useBookshelfReaderLauncher(message: MessageApi) {
     readerStore.openAt(index);
 
     // 后台静默检测目录更新（不阻塞打开，不弹任何消息）
-    tocAutoUpdate.refreshOnBookOpen(book).then((newCount) => {
-      if (newCount > 0) {
-        // 更新阅读器中的章节列表
-        bookshelfStore.getChapters(book.id).then((cached) => {
-          if (readerStore.readerShelfId === book.id) {
-            readerStore.setCachedChapters(cached);
-          }
-        });
-      }
-    });
+    void tocAutoUpdate
+      .refreshOnBookOpen(book)
+      .then((newCount) => {
+        if (newCount > 0) {
+          // 更新阅读器中的章节列表
+          void bookshelfStore
+            .getChapters(book.id)
+            .then((cached) => {
+              if (readerStore.readerShelfId === book.id) {
+                readerStore.setCachedChapters(cached);
+              }
+            })
+            .catch(() => {});
+        }
+      })
+      .catch(() => {});
   }
 
   async function refreshToc() {

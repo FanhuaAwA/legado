@@ -17,6 +17,26 @@ async function comicCacheAvailable(): Promise<boolean> {
   return state.comicCache.supported;
 }
 
+function formatCacheError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  if (typeof error === "number" || typeof error === "boolean" || typeof error === "bigint") {
+    return error.toString();
+  }
+  if (error === null || error === undefined) {
+    return "未知错误";
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return Object.prototype.toString.call(error);
+  }
+}
+
 export interface ReaderPrefetchControllerOptions {
   currentShelfId: ComputedRef<string | undefined>;
   getFileName: () => string;
@@ -90,7 +110,7 @@ export function createReaderPrefetchController(options: ReaderPrefetchController
         options.markCached,
       );
     } catch (error) {
-      options.message.error(`启动缓存失败: ${error}`);
+      options.message.error(`启动缓存失败: ${formatCacheError(error)}`);
     }
   }
 
@@ -202,7 +222,7 @@ export function createReaderCacheController(options: ReaderCacheControllerOption
           index,
         );
       } catch (cause) {
-        options.message.error(`清理漫画缓存失败: ${cause}`);
+        options.message.error(`清理漫画缓存失败: ${formatCacheError(cause)}`);
         return;
       }
     }
@@ -227,7 +247,7 @@ export function createReaderCacheController(options: ReaderCacheControllerOption
       try {
         await comicCacheClear(options.getFileName());
       } catch (cause) {
-        options.message.error(`清理漫画缓存失败: ${cause}`);
+        options.message.error(`清理漫画缓存失败: ${formatCacheError(cause)}`);
         return;
       }
     }

@@ -191,7 +191,7 @@ function extractPrefixText(prefixHtml: string): string {
  * 仅用于 Pretext 引擎路径。
  */
 function protectStickyPunct(text: string): string {
-  return text.replace(/(…{2,}|—{2,})/g, (match) => [...match].join("\u2060"));
+  return text.replace(/(…{2,}|—{2,})/g, (match) => Array.from(match).join("\u2060"));
 }
 
 function wrapRawPageHtml(contentHtml: string): string {

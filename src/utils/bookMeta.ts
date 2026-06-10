@@ -1,6 +1,34 @@
 import type { BookDetail, ChapterItem } from "@/stores";
 import type { CoverImageInput } from "@/utils/coverImage";
 
+function stringifySourceValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return value.toString();
+  }
+  if (typeof value === "symbol") {
+    return value.description ? `Symbol(${value.description})` : "Symbol()";
+  }
+  if (typeof value === "function") {
+    return value.name ? `[Function: ${value.name}]` : "[Function]";
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? "" : value.toISOString();
+  }
+  try {
+    const json = JSON.stringify(value);
+    return typeof json === "string" ? json : "";
+  } catch {
+    return Object.prototype.toString.call(value);
+  }
+}
+
+function previewSourceValue(value: unknown): string {
+  return stringifySourceValue(value) || Object.prototype.toString.call(value);
+}
+
 export interface BookMetaLike {
   kind?: string;
   lastChapter?: string;
@@ -37,7 +65,7 @@ function coerceString(
     actual: typeof value,
     rawValue: value,
   });
-  return String(value);
+  return stringifySourceValue(value);
 }
 
 /** 将 unknown 强制转换为 number，并在类型不符时记录警告 */
@@ -91,7 +119,7 @@ export function sanitizeBookDetail(
       actual: typeof r.name,
       rawValue: r.name,
     });
-    name = String(r.name).trim() || "[书名解析失败]";
+    name = stringifySourceValue(r.name).trim() || "[书名解析失败]";
   } else {
     throw new Error(`bookInfo 缺少必需字段 name [${sourceFile}]: 书籍 URL=${fallbackUrl}`);
   }
@@ -149,7 +177,7 @@ export function sanitizeBookDetail(
       fieldErrors
         .map(
           (e) =>
-            `${e.field}(期望 ${e.expected}, 实际 ${e.actual}=${String(e.rawValue).slice(0, 80)})`,
+            `${e.field}(期望 ${e.expected}, 实际 ${e.actual}=${previewSourceValue(e.rawValue).slice(0, 80)})`,
         )
         .join("; "),
     );
@@ -190,7 +218,7 @@ export function sanitizeChapterList(
     if (typeof r.url === "string" && r.url) {
       url = r.url;
     } else if (r.url !== null && r.url !== undefined) {
-      const coerced = String(r.url).trim();
+      const coerced = stringifySourceValue(r.url).trim();
       if (!coerced) {
         warnings.push(`第 ${i + 1} 条 url 为空（原始类型 ${typeof r.url}），已跳过`);
         skipped++;
@@ -212,20 +240,20 @@ export function sanitizeChapterList(
       warnings.push(
         `第 ${i + 1} 条 name 类型异常（期望 string, 实际 ${typeof r.name}），已强制转换`,
       );
-      name = String(r.name);
+      name = stringifySourceValue(r.name);
     } else {
       name = `第 ${i + 1} 章`;
     }
 
     const ch: ChapterItem = { name, url };
     if (r.group !== null && r.group !== undefined) {
-      ch.group = typeof r.group === "string" ? r.group : String(r.group);
+      ch.group = typeof r.group === "string" ? r.group : stringifySourceValue(r.group);
     }
     if (r.vip !== undefined) ch.vip = Boolean(r.vip);
     if (r.isVip !== undefined) ch.isVip = Boolean(r.isVip);
     if (r.price !== undefined) ch.price = r.price;
     if (r.currency !== null && r.currency !== undefined) {
-      ch.currency = typeof r.currency === "string" ? r.currency : String(r.currency);
+      ch.currency = typeof r.currency === "string" ? r.currency : stringifySourceValue(r.currency);
     }
 
     data.push(ch);

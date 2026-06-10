@@ -209,46 +209,46 @@ export const usePreferencesStore = defineStore("preferences", () => {
   // ── 目录自动更新 Actions ──────────────────────────────────────────────
 
   function patchTocAutoUpdate(patch: Partial<TocAutoUpdatePreferences>) {
-    tocAutoUpdateConfig.replace({ ...tocAutoUpdateConfig.state, ...patch });
+    void tocAutoUpdateConfig.replace({ ...tocAutoUpdateConfig.state, ...patch });
   }
 
   // ── 阅读器偏好 Actions ────────────────────────────────────────────────
 
   async function patchReader(patch: Partial<ReaderPreferences>) {
-    readerConfig.replace({ ...readerConfig.state, ...patch });
+    await readerConfig.replace({ ...readerConfig.state, ...patch });
   }
 
-  async function resetReader() {
+  function resetReader() {
     readerConfig.reset();
   }
 
   // ── 视图密度 Actions ──────────────────────────────────────────────────
 
   function setViewDensity(view: keyof ViewDensityPreferences, mode: ViewDensityMode) {
-    densityConfig.replace({ ...densityConfig.state, [view]: mode });
+    void densityConfig.replace({ ...densityConfig.state, [view]: mode });
   }
 
   // ── 搜索偏好 Actions ──────────────────────────────────────────────────
 
   function setLastSearchSource(fileName: string | null) {
-    searchConfig.replace({
+    void searchConfig.replace({
       ...searchConfig.state,
       lastSourceFileName: fileName,
     });
   }
 
   function patchSearch(patch: Partial<SearchPreferences>) {
-    searchConfig.replace({ ...searchConfig.state, ...patch });
+    void searchConfig.replace({ ...searchConfig.state, ...patch });
   }
 
   // ── 开发者工具 Actions ──────────────────────────────────────────────
 
   function patchDevTools(patch: Partial<DevToolsPreferences>) {
-    devToolsConfig.replace({ ...devToolsConfig.state, ...patch });
+    void devToolsConfig.replace({ ...devToolsConfig.state, ...patch });
   }
 
   function patchAppUpdate(patch: Partial<AppUpdatePreferences>) {
-    appUpdateConfig.replace({ ...appUpdateConfig.state, ...patch });
+    void appUpdateConfig.replace({ ...appUpdateConfig.state, ...patch });
   }
 
   // ── ready 状态（等待所有后端存储加载完成） ────────────────────────────

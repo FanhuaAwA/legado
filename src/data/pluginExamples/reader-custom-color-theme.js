@@ -25,7 +25,7 @@ legado.registerPlugin({
           textStrokeWidth: 0,
           textStrokeColor: "#000000",
         },
-        schema: function (context) {
+        schema: function (_context) {
           return [
             { type: "text", key: "themeName", label: "主题名" },
             { type: "color", key: "backgroundColor", label: "背景色" },

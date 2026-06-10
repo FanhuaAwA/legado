@@ -516,7 +516,7 @@ async function emitLifecycle(hookName: ReaderLifecycleHook): Promise<void> {
 async function teardownRuntimePlugins(records: RuntimePluginRecord[]): Promise<void> {
   for (const record of records) {
     await slotManager.cleanupMountedSlots(record);
-    for (const cleanup of [...record.cleanupTasks]) {
+    for (const cleanup of Array.from(record.cleanupTasks)) {
       try {
         await cleanup();
       } catch {

@@ -198,7 +198,7 @@ legado.registerPlugin({
       var data;
       try {
         data = JSON.parse(body);
-      } catch (error) {
+      } catch {
         throw new Error("MiMo TTS 返回内容不是有效 JSON");
       }
 
@@ -248,7 +248,7 @@ legado.registerPlugin({
           if (errorBody && errorBody.error && errorBody.error.message) {
             message += ": " + errorBody.error.message;
           }
-        } catch (error) {
+        } catch {
           if (response.body) {
             message += ": " + response.body.slice(0, 200);
           }

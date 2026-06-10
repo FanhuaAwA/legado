@@ -52,13 +52,15 @@ export function eventListenSync<T = unknown>(event: string, handler: EventHandle
   let unlisten: UnlistenFn | null = null;
   let cancelled = false;
 
-  transportListen<T>(event, handler).then((fn) => {
-    if (cancelled) {
-      fn(); // 已取消，立即解除
-    } else {
-      unlisten = fn;
-    }
-  });
+  void transportListen<T>(event, handler)
+    .then((fn) => {
+      if (cancelled) {
+        fn(); // 已取消，立即解除
+      } else {
+        unlisten = fn;
+      }
+    })
+    .catch(() => {});
 
   return () => {
     cancelled = true;

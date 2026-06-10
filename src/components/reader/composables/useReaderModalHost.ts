@@ -870,7 +870,7 @@ export function useReaderModalHost(options: UseReaderModalHostOptions) {
         options.readerViewStore.bind(viewStoreBindings);
         options.readerActionsStore.bind(actionStoreBindings);
       }
-      readerLifecycle.handleVisibilityChange(visible);
+      void readerLifecycle.handleVisibilityChange(visible).catch(() => {});
     },
   );
 

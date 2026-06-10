@@ -64,7 +64,7 @@ interface TtsPreloadEntry {
   globalIdx: number;
   key: string;
   controller: AbortController;
-  promise: Promise<unknown | undefined>;
+  promise: Promise<unknown>;
   loaded: boolean;
   value?: unknown;
 }

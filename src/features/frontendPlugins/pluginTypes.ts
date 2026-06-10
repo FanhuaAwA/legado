@@ -373,10 +373,7 @@ type TtsEngineVoiceResolver = (
   api: FrontendPluginApi,
 ) => TtsVoiceDefinition[] | Promise<TtsVoiceDefinition[]>;
 type TtsEngineSpeaker = (context: TtsSpeakContext, api: FrontendPluginApi) => void | Promise<void>;
-type TtsEnginePreloader = (
-  context: TtsSpeakContext,
-  api: FrontendPluginApi,
-) => unknown | Promise<unknown>;
+type TtsEnginePreloader = (context: TtsSpeakContext, api: FrontendPluginApi) => unknown;
 type TtsEngineController = (api: FrontendPluginApi) => void | Promise<void>;
 type TtsEnginePreviewer = (voiceId: string, api: FrontendPluginApi) => void | Promise<void>;
 
@@ -442,10 +439,7 @@ export interface FrontendReaderContextActionRecord {
 
 export type CleanupFn = () => void | Promise<void>;
 export type ReaderSessionListener = (session: ReaderSessionSnapshot | null) => void;
-export type PluginHookHandler<T = unknown> = (
-  payload: T,
-  api: FrontendPluginApi,
-) => unknown | Promise<unknown>;
+export type PluginHookHandler<T = unknown> = (payload: T, api: FrontendPluginApi) => unknown;
 export type ReaderSlotMount = (
   container: HTMLElement,
   api: FrontendPluginApi,

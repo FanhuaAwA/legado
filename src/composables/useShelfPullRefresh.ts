@@ -128,9 +128,11 @@ export function useShelfPullRefresh(options: UseShelfPullRefreshOptions) {
 
     if (shouldRefresh) {
       isRefreshing.value = true;
-      onRefresh().finally(() => {
-        isRefreshing.value = false;
-      });
+      void onRefresh()
+        .finally(() => {
+          isRefreshing.value = false;
+        })
+        .catch(() => {});
     }
   }
 
@@ -180,9 +182,11 @@ export function useShelfPullRefresh(options: UseShelfPullRefreshOptions) {
       pullDistance.value = 0;
       isReady.value = false;
       isRefreshing.value = true;
-      onRefresh().finally(() => {
-        isRefreshing.value = false;
-      });
+      void onRefresh()
+        .finally(() => {
+          isRefreshing.value = false;
+        })
+        .catch(() => {});
     } else {
       pullDistance.value = 0;
       isReady.value = false;

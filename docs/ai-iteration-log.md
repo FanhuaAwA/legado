@@ -1,5 +1,24 @@
 # AI Iteration Log
 
+## 记录标题：2026-06-10 R-P2-002 lint warnings 分类清零
+
+本轮目标：关闭 R-P2-002，按总纲第 56.10.6 节分类处理前端/脚本 lint warnings，不粗暴删除 `new Function`、书源脚本执行和插件执行能力。
+
+当前结论：R-P2-002 closed。`pnpm lint` 已从 71 warnings / 0 errors 收敛到 0 warnings / 0 errors；项目仍为 incomplete，下一项进入 R-P2-003（番茄书源 JS API 缺口）。
+
+修改文件：
+
+- `src/utils/bookMeta.ts`、`src/utils/chapter.ts`、`src/components/reader/composables/useReaderContentState.ts`、`src/composables/useAiAgent.ts`、`src/composables/useTransport.ts`、`src/features/reader/services/readerCache.ts`：把默认 `String(unknown)` / template object stringification 改为显式 primitive/object 格式化，避免 `[object Object]` 进入 UI 或诊断。
+- `src/features/bookshelf/services/bookshelfReaderLauncher.ts`、`src/composables/useShelfPullRefresh.ts`、`src/components/reader/composables/useReaderModalHost.ts`、`src/composables/useEventBus.ts`、`src/stores/preferences.ts` 等：明确非阻塞 Promise 的 `void`/`.catch` 语义，恢复同步 reset 调用。
+- `src/composables/useBookSource.ts`、`src/features/frontendPlugins/pluginNormalizer.ts`、`src/data/pluginExamples/reader-custom-inject.js`：保留书源/插件动态执行边界，并用局部 `oxlint-disable-next-line no-implied-eval` 写明原因。
+- `src/data/pluginExamples/tts-edge-read-aloud.js`：SSML XML 1.0 控制字符清洗保留，并用局部 `no-control-regex` 豁免说明原因。
+- `src/components/reader/composables/usePagination.ts`、`src/utils/bookSourceSwitch.ts`：字符串展开改为 `Array.from`。
+- `docs/ai-task-status.md`、`E:\Book\legado-tauri-mandatory-completion-audit.md`、`E:\Book\legado-tauri-ai-iteration-plan.md`、`reports/gates/2026-06-10-1910-R-P2-002-lint-warnings/summary.md`：同步状态、证据和下一轮任务。
+
+验证命令：`pnpm exec oxfmt .`、`pnpm exec oxfmt --check .`、`pnpm lint`（0 warnings / 0 errors）、`node scripts/ci/check-command-contract.mjs`、`node scripts/ci/check-command-contract.mjs --json`、`pnpm build`、`cargo check -p reader-core`、`cargo check -p legado-tauri`、`cargo test -p reader-core`（31 passed / 9 ignored）、`git diff --check`。
+
+下一轮第一件事：R-P2-003，番茄书源 JS API 缺口。先列出番茄链路具体缺失的 `java.*` / `source.*` / 设备注册运行时 API，再逐项决定实现或明确降级，禁止用空结果、固定成功或静默跳过冒充闭环。
+
 ## 记录标题：2026-06-10 R-P2-001 Android release 签名配置闭环
 
 本轮目标：关闭 R-P2-001，建立 Android release signing 的配置说明、Gradle 签名段和发布前检查；真实 keystore/密码不得入库。

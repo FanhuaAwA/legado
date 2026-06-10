@@ -2,6 +2,16 @@ import type { ChapterItem } from "@/stores";
 
 type ChapterVipLike = Pick<ChapterItem, "vip" | "isVip" | "price" | "currency">;
 
+function normalizePriceLabel(price: unknown): string {
+  if (typeof price === "string") {
+    return price.trim();
+  }
+  if (typeof price === "number" || typeof price === "boolean" || typeof price === "bigint") {
+    return price.toString().trim();
+  }
+  return "";
+}
+
 export function isVipChapter(chapter?: ChapterVipLike | null): boolean {
   return chapter?.vip === true || chapter?.isVip === true;
 }
@@ -10,7 +20,7 @@ export function getChapterPriceLabel(chapter?: ChapterVipLike | null): string {
   if (!chapter || chapter.price === undefined || chapter.price === null) {
     return "";
   }
-  const price = String(chapter.price).trim();
+  const price = normalizePriceLabel(chapter.price);
   if (!price) {
     return "";
   }

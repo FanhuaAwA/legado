@@ -96,7 +96,7 @@ export class VideojsAdapter implements IVideoPlayer {
   }
 
   play(): void {
-    this.player?.play();
+    void this.player?.play();
   }
   pause(): void {
     this.player?.pause();
@@ -124,10 +124,10 @@ export class VideojsAdapter implements IVideoPlayer {
   }
 
   enterFullscreen(): void {
-    this.player?.requestFullscreen();
+    void this.player?.requestFullscreen();
   }
   exitFullscreen(): void {
-    this.player?.exitFullscreen();
+    void this.player?.exitFullscreen();
   }
   isFullscreen(): boolean {
     return this.player?.isFullscreen() ?? false;

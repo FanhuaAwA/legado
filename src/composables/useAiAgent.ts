@@ -638,7 +638,7 @@ function requestUrl(input: Parameters<NativeFetch>[0]): string {
   if (typeof Request !== "undefined" && input instanceof Request) {
     return input.url;
   }
-  return String(input);
+  return Object.prototype.toString.call(input);
 }
 
 function requestMethod(
@@ -805,7 +805,7 @@ function createChatReasoningContentBridge(nativeFetch: NativeFetch) {
     if (pendingCaptures.size === 0) {
       return;
     }
-    await Promise.allSettled([...pendingCaptures]);
+    await Promise.allSettled(pendingCaptures);
   }
 
   function rememberCapture(capture: {
@@ -924,7 +924,7 @@ function createChatReasoningContentBridge(nativeFetch: NativeFetch) {
       .then(captureResponseText)
       .catch(() => {});
     pendingCaptures.add(capture);
-    capture.finally(() => pendingCaptures.delete(capture));
+    void capture.finally(() => pendingCaptures.delete(capture));
   }
 
   function findReasoningForOpenAIMessage(message: JsonRecord): string {
@@ -1127,7 +1127,7 @@ function formatError(err: unknown): string {
         const json = JSON.stringify(err, Object.getOwnPropertyNames(err), 2);
         parts.push(json.slice(0, 800));
       } catch {
-        parts.push(String(err));
+        parts.push(Object.prototype.toString.call(err));
       }
     }
   }

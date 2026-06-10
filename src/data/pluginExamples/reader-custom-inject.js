@@ -41,7 +41,7 @@ legado.registerPlugin({
         return;
       }
       try {
-        // eslint-disable-next-line no-new-func
+        // oxlint-disable-next-line no-implied-eval -- this opt-in plugin intentionally executes user-configured page script.
         new Function(String(js))();
       } catch (e) {
         api.log("[custom-inject] JS 执行错误", e);
@@ -95,7 +95,7 @@ legado.registerPlugin({
         },
       },
       slots: {
-        "overlay-top-left": function (container) {
+        "overlay-top-left": function (_container) {
           if (!api.settings.get("enabled", true)) {
             return;
           }

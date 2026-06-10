@@ -242,8 +242,8 @@ export function buildDiffPair(currentValue: string, candidateValue: string): Dif
     };
   }
 
-  const currentChars = [...currentValue];
-  const candidateChars = [...candidateValue];
+  const currentChars = Array.from(currentValue);
+  const candidateChars = Array.from(candidateValue);
   let prefix = 0;
   while (
     prefix < currentChars.length &&

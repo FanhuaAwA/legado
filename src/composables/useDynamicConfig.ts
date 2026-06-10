@@ -16,7 +16,7 @@ type DynamicConfigEnvelope<T> = {
 
 type DynamicConfigMigrationContext = {
   storedVersion: number | null;
-  storedData: unknown | null;
+  storedData: unknown;
   readLegacy: (key: string) => string | null;
 };
 

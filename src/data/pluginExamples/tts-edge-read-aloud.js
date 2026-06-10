@@ -78,10 +78,6 @@ legado.registerPlugin({
         .join("");
     }
 
-    function newMuid() {
-      return uuidSimple().toUpperCase();
-    }
-
     async function sha256Upper(text) {
       if (!crypto.subtle) {
         throw new Error("当前环境不支持 crypto.subtle，无法生成 Edge TTS 鉴权参数");
@@ -143,13 +139,16 @@ legado.registerPlugin({
     }
 
     function xmlEscape(text) {
-      return String(text)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&apos;")
-        .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, " ");
+      return (
+        String(text)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&apos;")
+          // oxlint-disable-next-line no-control-regex -- XML 1.0 forbids C0 control chars in SSML.
+          .replace(new RegExp("[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f]", "g"), " ")
+      );
     }
 
     function normalizeVoice(voice) {

@@ -86,6 +86,16 @@ function readSource<T>(source: ValueSource<T>): T {
   return source.value;
 }
 
+function normalizeChapterText(raw: unknown): string {
+  if (typeof raw === "string") {
+    return raw;
+  }
+  if (typeof raw === "number" || typeof raw === "boolean" || typeof raw === "bigint") {
+    return raw.toString();
+  }
+  return "";
+}
+
 const PAGED_END_SCREEN =
   '<div class="paged-mode-end-screen"><div class="paged-mode-end-screen__icon">📖</div><p class="paged-mode-end-screen__title">已读完最后一章</p><p class="paged-mode-end-screen__sub">全书完，感谢阅读</p></div>';
 
@@ -157,7 +167,7 @@ export function useReaderContentState(options: UseReaderContentStateOptions) {
           chapterOverride.chapterUrl,
           chapterOverride.sourceDir,
         );
-        text = typeof raw === "string" ? raw : String(raw ?? "");
+        text = normalizeChapterText(raw);
       }
 
       // 视频类型跳过磁盘缓存读取：m3u8 URL 有时效性，不能复用
@@ -183,7 +193,7 @@ export function useReaderContentState(options: UseReaderContentStateOptions) {
           chapter.url,
           options.sourceDir ? readSource(options.sourceDir) : undefined,
         );
-        text = typeof raw === "string" ? raw : String(raw ?? "");
+        text = normalizeChapterText(raw);
         // 视频类型不写入磁盘缓存：m3u8 URL 有时效性
         if (!isVideo && options.currentShelfId.value && text) {
           void options.saveContent(options.currentShelfId.value, index, text).catch(() => {});

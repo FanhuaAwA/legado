@@ -40,7 +40,7 @@ function getLastCheckTime(bookId: string): number {
 }
 
 function setLastCheckTime(bookId: string, time: number) {
-  lastCheckConfig.replace({ ...lastCheckConfig.state, [bookId]: time });
+  void lastCheckConfig.replace({ ...lastCheckConfig.state, [bookId]: time });
 }
 
 // ── 核心刷新逻辑 ─────────────────────────────────────────────────────────
@@ -143,7 +143,7 @@ export function useTocAutoUpdate() {
       return;
     }
 
-    for (const book of [...bookshelfStore.books]) {
+    for (const book of bookshelfStore.books) {
       if (!isAutoUpdateEnabled("onAppStart")) {
         break;
       }
@@ -174,7 +174,7 @@ export function useTocAutoUpdate() {
       return result;
     }
 
-    for (const book of [...bookshelfStore.books]) {
+    for (const book of bookshelfStore.books) {
       if (!canRefreshBook(book)) {
         continue;
       }

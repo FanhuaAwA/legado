@@ -280,7 +280,7 @@ export const useScriptBridgeStore = defineStore("scriptBridge", () => {
   ) {
     const prefs = usePreferencesStore();
     const timeoutMs = (prefs.search.chapterContentTimeoutSecs || 35) * 1000;
-    return invokeWithTimeout<PurchaseChapterResult | boolean | unknown>(
+    return invokeWithTimeout<unknown>(
       "booksource_purchase_chapter",
       {
         fileName,

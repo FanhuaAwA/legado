@@ -62,7 +62,7 @@ function cleanup(content, api) {
 
 legado.registerPlugin({
   id: "reader-ad-cleaner",
-  setup: function (api) {
+  setup: function (_api) {
     return {
       settings: {
         defaults: {

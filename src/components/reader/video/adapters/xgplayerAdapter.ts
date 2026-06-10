@@ -259,10 +259,10 @@ export class XgplayerAdapter implements IVideoPlayer {
   }
 
   enterFullscreen(): void {
-    this.player?.getFullscreen();
+    void this.player?.getFullscreen();
   }
   exitFullscreen(): void {
-    this.player?.exitFullscreen();
+    void this.player?.exitFullscreen();
   }
   isFullscreen(): boolean {
     return this.player?.fullscreen ?? false;

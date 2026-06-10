@@ -9,9 +9,9 @@ type PagedModeKind = "slide" | "cover" | "simulation" | "none";
 type ValueSource<T> = Ref<T> | ComputedRef<T>;
 
 export interface ReaderContentRefs {
-  pagedModeRef: Ref<unknown | null>;
-  scrollModeRef: Ref<unknown | null>;
-  comicModeRef: Ref<unknown | null>;
+  pagedModeRef: Ref<unknown>;
+  scrollModeRef: Ref<unknown>;
+  comicModeRef: Ref<unknown>;
   readerBodyRef: Ref<HTMLElement | null>;
   measureHostRef: Ref<HTMLElement | null>;
   backgroundMeasureHostRef: Ref<HTMLElement | null>;
