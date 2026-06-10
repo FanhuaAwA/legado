@@ -174,6 +174,15 @@ Legado_Tauri/
 └── scripts/                      # 辅助脚本
 ```
 
+## 🧭 架构原则：前后端分离
+
+本项目按前后端分离设计：开发期前端与 Rust 后端打包在同一 Tauri 壳内运行，远期后端将独立部署到服务器，前端作为纯静态客户端通过 WebSocket（默认 `ws://<host>:7688/ws`）连接。因此：
+
+- 前端业务代码不得直接使用 `@tauri-apps/api`，所有后端调用与事件必须走 `useInvoke` / `useEventBus` / `useFileSrc` 统一封装层；
+- 后端业务逻辑写在 `crates/reader-core`（不依赖 Tauri），`src-tauri` 仅做命令转发。
+
+完整的强制约束、WS 协议契约与实施路线见 [`docs/frontend-backend-separation.md`](docs/frontend-backend-separation.md)。
+
 ## 📖 书源开发
 
 书源是标准的 JavaScript 文件，通过注释头声明元数据：
