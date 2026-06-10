@@ -1,0 +1,203 @@
+name: Discord Workflow Notify
+
+on:
+  workflow_run:
+    types: [requested, completed]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+
+    # 不通知 Discord 自身的工作流，避免噪音
+    if: |
+      github.event.workflow_run.name != 'Discord Push Notify' &&
+      github.event.workflow_run.name != 'Discord Workflow Notify'
+
+    steps:
+      - name: Send workflow status to Discord channel
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
+          DISCORD_FORUM_TAG: ${{ vars.DISCORD_FORUM_TAG }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          WORKFLOW_URL: ${{ github.event.workflow_run.html_url }}
+          STATUS: ${{ github.event.action }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          REPO: ${{ github.event.workflow_run.repository.full_name }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          ACTOR: ${{ github.event.workflow_run.actor.login }}
+          ACTOR_ICON: ${{ github.event.workflow_run.actor.avatar_url }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+          EVENT_TYPE: ${{ github.event.workflow_run.event }}
+          CREATED_AT: ${{ github.event.workflow_run.created_at }}
+          UPDATED_AT: ${{ github.event.workflow_run.updated_at }}
+        run: |
+          set -e
+
+          # ---------- helpers ----------
+          api_call() {
+            curl -s --fail-with-body \
+              -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
+              -H "Content-Type: application/json" \
+              "$@"
+          }
+
+          # ---------- detect channel type ----------
+          CHANNEL_INFO=$(api_call "https://discord.com/api/v10/channels/$DISCORD_CHANNEL_ID")
+          CHANNEL_TYPE=$(echo "$CHANNEL_INFO" | jq -r '.type')
+          echo "Channel type: $CHANNEL_TYPE"
+
+          # ---------- color & status text ----------
+          if [ "$STATUS" = "requested" ]; then
+            COLOR=3447003      # 蓝色
+            STATUS_TEXT="🔄 工作流已启动"
+            STATUS_EMOJI="🔄"
+          elif [ "$CONCLUSION" = "success" ]; then
+            COLOR=3066993      # 绿色
+            STATUS_TEXT="✅ 工作流执行成功"
+            STATUS_EMOJI="✅"
+          elif [ "$CONCLUSION" = "failure" ]; then
+            COLOR=15158332     # 红色
+            STATUS_TEXT="❌ 工作流执行失败"
+            STATUS_EMOJI="❌"
+          elif [ "$CONCLUSION" = "cancelled" ]; then
+            COLOR=10181046     # 灰色
+            STATUS_TEXT="⚪ 工作流已取消"
+            STATUS_EMOJI="⚪"
+          elif [ "$CONCLUSION" = "skipped" ]; then
+            COLOR=15844367     # 黄色
+            STATUS_TEXT="⏭️ 工作流已跳过"
+            STATUS_EMOJI="⏭️"
+          else
+            COLOR=15844367     # 黄色
+            STATUS_TEXT="⏳ 工作流进行中"
+            STATUS_EMOJI="⏳"
+          fi
+
+          # ---------- duration (completed only) ----------
+          DURATION=""
+          if [ -n "$CREATED_AT" ] && [ -n "$UPDATED_AT" ] && [ "$STATUS" = "completed" ]; then
+            START_TS=$(date -d "$CREATED_AT" +%s 2>/dev/null || echo 0)
+            END_TS=$(date -d "$UPDATED_AT" +%s 2>/dev/null || echo 0)
+            if [ "$START_TS" -gt 0 ] && [ "$END_TS" -gt 0 ]; then
+              SECS=$((END_TS - START_TS))
+              if [ $SECS -lt 60 ]; then
+                DURATION="${SECS}s"
+              elif [ $SECS -lt 3600 ]; then
+                DURATION="$((SECS / 60))m $((SECS % 60))s"
+              else
+                DURATION="$((SECS / 3600))h $(((SECS % 3600) / 60))m"
+              fi
+            fi
+          fi
+
+          # ---------- build embed ----------
+          EMBED_ARGS=(
+            --arg title "$WORKFLOW_NAME"
+            --arg url "$WORKFLOW_URL"
+            --arg status_text "$STATUS_TEXT"
+            --arg status_emoji "$STATUS_EMOJI"
+            --arg repo "$REPO"
+            --arg branch "$BRANCH"
+            --arg actor "$ACTOR"
+            --arg actor_icon "$ACTOR_ICON"
+            --arg run_number "#${RUN_NUMBER}"
+            --arg event_type "$EVENT_TYPE"
+            --arg duration "$DURATION"
+            --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            --argjson color "$COLOR"
+          )
+
+          EMBED=$(jq -n \
+            --arg title "$WORKFLOW_NAME" \
+            --arg url "$WORKFLOW_URL" \
+            --arg status_text "$STATUS_TEXT" \
+            --arg repo "$REPO" \
+            --arg branch "$BRANCH" \
+            --arg actor "$ACTOR" \
+            --arg actor_icon "$ACTOR_ICON" \
+            --arg run_number "#${RUN_NUMBER}" \
+            --arg event_type "$EVENT_TYPE" \
+            --arg duration "$DURATION" \
+            --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --argjson color "$COLOR" \
+            '{
+              title: $title,
+              url: $url,
+              color: $color,
+              timestamp: $timestamp,
+              author: {
+                name: $actor,
+                icon_url: $actor_icon
+              },
+              fields: ([
+                { name: "📦 仓库", value: $repo, inline: true },
+                { name: "🌿 分支", value: $branch, inline: true },
+                { name: "🔢 运行编号", value: $run_number, inline: true },
+                { name: "📌 触发方式", value: $event_type, inline: true },
+                { name: "📊 状态", value: $status_text, inline: true },
+                (if $duration != "" then
+                  { name: "⏱️ 耗时", value: $duration, inline: true }
+                else
+                  empty
+                end)
+              ]),
+              footer: {
+                text: "\($repo) • \($branch)"
+              }
+            }')
+
+          # ---------- send ----------
+          if [ "$CHANNEL_TYPE" = "15" ]; then
+            TAG_NAME="${DISCORD_FORUM_TAG:-github-notify}"
+
+            TAGS=$(echo "$CHANNEL_INFO" | jq '[.available_tags[] | {id: .id, name: .name}]')
+            TAG_ID=$(echo "$TAGS" | jq -r --arg name "$TAG_NAME" '.[] | select(.name == $name) | .id')
+
+            # 论坛帖子标题
+            if [ "$STATUS" = "requested" ]; then
+              THREAD_NAME="🔄 ${WORKFLOW_NAME} #${RUN_NUMBER} — ${BRANCH}"
+            elif [ "$CONCLUSION" = "success" ]; then
+              THREAD_NAME="✅ ${WORKFLOW_NAME} #${RUN_NUMBER} — ${BRANCH}"
+            elif [ "$CONCLUSION" = "failure" ]; then
+              THREAD_NAME="❌ ${WORKFLOW_NAME} #${RUN_NUMBER} — ${BRANCH}"
+            else
+              THREAD_NAME="${STATUS_EMOJI} ${WORKFLOW_NAME} #${RUN_NUMBER} — ${BRANCH}"
+            fi
+
+            if [ -n "$TAG_ID" ] && [ "$TAG_ID" != "null" ]; then
+              THREAD_PAYLOAD=$(jq -n \
+                --arg name "$THREAD_NAME" \
+                --argjson embed "$EMBED" \
+                --arg tag_id "$TAG_ID" \
+                '{
+                  name: $name,
+                  message: { embeds: [$embed] },
+                  applied_tags: [$tag_id]
+                }')
+            else
+              echo "Warning: tag '$TAG_NAME' not found, posting without tag"
+              THREAD_PAYLOAD=$(jq -n \
+                --arg name "$THREAD_NAME" \
+                --argjson embed "$EMBED" \
+                '{
+                  name: $name,
+                  message: { embeds: [$embed] }
+                }')
+            fi
+
+            api_call -X POST "https://discord.com/api/v10/channels/$DISCORD_CHANNEL_ID/threads" \
+              -d "$THREAD_PAYLOAD"
+
+          elif [ "$CHANNEL_TYPE" = "0" ] || [ "$CHANNEL_TYPE" = "5" ]; then
+            MESSAGE=$(jq -n --argjson embed "$EMBED" '{embeds: [$embed]}')
+            api_call -X POST "https://discord.com/api/v10/channels/$DISCORD_CHANNEL_ID/messages" \
+              -d "$MESSAGE"
+
+          else
+            echo "Error: unsupported channel type $CHANNEL_TYPE (expected 0=text, 5=announcement, 15=forum)"
+            exit 1
+          fi
+
+          echo "✅ Notification sent successfully"
