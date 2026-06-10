@@ -231,7 +231,12 @@ pub async fn bookshelf_prefetch_chapters(
     let cancelled = state.tasks.register(&p.task_id);
     let result = state
         .core
-        .prefetch_chapters(&p.id, &p.file_name, p.source_dir.as_deref(), Some(cancelled))
+        .prefetch_chapters(
+            &p.id,
+            &p.file_name,
+            p.source_dir.as_deref(),
+            Some(cancelled),
+        )
         .await
         .map_err(map_err);
     state.tasks.remove(&p.task_id);
@@ -311,10 +316,7 @@ pub async fn export_save_file(
     let result = app
         .dialog()
         .file()
-        .add_filter(
-            &request.mime,
-            if exts.is_empty() { &["*"] } else { &exts },
-        )
+        .add_filter(&request.mime, if exts.is_empty() { &["*"] } else { &exts })
         .set_file_name(&request.default_name)
         .blocking_save_file();
     match result {
@@ -329,19 +331,23 @@ pub async fn export_save_file(
                         detail: None,
                         retryable: false,
                     })?;
-                fs::write(&path_str, &bytes).await.map_err(|err| CommandError {
-                    code: "IO_ERROR".to_string(),
-                    message: err.to_string(),
-                    detail: None,
-                    retryable: false,
-                })?;
+                fs::write(&path_str, &bytes)
+                    .await
+                    .map_err(|err| CommandError {
+                        code: "IO_ERROR".to_string(),
+                        message: err.to_string(),
+                        detail: None,
+                        retryable: false,
+                    })?;
             } else {
-                fs::write(&path_str, &request.text).await.map_err(|err| CommandError {
-                    code: "IO_ERROR".to_string(),
-                    message: err.to_string(),
-                    detail: None,
-                    retryable: false,
-                })?;
+                fs::write(&path_str, &request.text)
+                    .await
+                    .map_err(|err| CommandError {
+                        code: "IO_ERROR".to_string(),
+                        message: err.to_string(),
+                        detail: None,
+                        retryable: false,
+                    })?;
             }
             Ok(Some(path_str))
         }
@@ -393,16 +399,14 @@ pub async fn bookshelf_export_book_data(
 pub fn bookshelf_reveal_export_file(path: String) -> CommandResult<()> {
     let p = std::path::Path::new(&path);
     if let Some(parent) = p.parent() {
-        tauri_plugin_opener::open_path(
-            parent.to_string_lossy().to_string(),
-            None::<&str>,
+        tauri_plugin_opener::open_path(parent.to_string_lossy().to_string(), None::<&str>).map_err(
+            |err| CommandError {
+                code: "IO_ERROR".to_string(),
+                message: err.to_string(),
+                detail: Some(format!("{err:?}")),
+                retryable: false,
+            },
         )
-        .map_err(|err| CommandError {
-            code: "IO_ERROR".to_string(),
-            message: err.to_string(),
-            detail: Some(format!("{err:?}")),
-            retryable: false,
-        })
     } else {
         Err(CommandError {
             code: "BAD_REQUEST".to_string(),

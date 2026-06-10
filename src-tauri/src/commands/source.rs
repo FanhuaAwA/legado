@@ -67,14 +67,15 @@ pub async fn booksource_remove_dir(
 pub async fn booksource_pick_dir(app: tauri::AppHandle) -> CommandResult<String> {
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     {
-        let folder = tokio::task::spawn_blocking(move || app.dialog().file().blocking_pick_folder())
-            .await
-            .map_err(|err| CommandError {
-                code: "IO_ERROR".to_string(),
-                message: format!("选择目录失败: {err}"),
-                detail: Some(format!("{err:?}")),
-                retryable: false,
-            })?;
+        let folder =
+            tokio::task::spawn_blocking(move || app.dialog().file().blocking_pick_folder())
+                .await
+                .map_err(|err| CommandError {
+                    code: "IO_ERROR".to_string(),
+                    message: format!("选择目录失败: {err}"),
+                    detail: Some(format!("{err:?}")),
+                    retryable: false,
+                })?;
         return Ok(folder
             .and_then(|path| path.into_path().ok())
             .map(|path| path.to_string_lossy().to_string())
@@ -254,7 +255,11 @@ pub async fn booksource_save_draft(
     file_name: String,
     content: String,
 ) -> CommandResult<()> {
-    state.core.save_draft(&file_name, &content).await.map_err(map_err)
+    state
+        .core
+        .save_draft(&file_name, &content)
+        .await
+        .map_err(map_err)
 }
 
 #[tauri::command]
@@ -357,7 +362,12 @@ pub async fn booksource_purchase_chapter(
 ) -> CommandResult<Value> {
     state
         .core
-        .purchase_chapter(&file_name, &chapter_url, chapter.as_ref(), source_dir.as_deref())
+        .purchase_chapter(
+            &file_name,
+            &chapter_url,
+            chapter.as_ref(),
+            source_dir.as_deref(),
+        )
         .await
         .map_err(map_err)
 }
@@ -417,7 +427,12 @@ pub async fn booksource_run_tests(
 ) -> CommandResult<Value> {
     state
         .core
-        .run_source_tests(&file_name, source_dir.as_deref(), step_filter.as_deref(), timeout_secs)
+        .run_source_tests(
+            &file_name,
+            source_dir.as_deref(),
+            step_filter.as_deref(),
+            timeout_secs,
+        )
         .await
         .map_err(map_err)
 }
@@ -490,7 +505,15 @@ pub async fn booksource_http_proxy(
     }
     // Security: block common internal addresses
     let lower = request.url.to_lowercase();
-    if lower.contains("127.0.0.1") || lower.contains("localhost") || lower.contains("0.0.0.0") || lower.contains("::1") || lower.contains("169.254.") || lower.contains("10.") || lower.contains("172.16.") || lower.contains("192.168.") {
+    if lower.contains("127.0.0.1")
+        || lower.contains("localhost")
+        || lower.contains("0.0.0.0")
+        || lower.contains("::1")
+        || lower.contains("169.254.")
+        || lower.contains("10.")
+        || lower.contains("172.16.")
+        || lower.contains("192.168.")
+    {
         return Err(CommandError {
             code: "BLOCKED".to_string(),
             message: "禁止访问内网地址".to_string(),
@@ -501,5 +524,9 @@ pub async fn booksource_http_proxy(
     let body = request.body.as_deref();
     let headers: Option<Vec<String>> = request.headers;
     let headers_ref: Option<&[String]> = headers.as_deref();
-    state.core.http_proxy_request(&request.url, &request.method, body, headers_ref).await.map_err(map_err)
+    state
+        .core
+        .http_proxy_request(&request.url, &request.method, body, headers_ref)
+        .await
+        .map_err(map_err)
 }

@@ -11,5 +11,11 @@ fn unsupported() -> CommandError {
     }
 }
 
-#[tauri::command] pub async fn booksource_apply_update() -> CommandResult<()> { Err(unsupported()) }
-#[tauri::command] pub async fn booksource_check_update() -> CommandResult<()> { Err(unsupported()) }
+#[tauri::command]
+pub async fn booksource_apply_update() -> CommandResult<()> {
+    Err(unsupported())
+}
+#[tauri::command]
+pub async fn booksource_check_update() -> CommandResult<()> {
+    Err(unsupported())
+}

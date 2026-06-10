@@ -30,9 +30,10 @@ pub fn analyze_url(
 
         // Decode proxy URLs BEFORE any processing
         let trimmed = rule_url.trim();
-        if let Some(payload) = trimmed.strip_prefix("data:;base64,").or_else(|| {
-            trimmed.strip_prefix("DATA:;BASE64,")
-        }) {
+        if let Some(payload) = trimmed
+            .strip_prefix("data:;base64,")
+            .or_else(|| trimmed.strip_prefix("DATA:;BASE64,"))
+        {
             use base64::Engine as _;
             if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(payload) {
                 if let Ok(decoded) = String::from_utf8(bytes) {
@@ -48,9 +49,10 @@ pub fn analyze_url(
 
         // Decode proxy URLs: data:;base64,<base64> → real URL
         let trimmed = rule_url.trim();
-        if let Some(payload) = trimmed.strip_prefix("data:;base64,").or_else(|| {
-            trimmed.strip_prefix("DATA:;BASE64,")
-        }) {
+        if let Some(payload) = trimmed
+            .strip_prefix("data:;base64,")
+            .or_else(|| trimmed.strip_prefix("DATA:;BASE64,"))
+        {
             use base64::Engine as _;
             if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(payload) {
                 if let Ok(decoded) = String::from_utf8(bytes) {

@@ -286,16 +286,20 @@ impl RuleEngine {
                 ) {
                     let script = self.strip_mode_prefix(&content_rule);
                     let js_ok = match eval_js(script, &content_body, base_url) {
-                        Ok(res) if !res.trim().is_empty() && res.contains('<') && res.contains('>') => {
+                        Ok(res)
+                            if !res.trim().is_empty() && res.contains('<') && res.contains('>') =>
+                        {
                             return res;
                         }
-                        Ok(_) => false, // returned empty or non-HTML
+                        Ok(_) => false,  // returned empty or non-HTML
                         Err(_) => false, // JS failed
                     };
                     // Fallback: if JS failed or returned non-HTML, try JSONPath
                     if !js_ok && content_body.trim_start().starts_with('{') {
                         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content_body) {
-                            if let Some(content_text) = v.pointer("/data/content").and_then(|val| val.as_str()) {
+                            if let Some(content_text) =
+                                v.pointer("/data/content").and_then(|val| val.as_str())
+                            {
                                 if !content_text.trim().is_empty() {
                                     return content_text.to_string();
                                 }
@@ -345,12 +349,14 @@ impl RuleEngine {
                     content = apply_legado_regex(&content, replace);
                 }
 
-                if let Some(callback) = rule.call_back_js.as_deref().filter(|s| !s.trim().is_empty()) {
-                    if let Ok(processed) = eval_js(
-                        self.strip_mode_prefix(callback),
-                        &content,
-                        base_url,
-                    ) {
+                if let Some(callback) = rule
+                    .call_back_js
+                    .as_deref()
+                    .filter(|s| !s.trim().is_empty())
+                {
+                    if let Ok(processed) =
+                        eval_js(self.strip_mode_prefix(callback), &content, base_url)
+                    {
                         if !processed.trim().is_empty() {
                             content = processed;
                         }

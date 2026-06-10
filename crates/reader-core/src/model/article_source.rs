@@ -66,7 +66,10 @@ where
     use serde::de;
     let v = serde_json::Value::deserialize(d)?;
     match v {
-        serde_json::Value::Number(n) => n.as_i64().map(|i| i as i32).ok_or_else(|| de::Error::custom("not a valid i32")),
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .map(|i| i as i32)
+            .ok_or_else(|| de::Error::custom("not a valid i32")),
         serde_json::Value::String(s) => s.parse::<i32>().map_err(de::Error::custom),
         _ => Err(de::Error::custom("expected number or string")),
     }

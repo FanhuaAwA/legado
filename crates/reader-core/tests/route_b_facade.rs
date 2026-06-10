@@ -112,7 +112,9 @@ async fn route_b_facade_imports_reads_and_persists_main_path() {
     let sources = core.list_sources().await.unwrap();
     assert!(sources.iter().any(|source| source.file_name == file_name));
     assert_eq!(
-        core.eval_source_capabilities(&file_name, None).await.unwrap(),
+        core.eval_source_capabilities(&file_name, None)
+            .await
+            .unwrap(),
         "search,bookInfo,toc,chapterList,content,chapterContent"
     );
 
@@ -228,7 +230,10 @@ async fn live_yckceo_3417_novel_reading_path() {
         .iter()
         .find(|book| book.name == "剑来")
         .unwrap_or(&books[0]);
-    let detail = core.book_info(&file_name, &book.book_url, None).await.unwrap();
+    let detail = core
+        .book_info(&file_name, &book.book_url, None)
+        .await
+        .unwrap();
     assert!(!detail.name.trim().is_empty());
 
     let toc_url = detail.toc_url.as_deref().unwrap_or(&book.book_url);

@@ -3,37 +3,116 @@ use serde::Serialize;
 use std::sync::Mutex;
 
 type CommandResult<T> = Result<T, CommandError>;
-fn u(f: &str) -> CommandError { CommandError { code: "UNSUPPORTED".into(), message: format!("{f} 功能尚未实现"), detail: None, retryable: false } }
+fn u(f: &str) -> CommandError {
+    CommandError {
+        code: "UNSUPPORTED".into(),
+        message: format!("{f} 功能尚未实现"),
+        detail: None,
+        retryable: false,
+    }
+}
 
 // ── 同步 ──────────────────────────────────────────────────
-#[tauri::command] pub async fn sync_baidu_start_auth() -> CommandResult<()> { Err(u("百度网盘授权")) }
-#[tauri::command] pub async fn sync_baidu_poll_token() -> CommandResult<()> { Err(u("百度网盘授权")) }
-#[tauri::command] pub async fn sync_baidu_token_status() -> CommandResult<()> { Err(u("百度网盘授权")) }
-#[tauri::command] pub async fn sync_baidu_revoke_auth() -> CommandResult<()> { Err(u("百度网盘授权")) }
-#[tauri::command] pub async fn sync_set_credentials() -> CommandResult<()> { Err(u("云同步凭据")) }
-#[tauri::command] pub async fn sync_get_credentials() -> CommandResult<()> { Err(u("云同步凭据")) }
-#[tauri::command] pub async fn sync_clear_credentials() -> CommandResult<()> { Err(u("云同步凭据")) }
-#[tauri::command] pub async fn sync_get_status() -> CommandResult<()> { Err(u("云同步状态")) }
-#[tauri::command] pub async fn sync_now() -> CommandResult<()> { Err(u("云同步")) }
-#[tauri::command] pub async fn sync_test_connection() -> CommandResult<()> { Err(u("云同步")) }
-#[tauri::command] pub async fn sync_list_conflicts() -> CommandResult<()> { Err(u("云同步")) }
-#[tauri::command] pub async fn sync_resolve_conflict() -> CommandResult<()> { Err(u("云同步")) }
-#[tauri::command] pub async fn sync_notify_lifecycle() -> CommandResult<()> { Err(u("云同步")) }
-#[tauri::command] pub async fn sync_client_state_set() -> CommandResult<()> { Err(u("云同步")) }
-#[tauri::command] pub async fn sync_report_reader_session() -> CommandResult<()> { Err(u("云同步")) }
-#[tauri::command] pub async fn sync_v2_sync_reading_progress() -> CommandResult<()> { Err(u("云同步")) }
+#[tauri::command]
+pub async fn sync_baidu_start_auth() -> CommandResult<()> {
+    Err(u("百度网盘授权"))
+}
+#[tauri::command]
+pub async fn sync_baidu_poll_token() -> CommandResult<()> {
+    Err(u("百度网盘授权"))
+}
+#[tauri::command]
+pub async fn sync_baidu_token_status() -> CommandResult<()> {
+    Err(u("百度网盘授权"))
+}
+#[tauri::command]
+pub async fn sync_baidu_revoke_auth() -> CommandResult<()> {
+    Err(u("百度网盘授权"))
+}
+#[tauri::command]
+pub async fn sync_set_credentials() -> CommandResult<()> {
+    Err(u("云同步凭据"))
+}
+#[tauri::command]
+pub async fn sync_get_credentials() -> CommandResult<()> {
+    Err(u("云同步凭据"))
+}
+#[tauri::command]
+pub async fn sync_clear_credentials() -> CommandResult<()> {
+    Err(u("云同步凭据"))
+}
+#[tauri::command]
+pub async fn sync_get_status() -> CommandResult<()> {
+    Err(u("云同步状态"))
+}
+#[tauri::command]
+pub async fn sync_now() -> CommandResult<()> {
+    Err(u("云同步"))
+}
+#[tauri::command]
+pub async fn sync_test_connection() -> CommandResult<()> {
+    Err(u("云同步"))
+}
+#[tauri::command]
+pub async fn sync_list_conflicts() -> CommandResult<()> {
+    Err(u("云同步"))
+}
+#[tauri::command]
+pub async fn sync_resolve_conflict() -> CommandResult<()> {
+    Err(u("云同步"))
+}
+#[tauri::command]
+pub async fn sync_notify_lifecycle() -> CommandResult<()> {
+    Err(u("云同步"))
+}
+#[tauri::command]
+pub async fn sync_client_state_set() -> CommandResult<()> {
+    Err(u("云同步"))
+}
+#[tauri::command]
+pub async fn sync_report_reader_session() -> CommandResult<()> {
+    Err(u("云同步"))
+}
+#[tauri::command]
+pub async fn sync_v2_sync_reading_progress() -> CommandResult<()> {
+    Err(u("云同步"))
+}
 
 // ── TTS ───────────────────────────────────────────────────
-#[tauri::command] pub async fn tts_get_voices() -> CommandResult<()> { Err(u("TTS 语音合成")) }
-#[tauri::command] pub async fn tts_is_initialized() -> CommandResult<()> { Err(u("TTS 语音合成")) }
-#[tauri::command] pub async fn tts_is_speaking() -> CommandResult<()> { Err(u("TTS 语音合成")) }
-#[tauri::command] pub async fn tts_speak() -> CommandResult<()> { Err(u("TTS 语音合成")) }
-#[tauri::command] pub async fn tts_stop() -> CommandResult<()> { Err(u("TTS 语音合成")) }
-#[tauri::command] pub async fn tts_preview_voice() -> CommandResult<()> { Err(u("TTS 语音合成")) }
+#[tauri::command]
+pub async fn tts_get_voices() -> CommandResult<()> {
+    Err(u("TTS 语音合成"))
+}
+#[tauri::command]
+pub async fn tts_is_initialized() -> CommandResult<()> {
+    Err(u("TTS 语音合成"))
+}
+#[tauri::command]
+pub async fn tts_is_speaking() -> CommandResult<()> {
+    Err(u("TTS 语音合成"))
+}
+#[tauri::command]
+pub async fn tts_speak() -> CommandResult<()> {
+    Err(u("TTS 语音合成"))
+}
+#[tauri::command]
+pub async fn tts_stop() -> CommandResult<()> {
+    Err(u("TTS 语音合成"))
+}
+#[tauri::command]
+pub async fn tts_preview_voice() -> CommandResult<()> {
+    Err(u("TTS 语音合成"))
+}
 
 // ── 视频代理 ──────────────────────────────────────────────
-#[tauri::command] pub async fn start_video_proxy() -> CommandResult<()> { Err(u("视频代理")) }
-#[tauri::command] pub async fn stop_video_proxy() -> CommandResult<()> { Err(u("视频代理")) }
+#[tauri::command]
+pub async fn start_video_proxy() -> CommandResult<()> {
+    Err(u("视频代理"))
+}
+#[tauri::command]
+pub async fn stop_video_proxy() -> CommandResult<()> {
+    Err(u("视频代理"))
+}
 
 // ── Web 服务 ──────────────────────────────────────────────
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -70,7 +149,9 @@ pub fn web_server_pick_dist_dir(app: tauri::AppHandle) -> CommandResult<Option<S
         let result = app.dialog().file().blocking_pick_folder();
         if let Some(path) = result {
             let p = path.to_string();
-            if let Ok(mut d) = DIST_DIR.lock() { *d = Some(p.clone()); }
+            if let Ok(mut d) = DIST_DIR.lock() {
+                *d = Some(p.clone());
+            }
             return Ok(Some(p));
         }
     }
@@ -88,20 +169,41 @@ pub struct WebServerStartRequest {
 /// 启动 Web 服务（内部实现，与 Tauri command 分离以便单元测试）。
 fn start_web_server(req_port: u16) -> CommandResult<WebServerStatus> {
     let mut guard = WEB_SERVER.lock().map_err(|e| CommandError {
-        code: "IO_ERROR".into(), message: e.to_string(), detail: None, retryable: false,
+        code: "IO_ERROR".into(),
+        message: e.to_string(),
+        detail: None,
+        retryable: false,
     })?;
     if let Some(handle) = guard.as_ref() {
         let dir = DIST_DIR.lock().ok().and_then(|d| d.clone());
-        return Ok(WebServerStatus { running: true, port: handle.port, dist_dir: dir });
+        return Ok(WebServerStatus {
+            running: true,
+            port: handle.port,
+            dist_dir: dir,
+        });
     }
-    let dist = DIST_DIR.lock().ok().and_then(|d| d.clone()).unwrap_or_else(|| ".".to_string());
-    let bind_addr = if req_port > 0 { format!("0.0.0.0:{req_port}") } else { "127.0.0.1:0".into() };
+    let dist = DIST_DIR
+        .lock()
+        .ok()
+        .and_then(|d| d.clone())
+        .unwrap_or_else(|| ".".to_string());
+    let bind_addr = if req_port > 0 {
+        format!("0.0.0.0:{req_port}")
+    } else {
+        "127.0.0.1:0".into()
+    };
     let listener = std::net::TcpListener::bind(&bind_addr).map_err(|e| CommandError {
-        code: "IO_ERROR".into(), message: format!("无法启动 Web 服务: {e}"), detail: None, retryable: false,
+        code: "IO_ERROR".into(),
+        message: format!("无法启动 Web 服务: {e}"),
+        detail: None,
+        retryable: false,
     })?;
     let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
     listener.set_nonblocking(true).map_err(|e| CommandError {
-        code: "IO_ERROR".into(), message: format!("无法设置非阻塞监听: {e}"), detail: None, retryable: false,
+        code: "IO_ERROR".into(),
+        message: format!("无法设置非阻塞监听: {e}"),
+        detail: None,
+        retryable: false,
     })?;
 
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -128,20 +230,31 @@ fn start_web_server(req_port: u16) -> CommandResult<WebServerStatus> {
     });
 
     *guard = Some(WebServerHandle { port, shutdown });
-    Ok(WebServerStatus { running: true, port, dist_dir: Some(dist) })
+    Ok(WebServerStatus {
+        running: true,
+        port,
+        dist_dir: Some(dist),
+    })
 }
 
 /// 停止 Web 服务（内部实现）。置位关闭标志并取出句柄；服务线程在下一个轮询周期
 /// （≤50ms）退出并释放端口。
 fn stop_web_server() -> CommandResult<WebServerStatus> {
     let mut guard = WEB_SERVER.lock().map_err(|e| CommandError {
-        code: "IO_ERROR".into(), message: e.to_string(), detail: None, retryable: false,
+        code: "IO_ERROR".into(),
+        message: e.to_string(),
+        detail: None,
+        retryable: false,
     })?;
     if let Some(handle) = guard.take() {
         handle.shutdown.store(true, Ordering::Relaxed);
     }
     let dir = DIST_DIR.lock().ok().and_then(|d| d.clone());
-    Ok(WebServerStatus { running: false, port: 0, dist_dir: dir })
+    Ok(WebServerStatus {
+        running: false,
+        port: 0,
+        dist_dir: dir,
+    })
 }
 
 #[tauri::command]
@@ -157,13 +270,24 @@ pub fn web_server_stop() -> CommandResult<WebServerStatus> {
 #[tauri::command]
 pub fn web_server_status() -> CommandResult<WebServerStatus> {
     let guard = WEB_SERVER.lock().map_err(|e| CommandError {
-        code: "IO_ERROR".into(), message: e.to_string(), detail: None, retryable: false,
+        code: "IO_ERROR".into(),
+        message: e.to_string(),
+        detail: None,
+        retryable: false,
     })?;
     if let Some(handle) = guard.as_ref() {
         let dir = DIST_DIR.lock().ok().and_then(|d| d.clone());
-        Ok(WebServerStatus { running: true, port: handle.port, dist_dir: dir })
+        Ok(WebServerStatus {
+            running: true,
+            port: handle.port,
+            dist_dir: dir,
+        })
     } else {
-        Ok(WebServerStatus { running: false, port: 0, dist_dir: None })
+        Ok(WebServerStatus {
+            running: false,
+            port: 0,
+            dist_dir: None,
+        })
     }
 }
 
@@ -244,23 +368,62 @@ pub fn get_local_ips() -> CommandResult<Vec<String>> {
 }
 
 // ── 解锁 ──────────────────────────────────────────────────
-#[tauri::command] pub async fn issue_full_mode_challenge() -> CommandResult<()> { Err(u("解锁")) }
-#[tauri::command] pub async fn issue_scoped_unlock_challenge() -> CommandResult<()> { Err(u("解锁")) }
-#[tauri::command] pub async fn verify_full_mode_challenge() -> CommandResult<()> { Err(u("解锁")) }
-#[tauri::command] pub async fn verify_scoped_unlock_challenge() -> CommandResult<()> { Err(u("解锁")) }
+#[tauri::command]
+pub async fn issue_full_mode_challenge() -> CommandResult<()> {
+    Err(u("解锁"))
+}
+#[tauri::command]
+pub async fn issue_scoped_unlock_challenge() -> CommandResult<()> {
+    Err(u("解锁"))
+}
+#[tauri::command]
+pub async fn verify_full_mode_challenge() -> CommandResult<()> {
+    Err(u("解锁"))
+}
+#[tauri::command]
+pub async fn verify_scoped_unlock_challenge() -> CommandResult<()> {
+    Err(u("解锁"))
+}
 
 // ── 书源仓库 ──────────────────────────────────────────────
-#[tauri::command] pub async fn repository_check_source_sync() -> CommandResult<()> { Err(u("书源仓库")) }
-#[tauri::command] pub async fn repository_fetch() -> CommandResult<()> { Err(u("书源仓库")) }
-#[tauri::command] pub async fn repository_install() -> CommandResult<()> { Err(u("书源仓库")) }
-#[tauri::command] pub async fn repository_preview_source() -> CommandResult<()> { Err(u("书源仓库")) }
+#[tauri::command]
+pub async fn repository_check_source_sync() -> CommandResult<()> {
+    Err(u("书源仓库"))
+}
+#[tauri::command]
+pub async fn repository_fetch() -> CommandResult<()> {
+    Err(u("书源仓库"))
+}
+#[tauri::command]
+pub async fn repository_install() -> CommandResult<()> {
+    Err(u("书源仓库"))
+}
+#[tauri::command]
+pub async fn repository_preview_source() -> CommandResult<()> {
+    Err(u("书源仓库"))
+}
 
 // ── 杂项 ──────────────────────────────────────────────────
-#[tauri::command] pub async fn ai_http_proxy_url() -> CommandResult<()> { Err(u("AI HTTP 代理")) }
-#[tauri::command] pub async fn app_update_download() -> CommandResult<()> { Err(u("应用更新")) }
-#[tauri::command] pub async fn app_update_install_downloaded_file() -> CommandResult<()> { Err(u("应用更新")) }
-#[tauri::command] pub async fn frontend_plugin_http_request() -> CommandResult<()> { Err(u("前端插件 HTTP")) }
-#[tauri::command] pub async fn explore_clear_cache() -> CommandResult<()> { Err(u("发现页缓存清理")) }
+#[tauri::command]
+pub async fn ai_http_proxy_url() -> CommandResult<()> {
+    Err(u("AI HTTP 代理"))
+}
+#[tauri::command]
+pub async fn app_update_download() -> CommandResult<()> {
+    Err(u("应用更新"))
+}
+#[tauri::command]
+pub async fn app_update_install_downloaded_file() -> CommandResult<()> {
+    Err(u("应用更新"))
+}
+#[tauri::command]
+pub async fn frontend_plugin_http_request() -> CommandResult<()> {
+    Err(u("前端插件 HTTP"))
+}
+#[tauri::command]
+pub async fn explore_clear_cache() -> CommandResult<()> {
+    Err(u("发现页缓存清理"))
+}
 
 #[cfg(test)]
 mod tests {

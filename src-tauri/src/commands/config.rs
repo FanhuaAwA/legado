@@ -117,9 +117,7 @@ pub async fn config_write_bytes(
 }
 
 #[tauri::command]
-pub async fn config_list_scopes(
-    state: State<'_, AppState>,
-) -> CommandResult<Vec<String>> {
+pub async fn config_list_scopes(state: State<'_, AppState>) -> CommandResult<Vec<String>> {
     state.core.config_list_scopes().await.map_err(map_err)
 }
 

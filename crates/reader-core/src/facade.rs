@@ -287,7 +287,9 @@ impl ReaderCore {
                     let article: ArticleSource = serde_json::from_value(value.clone())?;
                     let file_name = format!(
                         "{}.article.json",
-                        article.source_name.replace(['/', '\\', ':', '?', '*', '"', '<', '>', '|'], "_")
+                        article
+                            .source_name
+                            .replace(['/', '\\', ':', '?', '*', '"', '<', '>', '|'], "_")
                     );
                     let article_dir = self.reader_dir.join("sources").join("article-json");
                     fs::create_dir_all(&article_dir).await?;
@@ -385,11 +387,7 @@ impl ReaderCore {
             .map_err(|err| ReaderCoreError::Message(err.to_string()))
     }
 
-    pub async fn save_draft(
-        &self,
-        file_name: &str,
-        content: &str,
-    ) -> Result<(), ReaderCoreError> {
+    pub async fn save_draft(&self, file_name: &str, content: &str) -> Result<(), ReaderCoreError> {
         ensure_safe_file_name(file_name)?;
         let drafts_dir = self.reader_dir.join("drafts");
         fs::create_dir_all(&drafts_dir).await?;
@@ -442,13 +440,20 @@ impl ReaderCore {
 
             // Helper: run a step future with timeout
             let time_limit = step_timeout;
-            async fn timed_step<F, T>(fut: F, limit: std::time::Duration, label: &str) -> Result<T, ReaderCoreError>
-            where F: std::future::Future<Output = Result<T, ReaderCoreError>> + Send,
-                  T: Send
+            async fn timed_step<F, T>(
+                fut: F,
+                limit: std::time::Duration,
+                label: &str,
+            ) -> Result<T, ReaderCoreError>
+            where
+                F: std::future::Future<Output = Result<T, ReaderCoreError>> + Send,
+                T: Send,
             {
                 match tokio::time::timeout(limit, fut).await {
                     Ok(result) => result,
-                    Err(_elapsed) => Err(ReaderCoreError::Message(format!("{label} 超时 ({limit:?})"))),
+                    Err(_elapsed) => Err(ReaderCoreError::Message(format!(
+                        "{label} 超时 ({limit:?})"
+                    ))),
                 }
             }
 
@@ -457,9 +462,12 @@ impl ReaderCore {
 
                 if tokio::time::Instant::now() > overall_deadline {
                     steps.push(TestStep {
-                        name: step_name.clone(), status: "timeout".into(),
+                        name: step_name.clone(),
+                        status: "timeout".into(),
                         elapsed_ms: start.elapsed().as_millis() as u64,
-                        error: Some("整体超时".into()), sample_count: None, output_preview: None,
+                        error: Some("整体超时".into()),
+                        sample_count: None,
+                        output_preview: None,
                     });
                     break;
                 }
@@ -468,9 +476,12 @@ impl ReaderCore {
                     "search" => {
                         if source.rule_search.is_none() {
                             steps.push(TestStep {
-                                name: "search".into(), status: "skipped".into(),
-                                elapsed_ms: 0, error: Some("ruleSearch 未配置".into()),
-                                sample_count: None, output_preview: None,
+                                name: "search".into(),
+                                status: "skipped".into(),
+                                elapsed_ms: 0,
+                                error: Some("ruleSearch 未配置".into()),
+                                sample_count: None,
+                                output_preview: None,
                             });
                             continue;
                         }
@@ -480,33 +491,46 @@ impl ReaderCore {
                                 if let Some(first) = items.first() {
                                     book_url = Some(first.book_url.clone());
                                 }
-                                let preview = items.first().map(|i| format!("{} - {}", i.name, i.author));
+                                let preview =
+                                    items.first().map(|i| format!("{} - {}", i.name, i.author));
                                 steps.push(TestStep {
-                                    name: "search".into(), status: "passed".into(),
+                                    name: "search".into(),
+                                    status: "passed".into(),
                                     elapsed_ms: start.elapsed().as_millis() as u64,
-                                    error: None, sample_count: Some(items.len()),
+                                    error: None,
+                                    sample_count: Some(items.len()),
                                     output_preview: preview,
                                 });
                             }
                             Err(e) => {
                                 steps.push(TestStep {
-                                    name: "search".into(), status: "failed".into(),
+                                    name: "search".into(),
+                                    status: "failed".into(),
                                     elapsed_ms: start.elapsed().as_millis() as u64,
-                                    error: Some(e.to_string()), sample_count: None,
+                                    error: Some(e.to_string()),
+                                    sample_count: None,
                                     output_preview: None,
                                 });
                             }
                         }
                     }
                     "bookInfo" => {
-                        let target_url = book_url.as_deref().unwrap_or(
-                            if source.book_source_url.is_empty() { "https://example.com" } else { &source.book_source_url }
-                        );
+                        let target_url =
+                            book_url
+                                .as_deref()
+                                .unwrap_or(if source.book_source_url.is_empty() {
+                                    "https://example.com"
+                                } else {
+                                    &source.book_source_url
+                                });
                         if source.rule_book_info.is_none() {
                             steps.push(TestStep {
-                                name: "bookInfo".into(), status: "skipped".into(),
-                                elapsed_ms: 0, error: Some("ruleBookInfo 未配置".into()),
-                                sample_count: None, output_preview: None,
+                                name: "bookInfo".into(),
+                                status: "skipped".into(),
+                                elapsed_ms: 0,
+                                error: Some("ruleBookInfo 未配置".into()),
+                                sample_count: None,
+                                output_preview: None,
                             });
                             continue;
                         }
@@ -514,21 +538,32 @@ impl ReaderCore {
                         match timed_step(fut, time_limit, "bookInfo").await {
                             Ok(detail) => {
                                 if let Some(ref tu) = detail.toc_url {
-                                    if !tu.is_empty() { toc_url = Some(tu.clone()); }
+                                    if !tu.is_empty() {
+                                        toc_url = Some(tu.clone());
+                                    }
                                 }
-                                if toc_url.is_none() { toc_url = book_url.clone(); }
+                                if toc_url.is_none() {
+                                    toc_url = book_url.clone();
+                                }
                                 steps.push(TestStep {
-                                    name: "bookInfo".into(), status: "passed".into(),
+                                    name: "bookInfo".into(),
+                                    status: "passed".into(),
                                     elapsed_ms: start.elapsed().as_millis() as u64,
-                                    error: None, sample_count: None,
-                                    output_preview: Some(format!("{} - {}", detail.name, detail.author)),
+                                    error: None,
+                                    sample_count: None,
+                                    output_preview: Some(format!(
+                                        "{} - {}",
+                                        detail.name, detail.author
+                                    )),
                                 });
                             }
                             Err(e) => {
                                 steps.push(TestStep {
-                                    name: "bookInfo".into(), status: "failed".into(),
+                                    name: "bookInfo".into(),
+                                    status: "failed".into(),
                                     elapsed_ms: start.elapsed().as_millis() as u64,
-                                    error: Some(e.to_string()), sample_count: None,
+                                    error: Some(e.to_string()),
+                                    sample_count: None,
                                     output_preview: None,
                                 });
                             }
@@ -536,13 +571,20 @@ impl ReaderCore {
                     }
                     "toc" => {
                         let target_url = toc_url.as_deref().or(book_url.as_deref()).unwrap_or(
-                            if source.book_source_url.is_empty() { "https://example.com" } else { &source.book_source_url }
+                            if source.book_source_url.is_empty() {
+                                "https://example.com"
+                            } else {
+                                &source.book_source_url
+                            },
                         );
                         if source.rule_toc.is_none() {
                             steps.push(TestStep {
-                                name: "toc".into(), status: "skipped".into(),
-                                elapsed_ms: 0, error: Some("ruleToc 未配置".into()),
-                                sample_count: None, output_preview: None,
+                                name: "toc".into(),
+                                status: "skipped".into(),
+                                elapsed_ms: 0,
+                                error: Some("ruleToc 未配置".into()),
+                                sample_count: None,
+                                output_preview: None,
                             });
                             continue;
                         }
@@ -555,17 +597,21 @@ impl ReaderCore {
                                 let count = chapters.len();
                                 let preview = chapters.first().map(|c| c.name.clone());
                                 steps.push(TestStep {
-                                    name: "toc".into(), status: "passed".into(),
+                                    name: "toc".into(),
+                                    status: "passed".into(),
                                     elapsed_ms: start.elapsed().as_millis() as u64,
-                                    error: None, sample_count: Some(count),
+                                    error: None,
+                                    sample_count: Some(count),
                                     output_preview: preview,
                                 });
                             }
                             Err(e) => {
                                 steps.push(TestStep {
-                                    name: "toc".into(), status: "failed".into(),
+                                    name: "toc".into(),
+                                    status: "failed".into(),
                                     elapsed_ms: start.elapsed().as_millis() as u64,
-                                    error: Some(e.to_string()), sample_count: None,
+                                    error: Some(e.to_string()),
+                                    sample_count: None,
                                     output_preview: None,
                                 });
                             }
@@ -575,9 +621,12 @@ impl ReaderCore {
                         let target_url = chapter_url.as_deref().unwrap_or("https://example.com");
                         if source.rule_content.is_none() {
                             steps.push(TestStep {
-                                name: "content".into(), status: "skipped".into(),
-                                elapsed_ms: 0, error: Some("ruleContent 未配置".into()),
-                                sample_count: None, output_preview: None,
+                                name: "content".into(),
+                                status: "skipped".into(),
+                                elapsed_ms: 0,
+                                error: Some("ruleContent 未配置".into()),
+                                sample_count: None,
+                                output_preview: None,
                             });
                             continue;
                         }
@@ -586,17 +635,21 @@ impl ReaderCore {
                             Ok(text) => {
                                 let trimmed: String = text.chars().take(100).collect();
                                 steps.push(TestStep {
-                                    name: "content".into(), status: "passed".into(),
+                                    name: "content".into(),
+                                    status: "passed".into(),
                                     elapsed_ms: start.elapsed().as_millis() as u64,
-                                    error: None, sample_count: Some(text.len()),
+                                    error: None,
+                                    sample_count: Some(text.len()),
                                     output_preview: Some(trimmed),
                                 });
                             }
                             Err(e) => {
                                 steps.push(TestStep {
-                                    name: "content".into(), status: "failed".into(),
+                                    name: "content".into(),
+                                    status: "failed".into(),
                                     elapsed_ms: start.elapsed().as_millis() as u64,
-                                    error: Some(e.to_string()), sample_count: None,
+                                    error: Some(e.to_string()),
+                                    sample_count: None,
                                     output_preview: None,
                                 });
                             }
@@ -605,26 +658,39 @@ impl ReaderCore {
                     "explore" => {
                         if source.rule_explore.is_none() {
                             steps.push(TestStep {
-                                name: "explore".into(), status: "skipped".into(),
-                                elapsed_ms: 0, error: Some("ruleExplore 未配置".into()),
-                                sample_count: None, output_preview: None,
+                                name: "explore".into(),
+                                status: "skipped".into(),
+                                elapsed_ms: 0,
+                                error: Some("ruleExplore 未配置".into()),
+                                sample_count: None,
+                                output_preview: None,
                             });
                             continue;
                         }
                         match self.explore(file_name, 1, "", source_dir).await {
                             Ok(result) => {
                                 steps.push(TestStep {
-                                    name: "explore".into(), status: "passed".into(),
+                                    name: "explore".into(),
+                                    status: "passed".into(),
                                     elapsed_ms: start.elapsed().as_millis() as u64,
-                                    error: None, sample_count: None,
-                                    output_preview: Some(serde_json::to_string(&result).unwrap_or_default().chars().take(200).collect()),
+                                    error: None,
+                                    sample_count: None,
+                                    output_preview: Some(
+                                        serde_json::to_string(&result)
+                                            .unwrap_or_default()
+                                            .chars()
+                                            .take(200)
+                                            .collect(),
+                                    ),
                                 });
                             }
                             Err(e) => {
                                 steps.push(TestStep {
-                                    name: "explore".into(), status: "failed".into(),
+                                    name: "explore".into(),
+                                    status: "failed".into(),
                                     elapsed_ms: start.elapsed().as_millis() as u64,
-                                    error: Some(e.to_string()), sample_count: None,
+                                    error: Some(e.to_string()),
+                                    sample_count: None,
                                     output_preview: None,
                                 });
                             }
@@ -644,94 +710,121 @@ impl ReaderCore {
         for step_name in &enabled {
             let start = std::time::Instant::now();
             match step_name.as_str() {
-                "search" => {
-                    match runtime.search("test", 1) {
-                        Ok(r) => {
-                            let items = serde_json::to_value(r).unwrap_or_default();
-                            let count = items.as_array().map(|a| a.len()).unwrap_or(0);
-                            steps.push(TestStep {
-                                name: "search".into(), status: "passed".into(),
-                                elapsed_ms: start.elapsed().as_millis() as u64,
-                                error: None, sample_count: Some(count),
-                                output_preview: Some(format!("{} results", count)),
-                            });
-                        }
-                        Err(e) => steps.push(TestStep {
-                            name: "search".into(), status: "failed".into(),
+                "search" => match runtime.search("test", 1) {
+                    Ok(r) => {
+                        let items = serde_json::to_value(r).unwrap_or_default();
+                        let count = items.as_array().map(|a| a.len()).unwrap_or(0);
+                        steps.push(TestStep {
+                            name: "search".into(),
+                            status: "passed".into(),
                             elapsed_ms: start.elapsed().as_millis() as u64,
-                            error: Some(e.to_string()), sample_count: None, output_preview: None,
-                        }),
+                            error: None,
+                            sample_count: Some(count),
+                            output_preview: Some(format!("{} results", count)),
+                        });
                     }
-                }
-                "bookInfo" => {
-                    match runtime.book_info("https://example.com") {
-                        Ok(r) => {
-                            let v = serde_json::to_value(r).unwrap_or_default();
-                            steps.push(TestStep {
-                                name: "bookInfo".into(), status: "passed".into(),
-                                elapsed_ms: start.elapsed().as_millis() as u64,
-                                error: None, sample_count: None,
-                                output_preview: Some(serde_json::to_string(&v).unwrap_or_default().chars().take(200).collect()),
-                            });
-                        }
-                        Err(e) => steps.push(TestStep {
-                            name: "bookInfo".into(), status: "failed".into(),
+                    Err(e) => steps.push(TestStep {
+                        name: "search".into(),
+                        status: "failed".into(),
+                        elapsed_ms: start.elapsed().as_millis() as u64,
+                        error: Some(e.to_string()),
+                        sample_count: None,
+                        output_preview: None,
+                    }),
+                },
+                "bookInfo" => match runtime.book_info("https://example.com") {
+                    Ok(r) => {
+                        let v = serde_json::to_value(r).unwrap_or_default();
+                        steps.push(TestStep {
+                            name: "bookInfo".into(),
+                            status: "passed".into(),
                             elapsed_ms: start.elapsed().as_millis() as u64,
-                            error: Some(e.to_string()), sample_count: None, output_preview: None,
-                        }),
+                            error: None,
+                            sample_count: None,
+                            output_preview: Some(
+                                serde_json::to_string(&v)
+                                    .unwrap_or_default()
+                                    .chars()
+                                    .take(200)
+                                    .collect(),
+                            ),
+                        });
                     }
-                }
-                "toc" => {
-                    match runtime.chapter_list("https://example.com") {
-                        Ok(r) => {
-                            let v = serde_json::to_value(r).unwrap_or_default();
-                            let count = v.as_array().map(|a| a.len()).unwrap_or(0);
-                            steps.push(TestStep {
-                                name: "toc".into(), status: "passed".into(),
-                                elapsed_ms: start.elapsed().as_millis() as u64,
-                                error: None, sample_count: Some(count),
-                                output_preview: Some(format!("{} chapters", count)),
-                            });
-                        }
-                        Err(e) => steps.push(TestStep {
-                            name: "toc".into(), status: "failed".into(),
+                    Err(e) => steps.push(TestStep {
+                        name: "bookInfo".into(),
+                        status: "failed".into(),
+                        elapsed_ms: start.elapsed().as_millis() as u64,
+                        error: Some(e.to_string()),
+                        sample_count: None,
+                        output_preview: None,
+                    }),
+                },
+                "toc" => match runtime.chapter_list("https://example.com") {
+                    Ok(r) => {
+                        let v = serde_json::to_value(r).unwrap_or_default();
+                        let count = v.as_array().map(|a| a.len()).unwrap_or(0);
+                        steps.push(TestStep {
+                            name: "toc".into(),
+                            status: "passed".into(),
                             elapsed_ms: start.elapsed().as_millis() as u64,
-                            error: Some(e.to_string()), sample_count: None, output_preview: None,
-                        }),
+                            error: None,
+                            sample_count: Some(count),
+                            output_preview: Some(format!("{} chapters", count)),
+                        });
                     }
-                }
-                "content" => {
-                    match runtime.chapter_content("https://example.com") {
-                        Ok(r) => {
-                            steps.push(TestStep {
-                                name: "content".into(), status: "passed".into(),
-                                elapsed_ms: start.elapsed().as_millis() as u64,
-                                error: None, sample_count: Some(r.len()),
-                                output_preview: Some(r.chars().take(100).collect()),
-                            });
-                        }
-                        Err(e) => steps.push(TestStep {
-                            name: "content".into(), status: "failed".into(),
+                    Err(e) => steps.push(TestStep {
+                        name: "toc".into(),
+                        status: "failed".into(),
+                        elapsed_ms: start.elapsed().as_millis() as u64,
+                        error: Some(e.to_string()),
+                        sample_count: None,
+                        output_preview: None,
+                    }),
+                },
+                "content" => match runtime.chapter_content("https://example.com") {
+                    Ok(r) => {
+                        steps.push(TestStep {
+                            name: "content".into(),
+                            status: "passed".into(),
                             elapsed_ms: start.elapsed().as_millis() as u64,
-                            error: Some(e.to_string()), sample_count: None, output_preview: None,
-                        }),
+                            error: None,
+                            sample_count: Some(r.len()),
+                            output_preview: Some(r.chars().take(100).collect()),
+                        });
                     }
-                }
-                "explore" => {
-                    match runtime.explore(1, "") {
-                        Ok(r) => steps.push(TestStep {
-                            name: "explore".into(), status: "passed".into(),
-                            elapsed_ms: start.elapsed().as_millis() as u64,
-                            error: None, sample_count: None,
-                            output_preview: Some(serde_json::to_string(&r).unwrap_or_default().chars().take(200).collect()),
-                        }),
-                        Err(e) => steps.push(TestStep {
-                            name: "explore".into(), status: "failed".into(),
-                            elapsed_ms: start.elapsed().as_millis() as u64,
-                            error: Some(e.to_string()), sample_count: None, output_preview: None,
-                        }),
-                    }
-                }
+                    Err(e) => steps.push(TestStep {
+                        name: "content".into(),
+                        status: "failed".into(),
+                        elapsed_ms: start.elapsed().as_millis() as u64,
+                        error: Some(e.to_string()),
+                        sample_count: None,
+                        output_preview: None,
+                    }),
+                },
+                "explore" => match runtime.explore(1, "") {
+                    Ok(r) => steps.push(TestStep {
+                        name: "explore".into(),
+                        status: "passed".into(),
+                        elapsed_ms: start.elapsed().as_millis() as u64,
+                        error: None,
+                        sample_count: None,
+                        output_preview: Some(
+                            serde_json::to_string(&r)
+                                .unwrap_or_default()
+                                .chars()
+                                .take(200)
+                                .collect(),
+                        ),
+                    }),
+                    Err(e) => steps.push(TestStep {
+                        name: "explore".into(),
+                        status: "failed".into(),
+                        elapsed_ms: start.elapsed().as_millis() as u64,
+                        error: Some(e.to_string()),
+                        sample_count: None,
+                        output_preview: None,
+                    }),
+                },
                 _ => {}
             }
         }
@@ -852,7 +945,9 @@ impl ReaderCore {
             .await
             .map_err(js_join_error)?;
         }
-        Ok(json!({ "ok": false, "purchased": false, "unsupported": true, "message": "Legado 规则书源不支持自动购买，请手动处理" }))
+        Ok(
+            json!({ "ok": false, "purchased": false, "unsupported": true, "message": "Legado 规则书源不支持自动购买，请手动处理" }),
+        )
     }
 
     pub async fn source_call_fn(
@@ -1302,11 +1397,7 @@ impl ReaderCore {
     }
 
     /// EPUB 导出 stub（后续实现）
-    pub async fn export_book_epub(
-        &self,
-        id: &str,
-        save_path: &str,
-    ) -> Result<(), ReaderCoreError> {
+    pub async fn export_book_epub(&self, id: &str, save_path: &str) -> Result<(), ReaderCoreError> {
         let _ = (id, save_path);
         Err(ReaderCoreError::Message(
             "EPUB 导出尚未实现，请使用 TXT 或 JSON 格式".into(),
@@ -1781,10 +1872,13 @@ impl ReaderCore {
             for e in &entries {
                 total_size += e.value.len();
             }
-            frontend_map.insert(ns.namespace.clone(), serde_json::json!({
-                "count": ns.count,
-                "totalValueBytes": total_size,
-            }));
+            frontend_map.insert(
+                ns.namespace.clone(),
+                serde_json::json!({
+                    "count": ns.count,
+                    "totalValueBytes": total_size,
+                }),
+            );
         }
 
         let app_config = self.app_config_get_all().await.unwrap_or_default();
@@ -1826,9 +1920,7 @@ impl ReaderCore {
             let allowed = resolved.starts_with(&self.js_source_dir)
                 || resolved.starts_with(&self.legado_source_dir);
             if !allowed {
-                return Err(ReaderCoreError::Message(
-                    "文件路径超出允许范围".to_string(),
-                ));
+                return Err(ReaderCoreError::Message("文件路径超出允许范围".to_string()));
             }
         }
         Ok(resolved)
@@ -1884,9 +1976,7 @@ impl ReaderCore {
         let book = self.shelf_get(id).await?;
         let chapters = self.shelf_get_chapters(id).await?;
         if chapters.is_empty() {
-            return Err(ReaderCoreError::Message(
-                "没有章节数据可导出".to_string(),
-            ));
+            return Err(ReaderCoreError::Message("没有章节数据可导出".to_string()));
         }
 
         let raw_path = Path::new(save_path);
@@ -1900,8 +1990,10 @@ impl ReaderCore {
             format.to_lowercase()
         };
 
-        let header =
-            format!("{}\n作者：{}\n来源：{}\n\n", book.name, book.author, book.source_name);
+        let header = format!(
+            "{}\n作者：{}\n来源：{}\n\n",
+            book.name, book.author, book.source_name
+        );
 
         let content: String = match actual_format.as_str() {
             "txt" => {
@@ -1937,13 +2029,23 @@ impl ReaderCore {
                         serde_json::to_value(text.as_deref().unwrap_or(""))?,
                     );
                 }
-                map.insert("chapters".to_string(), serde_json::Value::Array(chapter_list));
+                map.insert(
+                    "chapters".to_string(),
+                    serde_json::Value::Array(chapter_list),
+                );
                 map.insert("contents".to_string(), serde_json::Value::Object(contents));
                 map.insert("exportedAt".to_string(), serde_json::to_value(now_ts())?);
-                map.insert("schemaVersion".to_string(), serde_json::Value::Number(1.into()));
+                map.insert(
+                    "schemaVersion".to_string(),
+                    serde_json::Value::Number(1.into()),
+                );
                 serde_json::to_string_pretty(&map)?
             }
-            _ => return Err(ReaderCoreError::Message(format!("不支持的导出格式: {format}。仅支持 txt / json"))),
+            _ => {
+                return Err(ReaderCoreError::Message(format!(
+                    "不支持的导出格式: {format}。仅支持 txt / json"
+                )))
+            }
         };
 
         if let Some(parent) = raw_path.parent() {
@@ -1954,23 +2056,19 @@ impl ReaderCore {
     }
 
     /// 导出书籍数据（返回 base64 编码，用于移动端）
-    pub async fn export_book_data(
-        &self,
-        id: &str,
-        format: &str,
-    ) -> Result<Value, ReaderCoreError> {
+    pub async fn export_book_data(&self, id: &str, format: &str) -> Result<Value, ReaderCoreError> {
         let book = self.shelf_get(id).await?;
         let chapters = self.shelf_get_chapters(id).await?;
         if chapters.is_empty() {
-            return Err(ReaderCoreError::Message(
-                "没有章节数据可导出".to_string(),
-            ));
+            return Err(ReaderCoreError::Message("没有章节数据可导出".to_string()));
         }
 
         let format = if format.is_empty() { "txt" } else { format };
         let ext = if format == "json" { "json" } else { "txt" };
-        let header =
-            format!("{}\n作者：{}\n来源：{}\n\n", book.name, book.author, book.source_name);
+        let header = format!(
+            "{}\n作者：{}\n来源：{}\n\n",
+            book.name, book.author, book.source_name
+        );
 
         let body: String = match format {
             "txt" => {
@@ -1999,13 +2097,23 @@ impl ReaderCore {
                         serde_json::to_value(text.as_deref().unwrap_or(""))?,
                     );
                 }
-                map.insert("chapters".to_string(), serde_json::Value::Array(chapter_list));
+                map.insert(
+                    "chapters".to_string(),
+                    serde_json::Value::Array(chapter_list),
+                );
                 map.insert("contents".to_string(), serde_json::Value::Object(contents));
                 map.insert("exportedAt".to_string(), serde_json::to_value(now_ts())?);
-                map.insert("schemaVersion".to_string(), serde_json::Value::Number(1.into()));
+                map.insert(
+                    "schemaVersion".to_string(),
+                    serde_json::Value::Number(1.into()),
+                );
                 serde_json::to_string_pretty(&map)?
             }
-            _ => return Err(ReaderCoreError::Message(format!("不支持的导出格式: {format}。仅支持 txt / json"))),
+            _ => {
+                return Err(ReaderCoreError::Message(format!(
+                    "不支持的导出格式: {format}。仅支持 txt / json"
+                )))
+            }
         };
 
         use base64::Engine;

@@ -15,9 +15,7 @@ use tracing_subscriber::Layer;
 pub fn run() {
     // Set up file-based logging with rotation
     let app_data = std::env::var("APPDATA")
-        .or_else(|_| {
-            std::env::var("HOME").map(|h| format!("{}/.local/share", h))
-        })
+        .or_else(|_| std::env::var("HOME").map(|h| format!("{}/.local/share", h)))
         .unwrap_or_else(|_| ".".to_string());
     let log_dir = std::path::PathBuf::from(&app_data)
         .join("com.legado.tauri")

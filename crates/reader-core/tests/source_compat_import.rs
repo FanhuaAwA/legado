@@ -76,7 +76,9 @@ async fn shuqi_source_full_chain() {
     let file_name = &result.files[0];
 
     // Step 1: 搜索 — strict
-    let books = core.search(file_name, "系统", 1, None).await
+    let books = core
+        .search(file_name, "系统", 1, None)
+        .await
         .expect("书旗搜索应成功");
     assert!(!books.is_empty(), "书旗搜索应返回非空结果");
     let book_url = &books[0].book_url;
@@ -84,20 +86,32 @@ async fn shuqi_source_full_chain() {
     eprintln!("书旗搜索: {} (book_url={})", books[0].name, book_url);
 
     // Step 2: bookInfo — 书旗 ruleBookInfo 为空对象，不强制非空
-    let detail = core.book_info(file_name, book_url, None).await
+    let detail = core
+        .book_info(file_name, book_url, None)
+        .await
         .expect("书旗 bookInfo HTTP 应成功");
-    eprintln!("书旗 bookInfo: name='{}' author='{}' kind={:?}",
-        detail.name, detail.author, detail.kind);
+    eprintln!(
+        "书旗 bookInfo: name='{}' author='{}' kind={:?}",
+        detail.name, detail.author, detail.kind
+    );
 
     // Step 3: chapterList — strict
-    let chapters = core.chapter_list(file_name, book_url, None).await
+    let chapters = core
+        .chapter_list(file_name, book_url, None)
+        .await
         .expect("书旗 chapterList 应成功");
     assert!(!chapters.is_empty(), "书旗目录不应为空");
-    eprintln!("书旗目录: 共 {} 章, 第一章={}", chapters.len(), chapters[0].name);
+    eprintln!(
+        "书旗目录: 共 {} 章, 第一章={}",
+        chapters.len(),
+        chapters[0].name
+    );
 
     // Step 4: content — strict: must return non-empty when source rules work
     if let Some(first_chapter) = chapters.first() {
-        let body = core.chapter_content(file_name, &first_chapter.url, None).await
+        let body = core
+            .chapter_content(file_name, &first_chapter.url, None)
+            .await
             .expect("书旗 chapterContent HTTP 应成功");
         if body.is_empty() {
             eprintln!("书旗 content: EMPTY — 源规则 ruleContent 可能已过期（source_rule_failed）");
@@ -189,7 +203,11 @@ async fn shuqi_source_imports_and_parses_fields() {
     let result = core.import_legacy_json_text(&content, false).await.unwrap();
 
     assert!(result.imported > 0, "书旗书源应能成功导入");
-    assert!(result.errors.is_empty(), "书旗书源导入无错误: {:?}", result.errors);
+    assert!(
+        result.errors.is_empty(),
+        "书旗书源导入无错误: {:?}",
+        result.errors
+    );
 
     let sources = core.list_sources().await.unwrap();
     let shuqi = sources
@@ -214,7 +232,11 @@ async fn qimao_source_imports_and_parses_fields() {
     let result = core.import_legacy_json_text(&content, false).await.unwrap();
 
     assert!(result.imported > 0, "七猫书源应能成功导入");
-    assert!(result.errors.is_empty(), "七猫书源导入无错误: {:?}", result.errors);
+    assert!(
+        result.errors.is_empty(),
+        "七猫书源导入无错误: {:?}",
+        result.errors
+    );
 
     let sources = core.list_sources().await.unwrap();
     let qimao = sources
@@ -257,8 +279,7 @@ async fn short_drama_source_imports_as_article() {
         .await
         .unwrap();
 
-    let content =
-        read_source_fixture(r"E:\Book\番茄短剧\fqdj0719_016377fa4.json");
+    let content = read_source_fixture(r"E:\Book\番茄短剧\fqdj0719_016377fa4.json");
     let result = core.import_legacy_json_text(&content, false).await.unwrap();
     assert!(
         result.imported > 0,

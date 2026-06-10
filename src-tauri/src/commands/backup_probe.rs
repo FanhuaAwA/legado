@@ -6,7 +6,12 @@ use tauri::State;
 type CommandResult<T> = Result<T, CommandError>;
 
 fn unsupported(f: &str) -> CommandError {
-    CommandError { code: "UNSUPPORTED".into(), message: format!("{f} 功能尚未实现"), detail: None, retryable: false }
+    CommandError {
+        code: "UNSUPPORTED".into(),
+        message: format!("{f} 功能尚未实现"),
+        detail: None,
+        retryable: false,
+    }
 }
 
 // ── DTOs (must be pub for tauri::command) ─────────────────
@@ -150,33 +155,46 @@ fn build_stats(state: &AppState) -> std::io::Result<Vec<BackupCategoryStat>> {
             _ => (0, 0),
         };
         stats.push(BackupCategoryStat {
-            id: id.to_string(), label: label.to_string(), description: desc.to_string(),
-            item_count: count, byte_size: bytes,
+            id: id.to_string(),
+            label: label.to_string(),
+            description: desc.to_string(),
+            item_count: count,
+            byte_size: bytes,
         });
     }
     Ok(stats)
 }
 
 fn count_dir_size(path: &std::path::Path) -> std::io::Result<u64> {
-    if !path.exists() { return Ok(0); }
+    if !path.exists() {
+        return Ok(0);
+    }
     let mut total = 0u64;
     for entry in std::fs::read_dir(path)? {
         let e = entry?;
         let p = e.path();
-        if p.is_file() { total += e.metadata()?.len(); }
-        else if p.is_dir() { total += count_dir_size(&p)?; }
+        if p.is_file() {
+            total += e.metadata()?.len();
+        } else if p.is_dir() {
+            total += count_dir_size(&p)?;
+        }
     }
     Ok(total)
 }
 
 fn count_files(path: &std::path::Path) -> std::io::Result<usize> {
-    if !path.exists() { return Ok(0); }
+    if !path.exists() {
+        return Ok(0);
+    }
     let mut c = 0usize;
     for entry in std::fs::read_dir(path)? {
         let e = entry?;
         let p = e.path();
-        if p.is_file() { c += 1; }
-        else if p.is_dir() { c += count_files(&p)?; }
+        if p.is_file() {
+            c += 1;
+        } else if p.is_dir() {
+            c += count_files(&p)?;
+        }
     }
     Ok(c)
 }
@@ -185,25 +203,39 @@ fn filter_stats(stats: &[BackupCategoryStat], categories: &[String]) -> Vec<Back
     if categories.is_empty() || categories.iter().any(|c| c == "all") {
         return stats.to_vec();
     }
-    stats.iter().filter(|s| categories.contains(&s.id)).cloned().collect()
+    stats
+        .iter()
+        .filter(|s| categories.contains(&s.id))
+        .cloned()
+        .collect()
 }
 
 fn build_manifest(stats: &[BackupCategoryStat]) -> BackupManifest {
     BackupManifest {
-        format: "legado-backup-v1".into(), version: 1,
+        format: "legado-backup-v1".into(),
+        version: 1,
         created_at: chrono::Utc::now().timestamp_millis(),
         app_version: env!("CARGO_PKG_VERSION").into(),
         categories: stats.to_vec(),
     }
 }
 
-fn pack_categories(state: &AppState, selected: &[BackupCategoryStat]) -> Result<serde_json::Value, CommandError> {
+fn pack_categories(
+    state: &AppState,
+    selected: &[BackupCategoryStat],
+) -> Result<serde_json::Value, CommandError> {
     let reader_dir = state.core.reader_dir();
     let mut payload = serde_json::Map::new();
     let manifest = build_manifest(selected);
-    payload.insert("manifest".into(), serde_json::to_value(&manifest).map_err(|e| CommandError {
-        code: "IO_ERROR".into(), message: e.to_string(), detail: None, retryable: false,
-    })?);
+    payload.insert(
+        "manifest".into(),
+        serde_json::to_value(&manifest).map_err(|e| CommandError {
+            code: "IO_ERROR".into(),
+            message: e.to_string(),
+            detail: None,
+            retryable: false,
+        })?,
+    );
     let mut data = serde_json::Map::new();
     for s in selected {
         match s.id.as_str() {
@@ -216,7 +248,11 @@ fn pack_categories(state: &AppState, selected: &[BackupCategoryStat]) -> Result<
                             let p = entry.path();
                             if p.extension().and_then(|e| e.to_str()) == Some("json") {
                                 if let Ok(raw) = std::fs::read_to_string(&p) {
-                                    let key = p.file_stem().unwrap_or_default().to_string_lossy().to_string();
+                                    let key = p
+                                        .file_stem()
+                                        .unwrap_or_default()
+                                        .to_string_lossy()
+                                        .to_string();
                                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
                                         cfg.insert(key, v);
                                     }
@@ -260,77 +296,205 @@ fn pack_categories(state: &AppState, selected: &[BackupCategoryStat]) -> Result<
 
 #[tauri::command]
 pub async fn backup_inspect(state: State<'_, AppState>) -> CommandResult<BackupInspectReport> {
-    let stats = build_stats(&state).map_err(|e| CommandError { code: "IO_ERROR".into(), message: e.to_string(), detail: None, retryable: false })?;
+    let stats = build_stats(&state).map_err(|e| CommandError {
+        code: "IO_ERROR".into(),
+        message: e.to_string(),
+        detail: None,
+        retryable: false,
+    })?;
     let total = stats.iter().map(|s| s.byte_size).sum();
-    Ok(BackupInspectReport { categories: stats, total_bytes: total })
+    Ok(BackupInspectReport {
+        categories: stats,
+        total_bytes: total,
+    })
 }
 
 #[tauri::command]
-pub async fn backup_create(state: State<'_, AppState>, request: BackupCreateRequest) -> CommandResult<BackupCreateResult> {
-    let all = build_stats(&state).map_err(|e| CommandError { code: "IO_ERROR".into(), message: e.to_string(), detail: None, retryable: false })?;
+pub async fn backup_create(
+    state: State<'_, AppState>,
+    request: BackupCreateRequest,
+) -> CommandResult<BackupCreateResult> {
+    let all = build_stats(&state).map_err(|e| CommandError {
+        code: "IO_ERROR".into(),
+        message: e.to_string(),
+        detail: None,
+        retryable: false,
+    })?;
     let selected = filter_stats(&all, &request.categories);
     let payload = pack_categories(&state, &selected)?;
-    let json = serde_json::to_string_pretty(&payload).map_err(|e| CommandError { code: "IO_ERROR".into(), message: e.to_string(), detail: None, retryable: false })?;
-    std::fs::write(&request.output_path, &json).map_err(|e| CommandError { code: "IO_ERROR".into(), message: e.to_string(), detail: None, retryable: false })?;
+    let json = serde_json::to_string_pretty(&payload).map_err(|e| CommandError {
+        code: "IO_ERROR".into(),
+        message: e.to_string(),
+        detail: None,
+        retryable: false,
+    })?;
+    std::fs::write(&request.output_path, &json).map_err(|e| CommandError {
+        code: "IO_ERROR".into(),
+        message: e.to_string(),
+        detail: None,
+        retryable: false,
+    })?;
     let size = json.len() as i64;
-    Ok(BackupCreateResult { output_path: request.output_path, byte_size: size, categories: selected })
+    Ok(BackupCreateResult {
+        output_path: request.output_path,
+        byte_size: size,
+        categories: selected,
+    })
 }
 
 #[tauri::command]
-pub async fn backup_create_data(state: State<'_, AppState>, request: BackupCreateDataRequest) -> CommandResult<BackupCreateDataResult> {
-    let all = build_stats(&state).map_err(|e| CommandError { code: "IO_ERROR".into(), message: e.to_string(), detail: None, retryable: false })?;
+pub async fn backup_create_data(
+    state: State<'_, AppState>,
+    request: BackupCreateDataRequest,
+) -> CommandResult<BackupCreateDataResult> {
+    let all = build_stats(&state).map_err(|e| CommandError {
+        code: "IO_ERROR".into(),
+        message: e.to_string(),
+        detail: None,
+        retryable: false,
+    })?;
     let selected = filter_stats(&all, &request.categories);
     let payload = pack_categories(&state, &selected)?;
-    let json = serde_json::to_string_pretty(&payload).map_err(|e| CommandError { code: "IO_ERROR".into(), message: e.to_string(), detail: None, retryable: false })?;
+    let json = serde_json::to_string_pretty(&payload).map_err(|e| CommandError {
+        code: "IO_ERROR".into(),
+        message: e.to_string(),
+        detail: None,
+        retryable: false,
+    })?;
     use base64::Engine as _;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&json);
     let size = json.len() as i64;
-    Ok(BackupCreateDataResult { file_name: request.default_name, mime: "application/json".into(), base64: b64, byte_size: size, categories: selected })
+    Ok(BackupCreateDataResult {
+        file_name: request.default_name,
+        mime: "application/json".into(),
+        base64: b64,
+        byte_size: size,
+        categories: selected,
+    })
 }
 
 #[tauri::command]
 pub async fn backup_peek(request: BackupPeekRequest) -> CommandResult<BackupPeekReport> {
-    let raw = std::fs::read_to_string(&request.json_path).map_err(|e| CommandError { code: "IO_ERROR".into(), message: e.to_string(), detail: None, retryable: false })?;
+    let raw = std::fs::read_to_string(&request.json_path).map_err(|e| CommandError {
+        code: "IO_ERROR".into(),
+        message: e.to_string(),
+        detail: None,
+        retryable: false,
+    })?;
     parse_peek(&raw)
 }
 
 #[tauri::command]
 pub async fn backup_peek_data(request: BackupPeekDataRequest) -> CommandResult<BackupPeekReport> {
     use base64::Engine as _;
-    let bytes = base64::engine::general_purpose::STANDARD.decode(&request.base64).map_err(|e| CommandError { code: "IO_ERROR".into(), message: e.to_string(), detail: None, retryable: false })?;
-    let raw = String::from_utf8(bytes).map_err(|e| CommandError { code: "IO_ERROR".into(), message: e.to_string(), detail: None, retryable: false })?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&request.base64)
+        .map_err(|e| CommandError {
+            code: "IO_ERROR".into(),
+            message: e.to_string(),
+            detail: None,
+            retryable: false,
+        })?;
+    let raw = String::from_utf8(bytes).map_err(|e| CommandError {
+        code: "IO_ERROR".into(),
+        message: e.to_string(),
+        detail: None,
+        retryable: false,
+    })?;
     parse_peek(&raw)
 }
 
 fn parse_peek(raw: &str) -> CommandResult<BackupPeekReport> {
-    let payload: serde_json::Value = serde_json::from_str(raw).map_err(|e| CommandError { code: "IO_ERROR".into(), message: format!("备份文件格式无效: {e}"), detail: None, retryable: false })?;
-    let manifest: BackupManifest = serde_json::from_value(payload.get("manifest").cloned().unwrap_or_default()).map_err(|e| CommandError { code: "IO_ERROR".into(), message: e.to_string(), detail: None, retryable: false })?;
+    let payload: serde_json::Value = serde_json::from_str(raw).map_err(|e| CommandError {
+        code: "IO_ERROR".into(),
+        message: format!("备份文件格式无效: {e}"),
+        detail: None,
+        retryable: false,
+    })?;
+    let manifest: BackupManifest = serde_json::from_value(
+        payload.get("manifest").cloned().unwrap_or_default(),
+    )
+    .map_err(|e| CommandError {
+        code: "IO_ERROR".into(),
+        message: e.to_string(),
+        detail: None,
+        retryable: false,
+    })?;
     let known: Vec<String> = LABELS.iter().map(|(id, _, _)| id.to_string()).collect();
-    let unknown: Vec<String> = manifest.categories.iter().map(|c| c.id.clone()).filter(|id| !known.contains(id)).collect();
-    Ok(BackupPeekReport { manifest, unknown_categories: unknown })
+    let unknown: Vec<String> = manifest
+        .categories
+        .iter()
+        .map(|c| c.id.clone())
+        .filter(|id| !known.contains(id))
+        .collect();
+    Ok(BackupPeekReport {
+        manifest,
+        unknown_categories: unknown,
+    })
 }
 
 #[tauri::command]
-pub async fn backup_restore(state: State<'_, AppState>, request: BackupRestoreRequest) -> CommandResult<BackupRestoreResult> {
-    let raw = std::fs::read_to_string(&request.json_path).map_err(|e| CommandError { code: "IO_ERROR".into(), message: e.to_string(), detail: None, retryable: false })?;
+pub async fn backup_restore(
+    state: State<'_, AppState>,
+    request: BackupRestoreRequest,
+) -> CommandResult<BackupRestoreResult> {
+    let raw = std::fs::read_to_string(&request.json_path).map_err(|e| CommandError {
+        code: "IO_ERROR".into(),
+        message: e.to_string(),
+        detail: None,
+        retryable: false,
+    })?;
     restore_from_payload(&state, &raw, &request.categories)
 }
 
 #[tauri::command]
-pub async fn backup_restore_data(state: State<'_, AppState>, request: BackupRestoreDataRequest) -> CommandResult<BackupRestoreResult> {
+pub async fn backup_restore_data(
+    state: State<'_, AppState>,
+    request: BackupRestoreDataRequest,
+) -> CommandResult<BackupRestoreResult> {
     use base64::Engine as _;
-    let bytes = base64::engine::general_purpose::STANDARD.decode(&request.base64).map_err(|e| CommandError { code: "IO_ERROR".into(), message: e.to_string(), detail: None, retryable: false })?;
-    let raw = String::from_utf8(bytes).map_err(|e| CommandError { code: "IO_ERROR".into(), message: e.to_string(), detail: None, retryable: false })?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&request.base64)
+        .map_err(|e| CommandError {
+            code: "IO_ERROR".into(),
+            message: e.to_string(),
+            detail: None,
+            retryable: false,
+        })?;
+    let raw = String::from_utf8(bytes).map_err(|e| CommandError {
+        code: "IO_ERROR".into(),
+        message: e.to_string(),
+        detail: None,
+        retryable: false,
+    })?;
     restore_from_payload(&state, &raw, &request.categories)
 }
 
-fn restore_from_payload(state: &AppState, raw: &str, categories: &[String]) -> CommandResult<BackupRestoreResult> {
-    let payload: serde_json::Value = serde_json::from_str(raw).map_err(|e| CommandError { code: "IO_ERROR".into(), message: format!("备份文件格式无效: {e}"), detail: None, retryable: false })?;
-    let data = payload.get("data").ok_or_else(|| CommandError { code: "IO_ERROR".into(), message: "备份文件缺少 data 字段".into(), detail: None, retryable: false })?;
+fn restore_from_payload(
+    state: &AppState,
+    raw: &str,
+    categories: &[String],
+) -> CommandResult<BackupRestoreResult> {
+    let payload: serde_json::Value = serde_json::from_str(raw).map_err(|e| CommandError {
+        code: "IO_ERROR".into(),
+        message: format!("备份文件格式无效: {e}"),
+        detail: None,
+        retryable: false,
+    })?;
+    let data = payload.get("data").ok_or_else(|| CommandError {
+        code: "IO_ERROR".into(),
+        message: "备份文件缺少 data 字段".into(),
+        detail: None,
+        retryable: false,
+    })?;
     let reader_dir = state.core.reader_dir();
     let mut restored = Vec::new();
     let mut skipped = Vec::new();
-    let filter: Vec<String> = if categories.is_empty() || categories.iter().any(|c| c == "all") { LABELS.iter().map(|(id, _, _)| id.to_string()).collect() } else { categories.to_vec() };
+    let filter: Vec<String> = if categories.is_empty() || categories.iter().any(|c| c == "all") {
+        LABELS.iter().map(|(id, _, _)| id.to_string()).collect()
+    } else {
+        categories.to_vec()
+    };
 
     for cat in &filter {
         match cat.as_str() {
@@ -343,7 +507,13 @@ fn restore_from_payload(state: &AppState, raw: &str, categories: &[String]) -> C
                             let p = d.join(format!("{}.json", k));
                             if let Ok(json) = serde_json::to_string_pretty(v) {
                                 if std::fs::write(&p, &json).is_ok() {
-                                    restored.push(BackupCategoryStat { id: cat.clone(), label: cat.clone(), description: String::new(), item_count: 1, byte_size: json.len() as i64 });
+                                    restored.push(BackupCategoryStat {
+                                        id: cat.clone(),
+                                        label: cat.clone(),
+                                        description: String::new(),
+                                        item_count: 1,
+                                        byte_size: json.len() as i64,
+                                    });
                                 }
                             }
                         }
@@ -353,10 +523,18 @@ fn restore_from_payload(state: &AppState, raw: &str, categories: &[String]) -> C
             "bookshelf" => {
                 if let Some(shelf) = data.get("bookshelf") {
                     let sp = reader_dir.join("data").join("local").join("shelf.json");
-                    if let Some(parent) = sp.parent() { let _ = std::fs::create_dir_all(parent); }
+                    if let Some(parent) = sp.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
                     if let Ok(json) = serde_json::to_string_pretty(shelf) {
                         if std::fs::write(&sp, &json).is_ok() {
-                            restored.push(BackupCategoryStat { id: cat.clone(), label: cat.clone(), description: String::new(), item_count: 1, byte_size: json.len() as i64 });
+                            restored.push(BackupCategoryStat {
+                                id: cat.clone(),
+                                label: cat.clone(),
+                                description: String::new(),
+                                item_count: 1,
+                                byte_size: json.len() as i64,
+                            });
                         }
                     }
                 }
@@ -368,32 +546,84 @@ fn restore_from_payload(state: &AppState, raw: &str, categories: &[String]) -> C
                     let mut count = 0i64;
                     let mut bytes = 0i64;
                     for s in srcs {
-                        let name = s.get("bookSourceName").and_then(|v| v.as_str()).unwrap_or("unknown");
-                        let fnm = format!("{}.legado.json", name.replace(['/', '\\', ':', '?', '*', '"', '<', '>', '|'], "_"));
+                        let name = s
+                            .get("bookSourceName")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown");
+                        let fnm = format!(
+                            "{}.legado.json",
+                            name.replace(['/', '\\', ':', '?', '*', '"', '<', '>', '|'], "_")
+                        );
                         if let Ok(json) = serde_json::to_string_pretty(s) {
                             bytes += json.len() as i64;
-                            if std::fs::write(d.join(&fnm), &json).is_ok() { count += 1; }
+                            if std::fs::write(d.join(&fnm), &json).is_ok() {
+                                count += 1;
+                            }
                         }
                     }
-                    restored.push(BackupCategoryStat { id: cat.clone(), label: cat.clone(), description: String::new(), item_count: count, byte_size: bytes });
+                    restored.push(BackupCategoryStat {
+                        id: cat.clone(),
+                        label: cat.clone(),
+                        description: String::new(),
+                        item_count: count,
+                        byte_size: bytes,
+                    });
                 }
             }
-            _ => { skipped.push(cat.clone()); }
+            _ => {
+                skipped.push(cat.clone());
+            }
         }
     }
     Ok(BackupRestoreResult { restored, skipped })
 }
 
 // ── Browser Probe stubs ─────────────────────────────────
-#[tauri::command] pub async fn browser_probe_create() -> CommandResult<()> { Err(unsupported("浏览器探测")) }
-#[tauri::command] pub async fn browser_probe_close() -> CommandResult<()> { Err(unsupported("浏览器探测")) }
-#[tauri::command] pub async fn browser_probe_close_all() -> CommandResult<()> { Err(unsupported("浏览器探测")) }
-#[tauri::command] pub async fn browser_probe_hide() -> CommandResult<()> { Err(unsupported("浏览器探测")) }
-#[tauri::command] pub async fn browser_probe_show() -> CommandResult<()> { Err(unsupported("浏览器探测")) }
-#[tauri::command] pub async fn browser_probe_navigate() -> CommandResult<()> { Err(unsupported("浏览器探测")) }
-#[tauri::command] pub async fn browser_probe_eval() -> CommandResult<()> { Err(unsupported("浏览器探测")) }
-#[tauri::command] pub async fn browser_probe_run() -> CommandResult<()> { Err(unsupported("浏览器探测")) }
-#[tauri::command] pub async fn browser_probe_get_cookies() -> CommandResult<()> { Err(unsupported("浏览器探测")) }
-#[tauri::command] pub async fn browser_probe_set_cookie() -> CommandResult<()> { Err(unsupported("浏览器探测")) }
-#[tauri::command] pub async fn browser_probe_clear_data() -> CommandResult<()> { Err(unsupported("浏览器探测")) }
-#[tauri::command] pub async fn browser_probe_set_user_agent() -> CommandResult<()> { Err(unsupported("浏览器探测")) }
+#[tauri::command]
+pub async fn browser_probe_create() -> CommandResult<()> {
+    Err(unsupported("浏览器探测"))
+}
+#[tauri::command]
+pub async fn browser_probe_close() -> CommandResult<()> {
+    Err(unsupported("浏览器探测"))
+}
+#[tauri::command]
+pub async fn browser_probe_close_all() -> CommandResult<()> {
+    Err(unsupported("浏览器探测"))
+}
+#[tauri::command]
+pub async fn browser_probe_hide() -> CommandResult<()> {
+    Err(unsupported("浏览器探测"))
+}
+#[tauri::command]
+pub async fn browser_probe_show() -> CommandResult<()> {
+    Err(unsupported("浏览器探测"))
+}
+#[tauri::command]
+pub async fn browser_probe_navigate() -> CommandResult<()> {
+    Err(unsupported("浏览器探测"))
+}
+#[tauri::command]
+pub async fn browser_probe_eval() -> CommandResult<()> {
+    Err(unsupported("浏览器探测"))
+}
+#[tauri::command]
+pub async fn browser_probe_run() -> CommandResult<()> {
+    Err(unsupported("浏览器探测"))
+}
+#[tauri::command]
+pub async fn browser_probe_get_cookies() -> CommandResult<()> {
+    Err(unsupported("浏览器探测"))
+}
+#[tauri::command]
+pub async fn browser_probe_set_cookie() -> CommandResult<()> {
+    Err(unsupported("浏览器探测"))
+}
+#[tauri::command]
+pub async fn browser_probe_clear_data() -> CommandResult<()> {
+    Err(unsupported("浏览器探测"))
+}
+#[tauri::command]
+pub async fn browser_probe_set_user_agent() -> CommandResult<()> {
+    Err(unsupported("浏览器探测"))
+}
