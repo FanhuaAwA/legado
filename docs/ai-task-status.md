@@ -2,18 +2,40 @@
 
 本文件记录各任务模块的当前完成状态，用于后续 AI 快速了解已完成和待完成事项。不要将完成状态写入 README、用户文档或源码注释。
 
-## 环境状态
+## 环境状态（2026-06-10 实测）
 
 ```text
 android.symlink = resolved
 android.release = passed_unsigned
 windows.release = passed
-reader-core.tests = passed（33 passed, 3 live-network ignored）
+reader-core.tests = passed（36 passed, 2 live-network ignored）
 tauri.cargo_check = passed
-frontend.lint = passed（75 warnings, 0 errors）
-format.baseline = passed
-command_contract = 159 frontend, 163 registered, 158 matched, 1 security-blocked (js_eval)
+tauri.tests = passed（含 web_server_stop_releases_port_for_restart 回归）
+frontend.lint = passed（79 warnings, 0 errors）
+format.baseline = passed（oxfmt --check . 370 files）
+command_contract = 160 frontend, 162 registered, 159 matched, 1 onlyFrontend(js_eval), 58 stub, 101 impl
 ```
+
+实测命令：`node scripts/ci/check-command-contract.mjs --json`、`git status --short`、`pnpm exec oxfmt --check .`。
+
+## 2026-06-10 进展（R 队列 batch1 + batch2）
+
+详见 `E:\Book\legado-tauri-mandatory-completion-audit.md` 第 3 节 R 条目状态行，与 `reports/gates/2026-06-10-1016-R-batch1/summary.md`。
+
+已 closed：
+
+- **R-P0-003（书旗/七猫）**：实网全链路 strict pass。书旗 search→toc(4785)→content(12904字符)；七猫 search→toc(2551)→content(14648字符)。根因修复两处：
+  - reader-core `js.rs`：reqwest::blocking 改走独立 OS 线程，修复异步规则路径下 tokio runtime drop panic（影响所有 java.ajax 源）。
+  - reader-core `js.rs`：`eval_script` 首次 eval 前补 var + 排除已声明名，修复 strict-mode `let + 未声明赋值` 永久失败（七猫 toc 根因）。
+- **R-P1-001**：契约脚本分类器重写为逐函数括号配平 + 内置自检夹具。
+- **R-P1-002**：`web_server_stop` 端口/线程泄漏修复（关闭标志 + 非阻塞轮询），含回归测试。
+- **R-P1-003**：`SectionBackup.vue` 文件选择器 zip→json。
+
+新登记：R-P2-007（规则引擎 content/toc JS 未绑定 `book` 对象，七猫已书源侧规避）。
+
+待办（下一轮）：R-P0-002（重写本文件下方 STUB/审计表的自相矛盾、5 个争议命令逐个实测定真伪）、R-P0-001（58 个 stub 集中式能力声明与 UI 隐藏，最大缺口）、R-P2-003/004（番茄/番茄短剧）。
+
+> ⚠ 下方「2026-06-09 强制优先修复项」「STUB Command」「缺失 Command」等历史表格的数字与结论早于本轮实测，部分自相矛盾（同一命令既标 FIXED 又标 FAKE/SHALLOW）。后续 AI 处理 R-P0-002 时必须以源码 + 当轮实测为准重写这些表，不得直接采信。
 
 ## 2026-06-09 强制优先修复项
 
