@@ -1,5 +1,24 @@
 # AI Iteration Log
 
+## 记录标题：2026-06-10 R-P1-004 onlyBackend 契约扫描漏报修正
+
+本轮目标：关闭 R-P1-004，逐个处置 `bookshelf_export_book_data`、`sync_baidu_start_auth`、`sync_baidu_token_status` 这 3 个旧表 onlyBackend 命令。
+
+当前结论：R-P1-004 closed。3 个命令都不是后台孤儿，根因是 `scripts/ci/check-command-contract.mjs` 旧正则漏扫 `invokeWithTimeout<T>` 的多行泛型调用。修正后实测：`frontendTotal=164`、`registeredTotal=163`、`bothCount=163`、`onlyFrontend=js_eval`、`onlyBackend=0`、`frontend_implemented_count=103`、`frontend_unsupported_stub_count=60`。
+
+修改文件：
+
+- `scripts/ci/check-command-contract.mjs`：前端扫描从单个正则改为轻量词法扫描，支持空白、注释、多行泛型、嵌套泛型和换行首参；新增自测覆盖 `bookshelf_export_book_data`、`sync_baidu_token_status`、`sync_baidu_start_auth`，并继续排除 `bridge.invoke(...)` 这类非 Tauri 调用。
+- `docs/command-matrix.md`、`docs/ai-task-status.md`：同步新契约基线；`bookshelf_export_book_data` 归入已实现前端命令，两个百度 sync 命令归入 `unsupported_hidden`。
+- `E:\Book\legado-tauri-mandatory-completion-audit.md`：更新 R-P1-004 状态和后续队列。
+- `reports/gates/2026-06-10-1818-R-P1-004-contract-scanner/summary.md`：新增本轮门禁报告。
+
+R-P0-001 口径修正：旧 58/58 是扫描器漏报后的历史口径；修正后为 60/60。新增计入的两个 sync 命令早已在 `SectionSync.vue` 通过 sync 能力门禁隐藏/禁用，因此 R-P0-001 仍为 closed，不需要重做能力声明。
+
+验证命令：`node scripts/ci/check-command-contract.mjs --json`、`pnpm exec oxfmt .`、`pnpm exec oxfmt --check .`、`pnpm lint`、`pnpm build`、`cargo check -p reader-core`、`cargo check -p legado-tauri`、`cargo test -p reader-core`。
+
+下一轮第一件事：R-P2-001，补 Android 签名配置说明与发布前检查，密钥不入库；如果需要真实 keystore/密码，把该项 blocker 写入状态文档后继续 R-P2 队列。
+
 ## 记录标题：2026-06-10 R-P0-001 能力声明收口完成（58/58）
 
 本轮目标：关闭 R-P0-001 的剩余前端可触达 UNSUPPORTED 入口裸露问题。后端 stub 数量不会因此减少，本轮只处理 UI/调用层门禁、降级和文档逐条归档。

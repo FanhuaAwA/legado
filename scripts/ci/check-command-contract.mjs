@@ -30,6 +30,121 @@ const KNOWN_NON_COMMANDS = new Set([
 const SECURITY_BLOCKED = new Set(["js_eval"]);
 const compareStrings = (a, b) => a.localeCompare(b);
 
+function skipWhitespaceAndComments(text, index) {
+  let i = index;
+  while (i < text.length) {
+    if (/\s/.test(text[i])) {
+      i++;
+      continue;
+    }
+    if (text.startsWith("//", i)) {
+      const end = text.indexOf("\n", i + 2);
+      i = end < 0 ? text.length : end + 1;
+      continue;
+    }
+    if (text.startsWith("/*", i)) {
+      const end = text.indexOf("*/", i + 2);
+      i = end < 0 ? text.length : end + 2;
+      continue;
+    }
+    break;
+  }
+  return i;
+}
+
+function skipQuoted(text, index) {
+  const quote = text[index];
+  let i = index + 1;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === "\\") {
+      i += 2;
+      continue;
+    }
+    if (ch === quote) {
+      return i + 1;
+    }
+    i++;
+  }
+  return text.length;
+}
+
+function skipTypeArguments(text, index) {
+  let i = skipWhitespaceAndComments(text, index);
+  if (text[i] !== "<") {
+    return i;
+  }
+
+  let depth = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '"' || ch === "'" || ch === "`") {
+      i = skipQuoted(text, i);
+      continue;
+    }
+    if (text.startsWith("//", i) || text.startsWith("/*", i)) {
+      i = skipWhitespaceAndComments(text, i);
+      continue;
+    }
+    if (ch === "<") {
+      depth++;
+    } else if (ch === ">") {
+      depth--;
+      if (depth === 0) {
+        return i + 1;
+      }
+    }
+    i++;
+  }
+  return index;
+}
+
+function readStringLiteral(text, index) {
+  const quote = text[index];
+  if (quote !== '"' && quote !== "'") {
+    return null;
+  }
+  let value = "";
+  for (let i = index + 1; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "\\") {
+      if (i + 1 < text.length) {
+        value += text[i + 1];
+        i++;
+      }
+      continue;
+    }
+    if (ch === quote) {
+      return value;
+    }
+    value += ch;
+  }
+  return null;
+}
+
+function readFirstInvokeArgument(text, index) {
+  let i = skipTypeArguments(text, index);
+  i = skipWhitespaceAndComments(text, i);
+  if (text[i] !== "(") {
+    return null;
+  }
+  i = skipWhitespaceAndComments(text, i + 1);
+  return readStringLiteral(text, i);
+}
+
+function scanFrontendInvokeCommands(content) {
+  const commands = [];
+  const re = /invokeWithTimeout|(?<!\.)\binvoke\b/g;
+  let m;
+  while ((m = re.exec(content)) !== null) {
+    const name = readFirstInvokeArgument(content, m.index + m[0].length);
+    if (name) {
+      commands.push(name);
+    }
+  }
+  return commands;
+}
+
 // ── 扫描前端 invoke ────────────────────────────────────────
 function collectFrontendCommands() {
   const cmdToFiles = new Map();
@@ -38,10 +153,7 @@ function collectFrontendCommands() {
     if (!/\.(ts|vue|js|tsx)$/.test(filePath)) return;
     try {
       const content = readFileSync(filePath, "utf-8");
-      const re = /(?:invokeWithTimeout|(?<!\.)\binvoke)(?:<.+?>)?\s*\(\s*["']([^"']+)["']/g;
-      let m;
-      while ((m = re.exec(content)) !== null) {
-        const name = m[1];
+      for (const name of scanFrontendInvokeCommands(content)) {
         if (KNOWN_NON_COMMANDS.has(name)) continue;
         if (!cmdToFiles.has(name)) cmdToFiles.set(name, new Set());
         cmdToFiles.get(name).add(relative(projectRoot, filePath));
@@ -233,6 +345,48 @@ pub async fn fixture_impl_after_stub() -> CommandResult<String> {
   }
 }
 selfTestClassifier();
+
+function selfTestFrontendScanner() {
+  const fixture = `
+import { invokeWithTimeout } from "./useInvoke";
+const data = await invokeWithTimeout<{
+  fileName: string;
+  nested: Array<{ id: string; value: Promise<{ ok: boolean }> }>;
+}>("bookshelf_export_book_data", { id, format }, 10_000);
+await invokeWithTimeout<{ valid: boolean }>(
+  "sync_baidu_token_status",
+  undefined,
+  8000,
+);
+const auth = await invokeWithTimeout<{
+  device_code: string;
+  verification_url: string;
+  user_code: string;
+  expires_in: number;
+  interval: number;
+}>("sync_baidu_start_auth", undefined, 15000);
+await invoke("plain_command", {});
+bridge.invoke("not_a_tauri_command");
+`;
+  const got = new Set(scanFrontendInvokeCommands(fixture));
+  const expected = [
+    "bookshelf_export_book_data",
+    "sync_baidu_token_status",
+    "sync_baidu_start_auth",
+    "plain_command",
+  ];
+  for (const name of expected) {
+    if (!got.has(name)) {
+      console.error(`SELF-TEST FAILED: frontend scanner missed ${name}`);
+      process.exit(2);
+    }
+  }
+  if (got.has("not_a_tauri_command")) {
+    console.error("SELF-TEST FAILED: frontend scanner matched object.invoke");
+    process.exit(2);
+  }
+}
+selfTestFrontendScanner();
 
 function detectStubs() {
   return classifyAllCommands().stubs;

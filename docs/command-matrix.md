@@ -2,7 +2,7 @@
 
 本文件由 `scripts/ci/check-command-contract.mjs` 的 2026-06-10 实测结果半自动重建。旧的 2026-06-09 手工矩阵已删除，后续不得再手工沿用过期统计。
 
-最后实测：2026-06-10 15:50 +0800
+最后实测：2026-06-10 18:18 +0800
 
 实测命令：
 
@@ -13,17 +13,17 @@ node scripts/ci/check-command-contract.mjs
 
 ## 统计口径
 
-| 指标                              | 数值 | 说明                                                                             |
-| --------------------------------- | ---: | -------------------------------------------------------------------------------- |
-| frontendTotal                     |  161 | 前端 invoke 调用去重后数量                                                       |
-| registeredTotal                   |  163 | `generate_handler!` 注册命令数量                                                 |
-| bothCount                         |  160 | 前后端同名匹配数量                                                               |
-| onlyFrontend                      |    1 | `js_eval`，安全阻断，有意不注册                                                  |
-| onlyBackend                       |    3 | `bookshelf_export_book_data`, `sync_baidu_start_auth`, `sync_baidu_token_status` |
-| registered_implemented_count      |  103 | 全部已注册命令中的实现数量，含后台孤儿                                           |
-| registered_unsupported_stub_count |   60 | 全部已注册命令中的 UNSUPPORTED stub，含后台孤儿                                  |
-| frontend_implemented_count        |  102 | 前端可触达且已实现                                                               |
-| frontend_unsupported_stub_count   |   58 | 前端可触达但仅返回 UNSUPPORTED，R-P0-001 验收口径                                |
+| 指标                              | 数值 | 说明                                                |
+| --------------------------------- | ---: | --------------------------------------------------- |
+| frontendTotal                     |  164 | 前端 invoke 调用去重后数量                          |
+| registeredTotal                   |  163 | `generate_handler!` 注册命令数量                    |
+| bothCount                         |  163 | 前后端同名匹配数量                                  |
+| onlyFrontend                      |    1 | `js_eval`，安全阻断，有意不注册                     |
+| onlyBackend                       |    0 | 无                                                  |
+| registered_implemented_count      |  103 | 全部已注册命令中的实现数量                          |
+| registered_unsupported_stub_count |   60 | 全部已注册命令中的 UNSUPPORTED stub                 |
+| frontend_implemented_count        |  103 | 前端可触达且已实现                                  |
+| frontend_unsupported_stub_count   |   60 | 前端可触达但仅返回 UNSUPPORTED，R-P0-001 修正后口径 |
 
 `classification` 数组的口径是 `frontend-facing registered commands`。需要全注册命令时使用 `registeredClassification`。
 
@@ -35,11 +35,7 @@ node scripts/ci/check-command-contract.mjs
 
 ## Backend Only
 
-| Command                      | 分类             | 处置                                                           |
-| ---------------------------- | ---------------- | -------------------------------------------------------------- |
-| `bookshelf_export_book_data` | implemented      | R-P1-004：确认移动端导出是否漏接；若已有替代方案则记录保留原因 |
-| `sync_baidu_start_auth`      | unsupported_stub | R-P1-004：onlyBackend sync stub，R-P0-001 前端入口已关闭       |
-| `sync_baidu_token_status`    | unsupported_stub | R-P1-004：onlyBackend sync stub，R-P0-001 前端入口已关闭       |
+R-P1-004 修正前端扫描器后，当前无 backend-only 命令。旧表中的 3 个命令均为 `invokeWithTimeout<T>` 多行泛型调用漏扫：`bookshelf_export_book_data` 是移动端导出前端路径；`sync_baidu_start_auth` 与 `sync_baidu_token_status` 是同步设置页前端路径，并已由 sync 能力门禁隐藏。
 
 ## 争议命令裁决
 
@@ -57,6 +53,8 @@ node scripts/ci/check-command-contract.mjs
 
 | 模块                     | Command                              | 当前处置            |
 | ------------------------ | ------------------------------------ | ------------------- |
+| sync                     | `sync_baidu_start_auth`              | unsupported_hidden  |
+| sync                     | `sync_baidu_token_status`            | unsupported_hidden  |
 | sync                     | `sync_baidu_poll_token`              | unsupported_hidden  |
 | sync                     | `sync_baidu_revoke_auth`             | unsupported_hidden  |
 | sync                     | `sync_client_state_set`              | unsupported_hidden  |
@@ -135,6 +133,7 @@ backup_restore_data
 bookshelf_add
 bookshelf_delete_content
 bookshelf_export_book
+bookshelf_export_book_data
 bookshelf_get
 bookshelf_get_cached_indices
 bookshelf_get_chapters
