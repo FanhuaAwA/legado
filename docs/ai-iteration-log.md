@@ -1,5 +1,23 @@
 # AI Iteration Log
 
+## 记录标题：2026-06-10 R-P2-001 Android release 签名配置闭环
+
+本轮目标：关闭 R-P2-001，建立 Android release signing 的配置说明、Gradle 签名段和发布前检查；真实 keystore/密码不得入库。
+
+当前结论：R-P2-001 closed。仓库现在提供 `keystore.properties.example`、可选 release signingConfig 和 `:app:checkReleaseSigning` 任务。没有本地 `keystore.properties` 时，普通 Android release 构建仍产出 unsigned APK 供验证；正式发布前必须先配置本地 keystore 并让 `checkReleaseSigning` 通过。
+
+修改文件：
+
+- `src-tauri/gen/android/app/build.gradle.kts`：读取本地 `keystore.properties`，字段齐全时自动给 release buildType 挂载 signingConfig；新增 `checkReleaseSigning` 任务，缺少 `storeFile/storePassword/keyAlias/keyPassword` 或 keystore 文件不存在时失败。
+- `src-tauri/gen/android/app/keystore.properties.example`：新增本地配置模板，使用 `PKCS12` 示例。
+- `.gitignore`：忽略 `*.jks`、`*.keystore`、`*.p12`、`*.pfx`，避免误提交密钥。
+- `docs/platform-android.md`：补 keytool 生成命令、配置示例、发布前检查命令和 unsigned 验证包说明。
+- `docs/ai-task-status.md`、`E:\Book\legado-tauri-mandatory-completion-audit.md`、`reports/gates/2026-06-10-1846-R-P2-001-android-signing/summary.md`：同步状态和证据。
+
+验证命令：`.\gradlew.bat :app:tasks --all`、`.\gradlew.bat :app:checkReleaseSigning`（无本地密钥时 expected fail）、`pnpm run build:android:release`、`pnpm exec oxfmt --check .`、`pnpm lint`、`pnpm build`、`cargo check -p reader-core`、`cargo check -p legado-tauri`、`node scripts/ci/check-command-contract.mjs --json`。
+
+下一轮第一件事：R-P2-002，按总纲第 56.10.6 节分类处理 lint warnings；不要粗暴删除 `new Function`、书源脚本执行、插件执行这类有业务边界的 warning。
+
 ## 记录标题：2026-06-10 R-P1-004 onlyBackend 契约扫描漏报修正
 
 本轮目标：关闭 R-P1-004，逐个处置 `bookshelf_export_book_data`、`sync_baidu_start_auth`、`sync_baidu_token_status` 这 3 个旧表 onlyBackend 命令。

@@ -41,6 +41,10 @@ reader-rust/
 # 本地配置文件
 .env
 *.local
+*.jks
+*.keystore
+*.p12
+*.pfx
 
 # Agent skills（本地安装产物）
 .agents/
