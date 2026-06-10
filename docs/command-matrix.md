@@ -1,171 +1,231 @@
 # Command Matrix
 
-前端调用的 command 与后端 Rust 实现的对照矩阵。状态标记：
+本文件由 `scripts/ci/check-command-contract.mjs` 的 2026-06-10 实测结果半自动重建。旧的 2026-06-09 手工矩阵已删除，后续不得再手工沿用过期统计。
 
-- **OK** = 已注册且基本实现
-- **PARTIAL** = 已注册但部分实现或有已知限制
-- **STUB** = 已注册但仅返回 UNSUPPORTED/空
-- **MISSING** = 前端调用但后端未注册
+最后实测：2026-06-10 11:43 +0800
 
-## 2026-06-09 审计覆盖说明
+实测命令：
 
-本文件下方旧表格已不完整，不能继续作为唯一事实来源。2026-06-09 复扫发现：
-
-```text
-frontend.invoke.count ~= 159
-tauri.registered.count ~= 80
-missing.frontend_to_tauri ~= 84
+```powershell
+node scripts/ci/check-command-contract.mjs --json
+node scripts/ci/check-command-contract.mjs
 ```
 
-后续 AI 必须先按 `docs/critical-remediation-plan.md` 创建 `scripts/ci/check-command-contract.mjs`，自动生成 command 差集，再重建本文件。不得继续手工维护一个会过期的矩阵。
+## 统计口径
 
-当前高风险缺失分组：
+| 指标                              | 数值 | 说明                                                                             |
+| --------------------------------- | ---: | -------------------------------------------------------------------------------- |
+| frontendTotal                     |  160 | 前端 invoke 调用去重后数量                                                       |
+| registeredTotal                   |  162 | `generate_handler!` 注册命令数量                                                 |
+| bothCount                         |  159 | 前后端同名匹配数量                                                               |
+| onlyFrontend                      |    1 | `js_eval`，安全阻断，有意不注册                                                  |
+| onlyBackend                       |    3 | `bookshelf_export_book_data`, `sync_baidu_start_auth`, `sync_baidu_token_status` |
+| registered_implemented_count      |  102 | 全部已注册命令中的实现数量，含后台孤儿                                           |
+| registered_unsupported_stub_count |   60 | 全部已注册命令中的 UNSUPPORTED stub，含后台孤儿                                  |
+| frontend_implemented_count        |  101 | 前端可触达且已实现                                                               |
+| frontend_unsupported_stub_count   |   58 | 前端可触达但仅返回 UNSUPPORTED，R-P0-001 验收口径                                |
 
-- 书源/仓库：`booksource_apply_update`、`booksource_check_update`、`booksource_delete_draft`、`booksource_http_proxy`、`booksource_open_in_vscode`、`booksource_resolve_path`、`repository_*`。
-- 书架/导出/缓存：`bookshelf_export_book`、`bookshelf_export_book_data`、`bookshelf_reveal_export_file`、`comic_*`、`cover_*`。
-- 调试/浏览器：`browser_probe_*`、`web_server_*`。
-- 备份/同步：`backup_*`、`sync_*`。
-- TTS/视频/字体：`tts_*`、`start_video_proxy`、`stop_video_proxy`、`list_system_fonts`、`upload_user_font`。
+`classification` 数组的口径是 `frontend-facing registered commands`。需要全注册命令时使用 `registeredClassification`。
 
-当前已知“注册了但不真实”的命令：
+## Frontend Only
 
-- `booksource_cancel`：有 registry，但没有任务注册链路。
-- `booksource_purchase_chapter`：Legado 规则源仍固定返回成功。
-- `booksource_run_tests`：忽略 timeout/filter，Legado 源只返回能力配置。
-- `storage_debug_dump`：多个数据区为空对象。
+| Command   | 状态             | 处置                             |
+| --------- | ---------------- | -------------------------------- |
+| `js_eval` | security_blocked | 有意不注册，禁止作为缺失命令处理 |
 
-修复原则：
+## Backend Only
 
-1. UI 可点击入口存在时，后端必须真实实现或返回结构化 `UNSUPPORTED`。
-2. 不支持的功能必须让 UI 禁用或显示明确原因。
-3. 禁止固定成功、空数组、空对象、空字符串冒充功能完成。
-4. 每次 command 变更后必须重新运行 command contract 检查。
+| Command                      | 分类             | 处置                                                           |
+| ---------------------------- | ---------------- | -------------------------------------------------------------- |
+| `bookshelf_export_book_data` | implemented      | R-P1-004：确认移动端导出是否漏接；若已有替代方案则记录保留原因 |
+| `sync_baidu_start_auth`      | unsupported_stub | R-P1-004/R-P0-001：sync 模块统一隐藏或实现                     |
+| `sync_baidu_token_status`    | unsupported_stub | R-P1-004/R-P0-001：sync 模块统一隐藏或实现                     |
 
-## 书源管理 (booksource\_\*)
+## 争议命令裁决
 
-| Command                              | 前端调用                | 后端注册  | 状态 | 备注                                         |
-| ------------------------------------ | ----------------------- | --------- | ---- | -------------------------------------------- |
-| `booksource_get_dir`                 | useBookSource.ts        | source.rs | OK   |                                              |
-| `booksource_get_dirs`                | useBookSource.ts        | source.rs | OK   |                                              |
-| `booksource_add_dir`                 | useBookSource.ts        | source.rs | OK   |                                              |
-| `booksource_remove_dir`              | useBookSource.ts        | source.rs | OK   |                                              |
-| `booksource_pick_dir`                | useBookSource.ts        | source.rs | OK   | 桌面端保留，非桌面返回 UNSUPPORTED           |
-| `booksource_list`                    | useBookSource.ts        | source.rs | OK   |                                              |
-| `booksource_list_streaming`          | useBookSource.ts        | source.rs | OK   | 分批增量推送（每批 20），多次 emit           |
-| `booksource_read`                    | useBookSource.ts        | source.rs | OK   |                                              |
-| `booksource_save`                    | useBookSource.ts        | source.rs | OK   |                                              |
-| `booksource_delete`                  | useBookSource.ts        | source.rs | OK   |                                              |
-| `booksource_delete_batch`            | useBookSource.ts        | source.rs | OK   |                                              |
-| `booksource_toggle`                  | useBookSource.ts        | source.rs | OK   |                                              |
-| `booksource_import_legacy_json_text` | BookSourceInstallDialog | source.rs | OK   |                                              |
-| `booksource_import_legacy_json_url`  | BookSourceInstallDialog | source.rs | OK   |                                              |
-| `booksource_eval`                    | useBookSource.ts        | source.rs | OK   | 空 code→能力列表；非空→sandbox rquickjs 评估 |
-| `booksource_save_draft`              | useAiAgent.ts:338       | source.rs | OK   | 保存到 drafts 目录                           |
-| `booksource_run_tests`               | useAiAgent.ts:560       | source.rs | OK   | 运行 search/bookInfo/等测试步骤              |
+| Command                       | 当前状态                            | 裁决                                                                      |
+| ----------------------------- | ----------------------------------- | ------------------------------------------------------------------------- |
+| `booksource_cancel`           | implemented_with_limit              | 真实接入 `TaskRegistry`，不是假取消；限制是不能抢占已经进入的单次网络请求 |
+| `booksource_purchase_chapter` | implemented_or_explicit_unsupported | JS 源调用真实函数；Legado 规则源返回显式不支持，不再固定成功              |
+| `booksource_call_fn`          | implemented_for_js_source           | JS 源调用真实函数；Legado 规则源返回明确错误                              |
+| `booksource_run_tests`        | implemented                         | 支持 step filter、timeout 和真实链路执行                                  |
+| `storage_debug_dump`          | implemented_summary                 | 读取真实 frontend namespace、app config、书架数量和路径摘要               |
 
-## 书源执行 (booksource\_\*)
+## Frontend-Facing Unsupported Stubs
 
-| Command                       | 前端调用                    | 后端注册  | 状态 | 备注                                 |
-| ----------------------------- | --------------------------- | --------- | ---- | ------------------------------------ |
-| `booksource_search`           | scriptBridge.ts:213         | source.rs | OK   | Legado + JS 双运行时                 |
-| `booksource_book_info`        | scriptBridge.ts:227         | source.rs | OK   |                                      |
-| `booksource_chapter_list`     | scriptBridge.ts:242         | source.rs | OK   |                                      |
-| `booksource_chapter_content`  | scriptBridge.ts:270         | source.rs | OK   |                                      |
-| `booksource_purchase_chapter` | scriptBridge.ts:293         | source.rs | STUB | 返回 `{ ok: true, purchased: true }` |
-| `booksource_explore`          | scriptBridge.ts:395         | source.rs | OK   |                                      |
-| `booksource_call_fn`          | scriptBridge.ts:313+        | source.rs | STUB | 返回 UNSUPPORTED                     |
-| `booksource_cancel`           | scriptBridge.ts/prefetch.ts | source.rs | OK   | TaskRegistry + AtomicBool 取消       |
+这些命令是 R-P0-001 的 UI 入口隐藏/禁用目标。逐条结果后续必须更新为 `implemented`、`unsupported_hidden` 或 `blocked_by_platform`。
 
-## 书架 (bookshelf\_\*)
+| 模块                     | Command                              | 当前处置          |
+| ------------------------ | ------------------------------------ | ----------------- |
+| sync                     | `sync_baidu_poll_token`              | pending_ui_hidden |
+| sync                     | `sync_baidu_revoke_auth`             | pending_ui_hidden |
+| sync                     | `sync_client_state_set`              | pending_ui_hidden |
+| sync                     | `sync_get_status`                    | pending_ui_hidden |
+| sync                     | `sync_set_credentials`               | pending_ui_hidden |
+| sync                     | `sync_clear_credentials`             | pending_ui_hidden |
+| sync                     | `sync_get_credentials`               | pending_ui_hidden |
+| sync                     | `sync_test_connection`               | pending_ui_hidden |
+| sync                     | `sync_now`                           | pending_ui_hidden |
+| sync                     | `sync_list_conflicts`                | pending_ui_hidden |
+| sync                     | `sync_resolve_conflict`              | pending_ui_hidden |
+| sync                     | `sync_report_reader_session`         | pending_ui_hidden |
+| sync                     | `sync_v2_sync_reading_progress`      | pending_ui_hidden |
+| sync                     | `sync_notify_lifecycle`              | pending_ui_hidden |
+| tts                      | `tts_stop`                           | pending_ui_hidden |
+| tts                      | `tts_is_initialized`                 | pending_ui_hidden |
+| tts                      | `tts_is_speaking`                    | pending_ui_hidden |
+| tts                      | `tts_speak`                          | pending_ui_hidden |
+| tts                      | `tts_get_voices`                     | pending_ui_hidden |
+| tts                      | `tts_preview_voice`                  | pending_ui_hidden |
+| video                    | `start_video_proxy`                  | pending_ui_hidden |
+| video                    | `stop_video_proxy`                   | pending_ui_hidden |
+| browser_probe            | `browser_probe_create`               | pending_ui_hidden |
+| browser_probe            | `browser_probe_navigate`             | pending_ui_hidden |
+| browser_probe            | `browser_probe_eval`                 | pending_ui_hidden |
+| browser_probe            | `browser_probe_run`                  | pending_ui_hidden |
+| browser_probe            | `browser_probe_get_cookies`          | pending_ui_hidden |
+| browser_probe            | `browser_probe_set_cookie`           | pending_ui_hidden |
+| browser_probe            | `browser_probe_set_user_agent`       | pending_ui_hidden |
+| browser_probe            | `browser_probe_clear_data`           | pending_ui_hidden |
+| browser_probe            | `browser_probe_show`                 | pending_ui_hidden |
+| browser_probe            | `browser_probe_hide`                 | pending_ui_hidden |
+| browser_probe            | `browser_probe_close`                | pending_ui_hidden |
+| browser_probe            | `browser_probe_close_all`            | pending_ui_hidden |
+| comic_cover              | `comic_download_images`              | pending_ui_hidden |
+| comic_cover              | `comic_get_page_sizes`               | pending_ui_hidden |
+| comic_cover              | `comic_get_cached_page`              | pending_ui_hidden |
+| comic_cover              | `comic_cache_clear_chapter`          | pending_ui_hidden |
+| comic_cover              | `comic_cache_clear`                  | pending_ui_hidden |
+| comic_cover              | `comic_cache_size`                   | pending_ui_hidden |
+| comic_cover              | `cover_resolve_cache`                | pending_ui_hidden |
+| comic_cover              | `cover_cache_size`                   | pending_ui_hidden |
+| comic_cover              | `cover_cache_clear`                  | pending_ui_hidden |
+| repository/source_update | `booksource_check_update`            | pending_ui_hidden |
+| repository/source_update | `booksource_apply_update`            | pending_ui_hidden |
+| repository/source_update | `repository_fetch`                   | pending_ui_hidden |
+| repository/source_update | `repository_install`                 | pending_ui_hidden |
+| repository/source_update | `repository_preview_source`          | pending_ui_hidden |
+| repository/source_update | `repository_check_source_sync`       | pending_ui_hidden |
+| update/unlock/misc       | `ai_http_proxy_url`                  | pending_ui_hidden |
+| update/unlock/misc       | `app_update_download`                | pending_ui_hidden |
+| update/unlock/misc       | `app_update_install_downloaded_file` | pending_ui_hidden |
+| update/unlock/misc       | `frontend_plugin_http_request`       | pending_ui_hidden |
+| update/unlock/misc       | `explore_clear_cache`                | pending_ui_hidden |
+| update/unlock/misc       | `issue_full_mode_challenge`          | pending_ui_hidden |
+| update/unlock/misc       | `verify_full_mode_challenge`         | pending_ui_hidden |
+| update/unlock/misc       | `issue_scoped_unlock_challenge`      | pending_ui_hidden |
+| update/unlock/misc       | `verify_scoped_unlock_challenge`     | pending_ui_hidden |
 
-| Command                           | 前端调用                | 后端注册     | 状态 | 备注                           |
-| --------------------------------- | ----------------------- | ------------ | ---- | ------------------------------ |
-| `bookshelf_list`                  | bookshelf.ts:68         | bookshelf.rs | OK   |                                |
-| `bookshelf_add`                   | bookshelf.ts:97         | bookshelf.rs | OK   |                                |
-| `bookshelf_remove`                | bookshelf.ts:107        | bookshelf.rs | OK   |                                |
-| `bookshelf_get`                   | bookshelf.ts:220        | bookshelf.rs | OK   |                                |
-| `bookshelf_update_progress`       | bookshelf.ts:236        | bookshelf.rs | OK   |                                |
-| `bookshelf_set_private`           | bookshelf.ts:271        | bookshelf.rs | OK   |                                |
-| `bookshelf_save_chapters`         | bookshelf.ts:163,277    | bookshelf.rs | OK   |                                |
-| `bookshelf_get_chapters`          | bookshelf.ts:282        | bookshelf.rs | OK   |                                |
-| `bookshelf_update_book`           | bookshelf.ts:183,320    | bookshelf.rs | OK   |                                |
-| `bookshelf_restore_source_switch` | bookshelf.ts:372        | bookshelf.rs | OK   |                                |
-| `bookshelf_save_content`          | bookshelf.ts:382        | bookshelf.rs | OK   |                                |
-| `bookshelf_get_content`           | bookshelf.ts:387        | bookshelf.rs | OK   |                                |
-| `bookshelf_delete_content`        | bookshelf.ts:392        | bookshelf.rs | OK   |                                |
-| `bookshelf_get_cached_indices`    | bookshelf.ts:397        | bookshelf.rs | OK   |                                |
-| `bookshelf_save_txt_chapters`     | bookshelf.ts:170        | bookshelf.rs | OK   |                                |
-| `bookshelf_get_episode_progress`  | bookshelf.ts:404        | bookshelf.rs | OK   |                                |
-| `bookshelf_save_episode_progress` | bookshelf.ts:418        | bookshelf.rs | OK   |                                |
-| `bookshelf_prefetch_chapters`     | prefetch.ts:235,285     | bookshelf.rs | OK   | 后台逐章缓存正文               |
-| `bookshelf_pick_save_path`        | exportFile.ts:112       | bookshelf.rs | OK   | 桌面端原生保存对话框           |
-| `bookshelf_reveal_data_dir`       | bookshelfActions.ts:116 | bookshelf.rs | OK   | 打开阅读器数据目录             |
-| `export_save_file`                | exportFile.ts:55        | bookshelf.rs | OK   | 选择路径 + base64/文本写入文件 |
+## Implemented Frontend-Facing Commands
 
-## 音频 (audio\_\*)
+以下命令由契约脚本判定为前端可触达且非 UNSUPPORTED stub。业务深度不由本矩阵替代专项验收。
 
-| Command               | 前端调用           | 后端注册  | 状态 | 备注                   |
-| --------------------- | ------------------ | --------- | ---- | ---------------------- |
-| `audio_resolve_cache` | musicPlayer.ts:375 | system.rs | OK   | 代理下载音频缓存到本地 |
+```text
+app_config_get_all
+app_config_reset
+app_config_set
+audio_resolve_cache
+backup_create
+backup_create_data
+backup_inspect
+backup_peek
+backup_peek_data
+backup_restore
+backup_restore_data
+bookshelf_add
+bookshelf_delete_content
+bookshelf_export_book
+bookshelf_get
+bookshelf_get_cached_indices
+bookshelf_get_chapters
+bookshelf_get_content
+bookshelf_get_episode_progress
+bookshelf_list
+bookshelf_pick_save_path
+bookshelf_prefetch_chapters
+bookshelf_remove
+bookshelf_restore_source_switch
+bookshelf_reveal_data_dir
+bookshelf_reveal_export_file
+bookshelf_save_chapters
+bookshelf_save_content
+bookshelf_save_episode_progress
+bookshelf_save_txt_chapters
+bookshelf_set_private
+bookshelf_update_book
+bookshelf_update_progress
+booksource_add_dir
+booksource_book_info
+booksource_call_fn
+booksource_cancel
+booksource_chapter_content
+booksource_chapter_list
+booksource_delete
+booksource_delete_batch
+booksource_delete_draft
+booksource_eval
+booksource_explore
+booksource_get_dir
+booksource_get_dirs
+booksource_http_proxy
+booksource_import_legacy_json_text
+booksource_import_legacy_json_url
+booksource_list
+booksource_list_streaming
+booksource_open_in_vscode
+booksource_pick_dir
+booksource_purchase_chapter
+booksource_read
+booksource_remove_dir
+booksource_resolve_path
+booksource_run_tests
+booksource_save
+booksource_save_draft
+booksource_search
+booksource_toggle
+config_clear
+config_delete_key
+config_dump_scope
+config_list_scopes
+config_read
+config_read_all
+config_read_bytes
+config_read_json
+config_write
+config_write_bytes
+config_write_json
+delete_user_font
+export_save_file
+extension_delete
+extension_get_dir
+extension_list
+extension_open_in_vscode
+extension_read
+extension_save
+extension_toggle
+frontend_log
+frontend_storage_list
+frontend_storage_list_namespaces
+frontend_storage_remove
+frontend_storage_set
+get_local_ips
+get_platform
+list_system_fonts
+list_user_fonts
+open_dir_in_explorer
+rename_user_font
+script_dialog_result
+script_repl_eval
+storage_debug_dump
+upload_user_font
+web_server_pick_dist_dir
+web_server_start
+web_server_status
+web_server_stop
+```
 
-## 脚本 (script\_\*)
+## 更新规则
 
-| Command                | 前端调用            | 后端注册  | 状态 | 备注               |
-| ---------------------- | ------------------- | --------- | ---- | ------------------ |
-| `script_dialog_result` | scriptBridge.ts:195 | system.rs | OK   |                    |
-| `script_repl_eval`     | scriptBridge.ts:417 | system.rs | OK   | rquickjs REPL 评估 |
-
-## 配置 (config*\* / app_config*_ / frontend*storage*_)
-
-| Command                            | 前端调用           | 后端注册  | 状态 | 备注                        |
-| ---------------------------------- | ------------------ | --------- | ---- | --------------------------- |
-| `config_read`                      | useScriptConfig    | config.rs | OK   |                             |
-| `config_write`                     | useScriptConfig    | config.rs | OK   |                             |
-| `config_read_json`                 | useScriptConfig    | config.rs | OK   |                             |
-| `config_write_json`                | useScriptConfig    | config.rs | OK   |                             |
-| `config_delete_key`                | useScriptConfig    | config.rs | OK   |                             |
-| `config_read_all`                  | useScriptConfig    | config.rs | OK   |                             |
-| `config_clear`                     | useScriptConfig    | config.rs | OK   |                             |
-| `config_read_bytes`                | useScriptConfig    | config.rs | OK   |                             |
-| `config_write_bytes`               | useScriptConfig    | config.rs | OK   |                             |
-| `config_list_scopes`               | -                  | config.rs | OK   | SQL DISTINCT namespace 查询 |
-| `config_dump_scope`                | -                  | config.rs | OK   |                             |
-| `app_config_get_all`               | appConfig.ts:107   | config.rs | OK   |                             |
-| `app_config_set`                   | appConfig.ts:124   | config.rs | OK   |                             |
-| `app_config_reset`                 | appConfig.ts:135   | config.rs | OK   |                             |
-| `frontend_storage_list`            | useFrontendStorage | config.rs | OK   |                             |
-| `frontend_storage_set`             | useFrontendStorage | config.rs | OK   |                             |
-| `frontend_storage_remove`          | useFrontendStorage | config.rs | OK   |                             |
-| `frontend_storage_list_namespaces` | useFrontendStorage | config.rs | OK   |                             |
-| `storage_debug_dump`               | -                  | config.rs | OK   |                             |
-
-## 扩展 (extension\_\*)
-
-| Command                    | 前端调用       | 后端注册     | 状态 | 备注 |
-| -------------------------- | -------------- | ------------ | ---- | ---- |
-| `extension_get_dir`        | ExtensionsView | extension.rs | OK   |      |
-| `extension_list`           | ExtensionsView | extension.rs | OK   |      |
-| `extension_read`           | ExtensionsView | extension.rs | OK   |      |
-| `extension_save`           | ExtensionsView | extension.rs | OK   |      |
-| `extension_delete`         | ExtensionsView | extension.rs | OK   |      |
-| `extension_toggle`         | ExtensionsView | extension.rs | OK   |      |
-| `extension_open_in_vscode` | ExtensionsView | extension.rs | OK   |      |
-
-## 系统 (system)
-
-| Command                | 前端调用 | 后端注册  | 状态 | 备注 |
-| ---------------------- | -------- | --------- | ---- | ---- |
-| `frontend_log`         | 全局     | system.rs | OK   |      |
-| `get_platform`         | useEnv   | system.rs | OK   |      |
-| `open_dir_in_explorer` | 设置页   | system.rs | OK   |      |
-
-## 统计（2026-06-09 Iteration 18 更新）
-
-- **OK**: 82（真实实现）
-- **UNSUPPORTED**: 76（stub，结构化错误）
-- **SECURITY_BLOCKED**: 1（js_eval）
-- **FRONTEND_ONLY**: 0
-
-总注册命令: 163 | 前端调用: 159 | 匹配: 158
-
-自动检查：`node scripts/ci/check-command-contract.mjs`
+1. 修改任何 Tauri command 或前端 invoke 后，必须重新运行 `node scripts/ci/check-command-contract.mjs --json`。
+2. R-P0-001 每隐藏/实现一个模块，必须同步更新本文件的 `当前处置`。
+3. 不得手工写入未经脚本验证的 frontend/registered/matched 数字。

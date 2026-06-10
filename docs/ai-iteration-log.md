@@ -1,5 +1,37 @@
 # AI Iteration Log
 
+## 记录标题：2026-06-10 R-P0-002 状态文档同步 + 契约口径澄清
+
+本轮目标：关闭 R-P0-002，消除三份状态文档自相矛盾和过期数字，给 5 个争议命令逐个定真伪。
+
+读取文件：`E:\Book\legado-tauri-mandatory-completion-audit.md`、`docs/ai-task-status.md`、`docs/command-matrix.md`、`docs/source-compat-matrix.md`、`scripts/ci/check-command-contract.mjs`、5 个争议命令对应 Rust 实现。
+
+修改文件：
+
+- `scripts/ci/check-command-contract.mjs`：JSON 输出增补双口径字段。`registered_*` 保留全注册命令口径（60 stub / 102 impl），新增 `frontend_*` 表示前端可触达口径（58 stub / 101 impl），并补 `classificationScope` / `registeredClassification`。同时给 `.sort()` 增加显式比较器，避免新增 lint warning。
+- `docs/ai-task-status.md`：重写为当前 R 队列状态，删除旧的“FIXED 又 STUB”冲突表；5 个争议命令逐个定性。
+- `docs/command-matrix.md`：按契约脚本结果半自动重建，删除 2026-06-09 的旧矩阵和过期统计；列出 58 个 R-P0-001 前端可触达 stub。
+- `docs/source-compat-matrix.md`：头部补实测命令。
+- `E:\Book\legado-tauri-mandatory-completion-audit.md`：R-P0-002 标记 closed；R-P0-001 口径从 59 修正为 58 个前端可触达 stub。
+- `pnpm-workspace.yaml`：仅 oxfmt 机械格式修正，`'.'` -> `"."`，无语义变化。
+- `reports/gates/2026-06-10-1143-R-P0-002/summary.md`：新增本轮门禁报告。
+
+5 个争议命令结论：
+
+- `booksource_cancel`：implemented_with_limit。真实接入 `TaskRegistry`，限制是不能抢占已经进入的单次网络请求。
+- `booksource_purchase_chapter`：implemented_or_explicit_unsupported。JS 源调用真实函数；Legado 规则源显式返回不支持，不再假成功。
+- `booksource_call_fn`：implemented_for_js_source。JS 源调用真实函数；Legado 规则源返回明确错误。
+- `booksource_run_tests`：implemented。支持 step filter、timeout 和真实链路执行。
+- `storage_debug_dump`：implemented_summary。读取真实 namespace/config/shelf/path 摘要。
+
+验证命令与结果：`pnpm exec oxfmt --check .` PASS(370)；`pnpm lint` PASS(71 warnings / 0 errors)；`pnpm build` PASS；`cargo check -p reader-core` PASS；`cargo check -p legado-tauri` PASS；`cargo test -p reader-core` PASS(31 passed / 9 ignored，其中 8 个本机私有书源样本默认跳过)；`node scripts/ci/check-command-contract.mjs --json` PASS。
+
+失败项：无。
+
+下轮第一件事：R-P0-001 —— 设计集中式能力声明机制，先从 sync / tts / video 模块开始，让 58 个前端可触达 UNSUPPORTED stub 的 UI 入口统一禁用或隐藏；同步更新 `docs/command-matrix.md` 每个命令的处置状态。
+
+不得重复做的事：不要再重写 R-P0-002 的历史表；不要再把 59 当作 R-P0-001 UI 验收口径；不要把 `registered_unsupported_stub_count=60` 和 `frontend_unsupported_stub_count=58` 混用。
+
 ## 记录标题：2026-06-10 R-batch1 书源 content 链路打通 + 契约脚本修复
 
 本轮目标：在剩余额度内完成项目最困难部分 —— 书源全链路 content 的实网打通。
@@ -7,6 +39,7 @@
 读取文件：legado-tauri-mandatory-completion-audit.md（R 队列）、parser/js.rs、parser/rule_engine.rs、service/book_service.rs、scripts/ci/check-command-contract.mjs、书旗/七猫书源 JSON。
 
 修改文件：
+
 - crates/reader-core/src/parser/js.rs：①新增 `send_text_blocking`，把所有 reqwest::blocking 请求（java.ajax / java request / legado.http / jsLib 远程加载）改走独立 OS 线程，修复异步规则路径下 "Cannot drop a runtime in a context where blocking is not allowed" panic。②`eval_script` 改为「首次 eval 前补 var」+ `prepend_undeclared_vars` 排除已声明名 + redeclaration 安全回退，修复 `let + 未声明赋值` 组合脚本永久失败。
 - crates/reader-core/tests/js_compat.rs：2 个 strict-mode 回归测试。
 - crates/reader-core/tests/source_compat_import.rs：qimao_source_full_chain 改 strict（移除 silent pass）+ into_path→keep。
@@ -17,6 +50,7 @@
 验证命令与结果：oxfmt PASS(370) / lint PASS(0 errors) / build PASS / cargo check 两 crate PASS / cargo test -p reader-core PASS(36 passed) / cargo test -p legado-tauri PASS / 契约 self-test PASS。
 
 通过项（实网 strict）：
+
 - 书旗全链路：search→toc(4785章)→content(12904字符) live_network_pass（此前 content PARTIAL）。
 - 七猫全链路：search→toc(2551章)→content(14648字符) live_network_pass（此前 toc/content BLOCKED）。
 

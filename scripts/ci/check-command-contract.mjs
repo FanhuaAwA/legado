@@ -28,6 +28,7 @@ const KNOWN_NON_COMMANDS = new Set([
   "savePath",
 ]);
 const SECURITY_BLOCKED = new Set(["js_eval"]);
+const compareStrings = (a, b) => a.localeCompare(b);
 
 // ── 扫描前端 invoke ────────────────────────────────────────
 function collectFrontendCommands() {
@@ -246,6 +247,8 @@ const frontendCmds = collectFrontendCommands();
 const registeredCmds = collectRegisteredCommands();
 const unsupportedStubs = detectStubs();
 const implementedCmds = detectImplemented();
+const registeredUnsupportedStubs = [...unsupportedStubs].filter((name) => registeredCmds.has(name));
+const registeredImplemented = [...implementedCmds].filter((name) => registeredCmds.has(name));
 
 // Classify
 const onlyFrontend = [];
@@ -262,7 +265,7 @@ const classified = {
 for (const [name, files] of frontendCmds) {
   if (registeredCmds.has(name)) {
     both.push(name);
-    const info = { name, files: [...files].sort() };
+    const info = { name, files: [...files].sort(compareStrings) };
     if (SECURITY_BLOCKED.has(name)) {
       classified.security_blocked.push(info);
     } else if (unsupportedStubs.has(name)) {
@@ -273,7 +276,7 @@ for (const [name, files] of frontendCmds) {
       classified.unknown.push(info);
     }
   } else {
-    onlyFrontend.push({ name, files: [...files].sort() });
+    onlyFrontend.push({ name, files: [...files].sort(compareStrings) });
   }
 }
 
@@ -282,7 +285,7 @@ for (const name of registeredCmds) {
 }
 
 onlyFrontend.sort((a, b) => a.name.localeCompare(b.name));
-onlyBackend.sort();
+onlyBackend.sort(compareStrings);
 
 // ── 输出 ────────────────────────────────────────────────────
 const jsonMode = process.argv.includes("--json");
@@ -295,15 +298,22 @@ if (jsonMode) {
         bothCount: both.length,
         onlyFrontendCount: onlyFrontend.length,
         onlyBackendCount: onlyBackend.length,
-        registered_unsupported_stub_count: unsupportedStubs.size,
-        registered_implemented_count: implementedCmds.size,
-        classification: {
-          implemented: classified.implemented.map((c) => c.name).sort(),
-          unsupported_stub: classified.unsupported_stub.map((c) => c.name).sort(),
-          partial: classified.partial.map((c) => c.name).sort(),
-          security_blocked: classified.security_blocked.map((c) => c.name).sort(),
+        registered_unsupported_stub_count: registeredUnsupportedStubs.length,
+        registered_implemented_count: registeredImplemented.length,
+        frontend_unsupported_stub_count: classified.unsupported_stub.length,
+        frontend_implemented_count: classified.implemented.length,
+        classificationScope: "frontend-facing registered commands",
+        registeredClassification: {
+          implemented: registeredImplemented.sort(compareStrings),
+          unsupported_stub: registeredUnsupportedStubs.sort(compareStrings),
         },
-        onlyFrontend: onlyFrontend.map((c) => c.name).sort(),
+        classification: {
+          implemented: classified.implemented.map((c) => c.name).sort(compareStrings),
+          unsupported_stub: classified.unsupported_stub.map((c) => c.name).sort(compareStrings),
+          partial: classified.partial.map((c) => c.name).sort(compareStrings),
+          security_blocked: classified.security_blocked.map((c) => c.name).sort(compareStrings),
+        },
+        onlyFrontend: onlyFrontend.map((c) => c.name).sort(compareStrings),
         onlyBackend,
       },
       null,
