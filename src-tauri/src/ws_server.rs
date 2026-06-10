@@ -1,4 +1,4 @@
-//! 应用内 WebSocket 命令服务端（R-P2-008 阶段 2 试点）
+//! 应用内 WebSocket 命令服务端（R-P2-008 阶段 1-3）
 //!
 //! 协议契约与 `src/composables/useTransport.ts` 头部注释一致，
 //! 权威说明见 docs/frontend-backend-separation.md 第 3 节：
@@ -9,15 +9,16 @@
 //! 服务器 → 客户端：{ "type": "event", "event": "...", "payload": ... }
 //! ```
 //!
-//! 安全边界（试点阶段）：
-//! - 仅绑定 127.0.0.1，LAN/公网暴露属阶段 3（鉴权 token + 显式开关），当前不可配置。
+//! 安全边界（阶段 1-3 已落地）：
+//! - 默认绑定 127.0.0.1:7688，LAN 暴露通过 `ws.bind_addr` 配置显式开启（阶段 4: 无头二进制）。
+//! - 可选 token 鉴权：配置 `ws.token` 后客户端必须附加 `?token=<value>`。
 //! - 仅接受路径 `/ws` 的升级请求。
 //! - 命令白名单由 commands/router.rs 的 match 承担；`js_eval` 永久阻断。
 
 use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tauri::Listener;
+use tauri::{Listener, Manager};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc};
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
@@ -86,14 +87,39 @@ async fn handle_connection(
     stream: TcpStream,
     mut event_rx: broadcast::Receiver<(String, Value)>,
 ) {
-    let path_check = |req: &Request, resp: Response| -> Result<Response, ErrorResponse> {
-        if req.uri().path() == "/ws" {
-            Ok(resp)
-        } else {
+    // Phase 3 security: optional token auth.
+    // When ws.token is set in config, clients must pass ?token=<value>.
+    // Reading config requires a short async block; done before WS accept.
+    let state = app.state::<crate::state::AppState>();
+    let expected_token: Option<String> = state
+        .core
+        .config_read("ws", "token")
+        .await
+        .ok()
+        .filter(|t| !t.is_empty());
+
+    let path_check = move |req: &Request, resp: Response| -> Result<Response, ErrorResponse> {
+        if req.uri().path() != "/ws" {
             let mut not_found = ErrorResponse::new(Some("not found".to_string()));
             *not_found.status_mut() = tokio_tungstenite::tungstenite::http::StatusCode::NOT_FOUND;
-            Err(not_found)
+            return Err(not_found);
         }
+        // Token check: if configured, validate ?token=<expected>
+        if let Some(ref expected) = expected_token {
+            let query = req.uri().query().unwrap_or("");
+            let token_match = query
+                .split('&')
+                .filter_map(|p| p.split_once('='))
+                .any(|(k, v)| k == "token" && v == expected);
+            if !token_match {
+                let mut forbidden =
+                    ErrorResponse::new(Some("invalid or missing token".to_string()));
+                *forbidden.status_mut() =
+                    tokio_tungstenite::tungstenite::http::StatusCode::FORBIDDEN;
+                return Err(forbidden);
+            }
+        }
+        Ok(resp)
     };
     let ws = match tokio_tungstenite::accept_hdr_async(stream, path_check).await {
         Ok(ws) => ws,
