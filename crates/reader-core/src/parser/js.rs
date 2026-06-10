@@ -17,6 +17,30 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 use uuid::Uuid;
 
+/// Thread-local pool of QuickJS runtimes to avoid per-eval construction cost.
+/// Runtimes are reused across rule evaluations; a fresh Context is created each
+/// time to guarantee clean globals and prevent cross-source state leakage.
+const MAX_POOLED_RUNTIMES: usize = 4;
+
+thread_local! {
+    static RUNTIME_POOL: RefCell<Vec<Runtime>> = const { RefCell::new(Vec::new()) };
+}
+
+fn acquire_runtime() -> Runtime {
+    RUNTIME_POOL
+        .with(|pool| pool.borrow_mut().pop())
+        .unwrap_or_else(|| Runtime::new().expect("failed to create QuickJS runtime"))
+}
+
+fn release_runtime(rt: Runtime) {
+    RUNTIME_POOL.with(|pool| {
+        let mut pool = pool.borrow_mut();
+        if pool.len() < MAX_POOLED_RUNTIMES {
+            pool.push(rt);
+        }
+    });
+}
+
 static JS_KV: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 static JS_LIB_CACHE: Lazy<Mutex<HashMap<String, String>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
@@ -286,9 +310,9 @@ fn eval_js_inner_with_source(
     source_key: Option<&str>,
     bindings: Option<&HashMap<String, JsonValue>>,
 ) -> anyhow::Result<String> {
-    let rt = Runtime::new()?;
+    let rt = acquire_runtime();
     let ctx = Context::full(&rt)?;
-    ctx.with(|ctx| {
+    let result = ctx.with(|ctx| {
         let globals = ctx.globals();
         let input_value = input.unwrap_or("");
         let base_url_value = base_url.unwrap_or("");
@@ -957,7 +981,9 @@ fn eval_js_inner_with_source(
         };
         let v = eval_script(ctx.clone(), &script)?;
         js_value_to_string(ctx, v)
-    })
+    });
+    release_runtime(rt);
+    result
 }
 
 fn js_value_to_string<'js>(ctx: rquickjs::Ctx<'js>, value: Value<'js>) -> anyhow::Result<String> {
