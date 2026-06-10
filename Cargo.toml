@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/reader-core", "src-tauri"]
+members = ["crates/reader-core", "src-tauri", "src-headless"]
 resolver = "2"
 
 [workspace.package]

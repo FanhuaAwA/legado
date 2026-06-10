@@ -1,0 +1,18 @@
+[package]
+name = "legado-headless"
+version = "0.1.0"
+edition = "2021"
+description = "Headless Legado Tauri server (reader-core + HTTP static + WS)"
+
+[dependencies]
+reader-core = { path = "../crates/reader-core" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tokio-tungstenite.workspace = true
+futures.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+axum = { version = "0.7", features = ["ws"] }
+tower-http = { version = "0.5", features = ["fs"] }
