@@ -3,10 +3,12 @@ use reader_core::{ReaderCore, ReaderCoreOptions, SourceRuntimeKind};
 /// 验证本地书源可成功导入并正确解析字段
 
 fn read_source_fixture(path: &str) -> String {
-    std::fs::read_to_string(path).expect("fixture file must be readable")
+    std::fs::read_to_string(path)
+        .unwrap_or_else(|err| panic!("fixture file must be readable: {path}: {err}"))
 }
 
 #[tokio::test]
+#[ignore = "live network + local private source fixture"]
 async fn shuqi_source_live_search() {
     let temp = tempfile::tempdir().unwrap();
     let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
@@ -36,7 +38,7 @@ async fn shuqi_source_live_search() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "live network: requires 七猫源站可用"]
+#[ignore = "live network + local private source fixture"]
 async fn qimao_source_live_search() {
     let temp = tempfile::tempdir().unwrap();
     let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
@@ -63,6 +65,7 @@ async fn qimao_source_live_search() {
 /// 严格模式 — 搜索和目录必须通过，否则测试失败。
 /// 需要实网连接；本地 mock 测试见 book_source_compat.rs。
 #[tokio::test]
+#[ignore = "live network + local private source fixture"]
 async fn shuqi_source_full_chain() {
     let temp = tempfile::tempdir().unwrap();
     let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
@@ -130,7 +133,7 @@ async fn shuqi_source_full_chain() {
 /// return 让测试假 PASS。需要实网；CI 默认 ignore。
 /// 2026-06-10 实测通过：search → toc(2551 章) → content(14k+ 字符)。
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "live network: requires 七猫源站可用"]
+#[ignore = "live network + local private source fixture"]
 async fn qimao_source_full_chain() {
     let temp = tempfile::tempdir().unwrap();
     let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
@@ -193,6 +196,7 @@ async fn qimao_source_full_chain() {
 }
 
 #[tokio::test]
+#[ignore = "requires local private source fixture"]
 async fn shuqi_source_imports_and_parses_fields() {
     let temp = tempfile::tempdir().unwrap();
     let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
@@ -222,6 +226,7 @@ async fn shuqi_source_imports_and_parses_fields() {
 }
 
 #[tokio::test]
+#[ignore = "requires local private source fixture"]
 async fn qimao_source_imports_and_parses_fields() {
     let temp = tempfile::tempdir().unwrap();
     let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
@@ -250,6 +255,7 @@ async fn qimao_source_imports_and_parses_fields() {
 }
 
 #[tokio::test]
+#[ignore = "requires local private source fixture"]
 async fn fanqie_source_imports_and_parses_fields() {
     let temp = tempfile::tempdir().unwrap();
     let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
@@ -273,6 +279,7 @@ async fn fanqie_source_imports_and_parses_fields() {
 }
 
 #[tokio::test]
+#[ignore = "requires local private source fixture"]
 async fn short_drama_source_imports_as_article() {
     let temp = tempfile::tempdir().unwrap();
     let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))

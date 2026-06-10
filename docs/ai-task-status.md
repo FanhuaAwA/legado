@@ -8,7 +8,7 @@
 android.symlink = resolved
 android.release = passed_unsigned
 windows.release = passed
-reader-core.tests = passed（36 passed, 2 live-network ignored）
+reader-core.tests = passed（31 passed, 9 ignored；其中 8 个 source_compat_import 测试依赖本机私有书源样本，CI 默认跳过）
 tauri.cargo_check = passed
 tauri.tests = passed（含 web_server_stop_releases_port_for_restart 回归）
 frontend.lint = passed（79 warnings, 0 errors）

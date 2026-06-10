@@ -84,6 +84,8 @@
 ## 验证命令
 
 ```powershell
-cargo test -p reader-core --test source_compat_import shuqi_source_full_chain -- --nocapture
+cargo test -p reader-core --test source_compat_import shuqi_source_full_chain -- --ignored --nocapture
 cargo test -p reader-core --test source_compat_import qimao_source_full_chain -- --ignored --nocapture
 ```
+
+说明：`source_compat_import` 测试依赖 `E:\Book\书旗书源`、`E:\Book\七猫书源`、`E:\Book\番茄书源`、`E:\Book\番茄短剧` 下的本机私有样本，GitHub Actions 默认跳过。手动验证时需指定具体测试名并加 `--ignored`。
