@@ -305,6 +305,11 @@ fn legado_rule_js_context_exposes_source_metadata_and_login_url() {
         Some("function fromLib() { return source.bookSourceName; }"),
         Some("loginReady = 7;"),
         Some("番茄小说"),
+        None,
+        None,
+        None,
+        None,
+        None,
         || {
             eval_js(
                 "eval(String(source.loginUrl)); `${fromLib()}:${loginReady}`",

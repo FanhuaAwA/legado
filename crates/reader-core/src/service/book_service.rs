@@ -375,6 +375,11 @@ impl BookService {
                 source.js_lib.as_deref(),
                 source.login_url.as_deref(),
                 Some(source.book_source_name.as_str()),
+                Some(source.book_source_url.as_str()),
+                None,
+                Some(res.url.as_str()),
+                None,
+                None,
                 || eval_js(login_check_js, &res.body, &res.url).unwrap_or_default(),
             ))
         } else {
@@ -1379,6 +1384,11 @@ fn apply_login_check_js(source: &BookSource, res: FetchResponse) -> FetchRespons
         source.js_lib.as_deref(),
         source.login_url.as_deref(),
         Some(source.book_source_name.as_str()),
+        Some(source.book_source_url.as_str()),
+        None,
+        Some(res.url.clone().as_str()),
+        None,
+        None,
         || {
             let str_response = StrResponse::from(res.clone());
             let mut bindings = HashMap::new();
@@ -1425,6 +1435,11 @@ fn parse_explore_kinds(source: &BookSource) -> Result<Vec<ExploreKind>, AppError
         source.js_lib.as_deref(),
         source.login_url.as_deref(),
         Some(source.book_source_name.as_str()),
+        Some(source.book_source_url.as_str()),
+        None,
+        None,
+        None,
+        None,
         || {
             if let Some(script) = raw.strip_prefix("@js:") {
                 eval_js(script, "", &source.book_source_url).map_err(AppError::Internal)

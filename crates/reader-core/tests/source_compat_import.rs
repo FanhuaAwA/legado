@@ -299,6 +299,11 @@ async fn fanqie_source_imports_and_parses_fields() {
         js_lib.as_deref(),
         login_url.as_deref(),
         Some(source_name.as_str()),
+        None,
+        None,
+        None,
+        None,
+        None,
         || {
             eval_js(
                 "eval(String(source.loginUrl)); JSON.stringify({ z: Get('z'), ml: Get('ml') })",
@@ -343,6 +348,11 @@ async fn fanqie_source_search_and_book_info() {
         js_lib.as_deref(),
         login_url.as_deref(),
         Some(source_name.as_str()),
+        None,
+        None,
+        None,
+        None,
+        None,
         || {
             eval_js(
                 "eval(String(source.loginUrl)); JSON.stringify({ z: Get('z'), ml: Get('ml') })",

@@ -89,6 +89,11 @@ impl RuleEngine {
             source.js_lib.as_deref(),
             source.login_url.as_deref(),
             Some(source.book_source_name.as_str()),
+            Some(source.book_source_url.as_str()),
+            None,
+            None,
+            None,
+            None,
             || {
                 let rule = source.rule_search.clone().unwrap_or_default();
                 let (list_rule, reverse) =
@@ -139,6 +144,11 @@ impl RuleEngine {
             source.js_lib.as_deref(),
             source.login_url.as_deref(),
             Some(source.book_source_name.as_str()),
+            Some(source.book_source_url.as_str()),
+            None,
+            None,
+            None,
+            None,
             || {
                 let rule = source
                     .rule_explore
@@ -186,6 +196,11 @@ impl RuleEngine {
             source.js_lib.as_deref(),
             source.login_url.as_deref(),
             Some(source.book_source_name.as_str()),
+            Some(source.book_source_url.as_str()),
+            None,
+            None,
+            None,
+            None,
             || {
                 let rule = source.rule_book_info.clone().unwrap_or_default();
                 let mut context = HashMap::new();
@@ -231,6 +246,11 @@ impl RuleEngine {
             source.js_lib.as_deref(),
             source.login_url.as_deref(),
             Some(source.book_source_name.as_str()),
+            Some(source.book_source_url.as_str()),
+            Some(base_url),
+            None,
+            None,
+            None,
             || {
                 let rule = source.rule_toc.clone().unwrap_or_default();
                 let mut context = HashMap::new();
@@ -288,6 +308,11 @@ impl RuleEngine {
             source.js_lib.as_deref(),
             source.login_url.as_deref(),
             Some(source.book_source_name.as_str()),
+            Some(source.book_source_url.as_str()),
+            None,
+            Some(base_url),
+            None,
+            None,
             || {
                 let rule = source.rule_content.clone().unwrap_or_default();
                 let mut content_body = body.to_string();

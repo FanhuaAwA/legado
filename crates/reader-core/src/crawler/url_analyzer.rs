@@ -27,6 +27,11 @@ pub fn analyze_url(
         source.js_lib.as_deref(),
         source.login_url.as_deref(),
         Some(source.book_source_name.as_str()),
+        Some(source.book_source_url.as_str()),
+        None,
+        None,
+        None,
+        None,
         || {
             let base_url = strip_url_options(&normalize_source_url(base_url)).to_string();
             let mut rule_url = m_url.to_string();
@@ -280,6 +285,11 @@ fn eval_header_rule(rule: &str, source: &BookSource) -> Result<String, AppError>
         source.js_lib.as_deref(),
         source.login_url.as_deref(),
         Some(source.book_source_name.as_str()),
+        Some(source.book_source_url.as_str()),
+        None,
+        None,
+        None,
+        None,
         || {
             let trimmed = rule.trim();
             if let Some(script) = trimmed.strip_prefix("@js:") {

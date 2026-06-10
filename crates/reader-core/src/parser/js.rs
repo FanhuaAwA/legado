@@ -69,6 +69,11 @@ struct ActiveJsContext {
     js_lib: Option<String>,
     login_url: Option<String>,
     book_source_name: Option<String>,
+    book_source_url: Option<String>,
+    toc_url: Option<String>,
+    chapter_url: Option<String>,
+    chapter_title: Option<String>,
+    chapter_index: Option<i32>,
 }
 
 thread_local! {
@@ -76,6 +81,11 @@ thread_local! {
         js_lib: None,
         login_url: None,
         book_source_name: None,
+        book_source_url: None,
+        toc_url: None,
+        chapter_url: None,
+        chapter_title: None,
+        chapter_index: None,
     }) };
 }
 
@@ -90,13 +100,18 @@ pub enum JsSourceArg {
 }
 
 pub fn with_js_lib<T>(js_lib: Option<&str>, f: impl FnOnce() -> T) -> T {
-    with_js_source(js_lib, None, None, f)
+    with_js_source(js_lib, None, None, None, None, None, None, None, f)
 }
 
 pub fn with_js_source<T>(
     js_lib: Option<&str>,
     login_url: Option<&str>,
     book_source_name: Option<&str>,
+    book_source_url: Option<&str>,
+    toc_url: Option<&str>,
+    chapter_url: Option<&str>,
+    chapter_title: Option<&str>,
+    chapter_index: Option<i32>,
     f: impl FnOnce() -> T,
 ) -> T {
     ACTIVE_JS_CONTEXT.with(|cell| {
@@ -104,7 +119,47 @@ pub fn with_js_source<T>(
             js_lib: js_lib.map(|value| value.to_string()),
             login_url: login_url.map(|value| value.to_string()),
             book_source_name: book_source_name.map(|value| value.to_string()),
+            book_source_url: book_source_url.map(|value| value.to_string()),
+            toc_url: toc_url.map(|value| value.to_string()),
+            chapter_url: chapter_url.map(|value| value.to_string()),
+            chapter_title: chapter_title.map(|value| value.to_string()),
+            chapter_index,
         });
+        let result = f();
+        cell.replace(previous);
+        result
+    })
+}
+
+/// Set book/chapter context for JS rule evaluation during content/toc paths.
+/// This populates the `book` and `chapter` JS globals so sources using
+/// `book.bookUrl`, `chapter.url`, etc. work without modifying source JSON.
+pub fn with_book_context<T>(
+    book_url: Option<&str>,
+    toc_url: Option<&str>,
+    chapter_url: Option<&str>,
+    chapter_title: Option<&str>,
+    chapter_index: Option<i32>,
+    f: impl FnOnce() -> T,
+) -> T {
+    ACTIVE_JS_CONTEXT.with(|cell| {
+        let mut ctx = cell.borrow().clone();
+        if let Some(v) = book_url {
+            ctx.book_source_url = Some(v.to_string());
+        }
+        if let Some(v) = toc_url {
+            ctx.toc_url = Some(v.to_string());
+        }
+        if let Some(v) = chapter_url {
+            ctx.chapter_url = Some(v.to_string());
+        }
+        if let Some(v) = chapter_title {
+            ctx.chapter_title = Some(v.to_string());
+        }
+        if let Some(v) = chapter_index {
+            ctx.chapter_index = Some(v);
+        }
+        let previous = cell.replace(ctx);
         let result = f();
         cell.replace(previous);
         result
@@ -844,10 +899,45 @@ fn eval_js_inner_with_source(
             Func::new(|input: String| -> String { strip_whitespace(&input) }),
         )?;
 
-        globals.set("book", Object::new(ctx.clone())?)?;
-        globals.set("chapter", Object::new(ctx.clone())?)?;
+        // Populate book object from active context (needed by rule content/toc JS paths)
+        let book_obj = Object::new(ctx.clone())?;
+        book_obj.set(
+            "bookUrl",
+            active_context.book_source_url.clone().unwrap_or_default(),
+        )?;
+        book_obj.set("name", active_context.book_source_name.clone().unwrap_or_default())?;
+        book_obj.set(
+            "tocUrl",
+            active_context.toc_url.clone().unwrap_or_default(),
+        )?;
+        book_obj.set("author", "")?;
+        globals.set("book", book_obj)?;
+
+        // Populate chapter object from active context
+        let chapter_obj = Object::new(ctx.clone())?;
+        chapter_obj.set(
+            "url",
+            active_context
+                .chapter_url
+                .clone()
+                .unwrap_or_else(|| base_url_value.to_string()),
+        )?;
+        chapter_obj.set(
+            "title",
+            active_context.chapter_title.clone().unwrap_or_default(),
+        )?;
+        chapter_obj.set(
+            "index",
+            active_context.chapter_index.unwrap_or(0),
+        )?;
+        chapter_obj.set("isVip", false)?;
+        globals.set("chapter", chapter_obj)?;
+
+        globals.set(
+            "nextChapterUrl",
+            active_context.chapter_url.clone().unwrap_or_default(),
+        )?;
         globals.set("title", "")?;
-        globals.set("nextChapterUrl", "")?;
         globals.set("rssArticle", Object::new(ctx.clone())?)?;
 
         install_legado_compat_prelude(ctx.clone())?;
