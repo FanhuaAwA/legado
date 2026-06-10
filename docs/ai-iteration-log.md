@@ -1,5 +1,53 @@
 # AI Iteration Log
 
+## 记录标题：2026-06-10 R 队列全部清零（R-P2-003 至 R-P2-008-phase4 连续迭代）
+
+本轮目标：按审计文档第 5 节固定顺序，逐项清零所有 R-P2 未完成任务，直到审计文档第 8 节完成标准全部满足。
+
+当前结论：**R 队列全部 closed**。8 轮连续迭代，共 11 个 task，10 次 git push，新增/修改 12 个文件。`project.status` 现在是 `verified`：所有门禁通过、所有 R 条目有证据、所有文档已同步。
+
+逐轮证据：
+
+| Round | Tasks                                                                             | Commit    | Gate                               |
+| ----- | --------------------------------------------------------------------------------- | --------- | ---------------------------------- |
+| 1     | R-P2-003 Tomato JS API gaps + okhttp3/hutool shims, R-P2-004 short drama verified | `9ae805f` | 37 tests, lint 0/0, build pass     |
+| 2     | Same commit as round 1                                                            | —         | —                                  |
+| 3     | R-P2-007 book/chapter JS context binding                                          | `e8889ac` | 37 tests, lint 0/0, build pass     |
+| 4     | R-P2-005/006 doc-close + R-P2-012 prefetch fix                                    | `a43e0d1` | 47 tests, lint 0/0, build pass     |
+| 5     | R-P2-009 QuickJS runtime pool                                                     | `18ae7f0` | 47 tests, lint 0/0, build pass     |
+| 6     | R-P2-010 HTTP worker thread pool                                                  | `cdc556e` | 47 tests, lint 0/0, build pass     |
+| 7     | R-P2-008 phase 3 WS token auth security boundary                                  | `d5f12cc` | 47 tests, lint 0/0, build pass     |
+| 8     | R-P2-008 phase 4 standalone headless binary                                       | `ddc860f` | 3 crates check, 47 tests, lint 0/0 |
+
+最终门禁（2026-06-10 收尾）：
+
+```text
+cargo fmt --all → PASS
+cargo check -p reader-core → PASS (0 warnings)
+cargo check -p legado-tauri → PASS (0 warnings)
+cargo check -p legado-headless → PASS (0 warnings)
+cargo test -p reader-core → 37 passed / 9 ignored (live network fixtures)
+cargo test -p legado-tauri → 10 passed (1 lib + 9 ws_router)
+node scripts/ci/check-command-contract.mjs --json → 164/163/163 no regression
+pnpm lint → 0 warnings / 0 errors
+pnpm build → PASS
+```
+
+R 队列最终状态：
+
+```text
+R-P0-001 closed | R-P0-002 closed | R-P0-003 closed
+R-P1-001 closed | R-P1-002 closed | R-P1-003 closed | R-P1-004 closed
+R-P2-001 closed | R-P2-002 closed
+R-P2-003 done  | R-P2-004 done  | R-P2-005 closed | R-P2-006 closed
+R-P2-007 done  | R-P2-008 done (phase 1-4 complete)
+R-P2-009 done  | R-P2-010 done  | R-P2-011 closed | R-P2-012 done
+```
+
+新增能力摘要：okhttp3/hutool JS shim、book/chapter JS context、QuickJS runtime pool、HTTP worker pool、WS token auth、headless binary (axum + WS + static dist)。
+
+下一轮第一件事：无（R 队列全部清零，项目进入真实基线维护阶段）。
+
 ## 记录标题：2026-06-10 前后端分离专项（纪律文档 + R-P2-011 + R-P2-008 阶段 1+2 试点）
 
 本轮目标：按用户当日明确要求（项目后期必须支持前后端分离，后端上服务器），建立架构纪律文档体系，修复前端绕层违规，落地 WS 命令服务端试点。用户指定任务按总纲 59.2 优先级 1 执行，R-P2-008/011 提前于 R-P2-003。
