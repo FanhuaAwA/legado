@@ -2719,6 +2719,7 @@ fn default_app_config() -> Value {
         "comic_cache_enabled": true,
         "ui_layout_mode": "auto",
         "ui_theme": "auto",
+        "ui_theme_color": "",
         "ui_enable_aplus_tracking": true,
         "power_keep_awake_on_tts": false,
         "power_reader_awake_mode": "off",

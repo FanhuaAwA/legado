@@ -30,6 +30,7 @@ const DEFAULT_CONFIG: AppConfig = {
   comic_cache_enabled: true,
   ui_layout_mode: "auto",
   ui_theme: "auto",
+  ui_theme_color: "",
   ui_enable_aplus_tracking: true,
   power_keep_awake_on_tts: false,
   power_reader_awake_mode: "off",
@@ -169,6 +170,7 @@ export const useAppConfigStore = defineStore("appConfig", () => {
   const comicCacheEnabled = computed(() => config.value.comic_cache_enabled);
   const uiLayoutMode = computed(() => config.value.ui_layout_mode);
   const uiTheme = computed(() => config.value.ui_theme);
+  const uiThemeColor = computed(() => config.value.ui_theme_color);
   const uiEnableAplusTracking = computed(() => config.value.ui_enable_aplus_tracking);
   const videoPlayerType = computed(() => config.value.video_player_type);
   const videoDefaultRate = computed(() => config.value.video_default_rate);
@@ -207,6 +209,7 @@ export const useAppConfigStore = defineStore("appConfig", () => {
     comicCacheEnabled,
     uiLayoutMode,
     uiTheme,
+    uiThemeColor,
     uiEnableAplusTracking,
     videoPlayerType,
     videoDefaultRate,

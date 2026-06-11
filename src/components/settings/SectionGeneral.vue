@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { storeToRefs } from "pinia";
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import { platform } from "@/composables/useEnv";
 import { useAppConfigStore, usePreferencesStore } from "@/stores";
 import SettingItem from "./SettingItem.vue";
@@ -28,6 +28,60 @@ function setReaderAwakeTimeoutMinutes(value: number | null) {
   void handleSet("power_reader_awake_timeout_secs", String(minutes * 60));
 }
 
+// ── 主题颜色选择器 ─────────────────────────────────────────────────────────
+const THEME_COLOR_PRESETS = [
+  "#6366f1", // 默认 indigo
+  "#3b82f6", // 蓝
+  "#06b6d4", // 青
+  "#10b981", // 绿
+  "#f59e0b", // 琥珀
+  "#ef4444", // 红
+  "#ec4899", // 粉
+  "#8b5cf6", // 紫
+  "#f97316", // 橙
+  "#84cc16", // 黄绿
+  "#14b8a6", // 蓝绿
+  "#6b7280", // 灰
+];
+
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+const themeColorInput = ref(config.value.ui_theme_color ?? "");
+
+watch(
+  () => config.value.ui_theme_color,
+  (v) => {
+    themeColorInput.value = v ?? "";
+  },
+);
+
+function applyThemeColor(hex: string) {
+  const trimmed = hex.trim().slice(0, 7);
+  if (HEX_RE.test(trimmed)) {
+    themeColorInput.value = trimmed;
+    void handleSet("ui_theme_color", trimmed);
+  }
+}
+
+function onColorInputBlur() {
+  const trimmed = themeColorInput.value.trim().slice(0, 7);
+  if (trimmed === "") {
+    // 重置为默认
+    void handleSet("ui_theme_color", "");
+    themeColorInput.value = "";
+    return;
+  }
+  if (HEX_RE.test(trimmed)) {
+    applyThemeColor(trimmed);
+  } else {
+    themeColorInput.value = config.value.ui_theme_color ?? "";
+  }
+}
+
+function resetThemeColor() {
+  themeColorInput.value = "";
+  void handleSet("ui_theme_color", "");
+}
+
 const INTERVAL_OPTIONS = [
   { label: "2 小时", value: 7200 },
   { label: "4 小时", value: 14400 },
@@ -48,6 +102,71 @@ const INTERVAL_OPTIONS = [
         <n-radio-button value="light">亮色</n-radio-button>
         <n-radio-button value="dark">暗色</n-radio-button>
       </n-radio-group>
+    </SettingItem>
+
+    <SettingItem label="主题颜色" desc="自定义应用主题色，留空则使用默认颜色">
+      <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center">
+        <!-- 原生取色器 -->
+        <div
+          :style="{
+            width: '36px',
+            height: '36px',
+            borderRadius: '6px',
+            border: '2px solid var(--color-border-strong)',
+            background: themeColorInput || '#6366f1',
+            cursor: 'pointer',
+            position: 'relative',
+            flexShrink: 0,
+          }"
+        >
+          <input
+            type="color"
+            :value="themeColorInput || '#6366f1'"
+            style="
+              position: absolute;
+              inset: 0;
+              width: 100%;
+              height: 100%;
+              opacity: 0;
+              cursor: pointer;
+            "
+            @input="(e: Event) => applyThemeColor((e.target as HTMLInputElement).value)"
+          />
+        </div>
+        <!-- Hex 输入框 -->
+        <n-input
+          :value="themeColorInput"
+          size="small"
+          placeholder="#6366f1"
+          style="width: 96px"
+          maxlength="7"
+          @update:value="(v: string) => (themeColorInput = v.slice(0, 7))"
+          @blur="onColorInputBlur"
+        />
+        <n-button v-if="themeColorInput" size="small" quaternary @click="resetThemeColor">
+          重置
+        </n-button>
+      </div>
+      <!-- 预设色块 -->
+      <div style="display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px">
+        <div
+          v-for="preset in THEME_COLOR_PRESETS"
+          :key="preset"
+          :style="{
+            width: '22px',
+            height: '22px',
+            borderRadius: '4px',
+            background: preset,
+            cursor: 'pointer',
+            border:
+              themeColorInput === preset ? '2px solid var(--color-text)' : '2px solid transparent',
+            outline: themeColorInput === preset ? '1px solid var(--color-bg)' : 'none',
+            flexShrink: 0,
+          }"
+          :title="preset"
+          @click="applyThemeColor(preset)"
+        />
+      </div>
     </SettingItem>
 
     <SettingItem label="布局模式" desc="切换手机 / 电脑界面；自动模式根据设备自动判断">

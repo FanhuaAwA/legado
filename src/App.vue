@@ -540,6 +540,37 @@ const effectiveDark = computed(() => {
   return systemPrefersDark.value;
 });
 
+// ── 主题颜色工具函数 ─────────────────────────────────────────────────────
+/** 将 hex 颜色解析为 {r, g, b}（0-255） */
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex.trim());
+  if (!m) return null;
+  return { r: parseInt(m[1]!, 16), g: parseInt(m[2]!, 16), b: parseInt(m[3]!, 16) };
+}
+
+/** 将 RGB 转为 hex */
+function rgbToHex(r: number, g: number, b: number): string {
+  const clamp = (v: number) => Math.max(0, Math.min(255, Math.round(v)));
+  return "#" + [clamp(r), clamp(g), clamp(b)].map((v) => v.toString(16).padStart(2, "0")).join("");
+}
+
+/** 调整亮度：向白（amount>0）或向黑（amount<0）线性移动，返回新 hex */
+function adjustLightness(hex: string, amount: number): string {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return hex;
+  const target = amount > 0 ? 255 : 0;
+  const r = Math.round(rgb.r + (target - rgb.r) * Math.abs(amount));
+  const g = Math.round(rgb.g + (target - rgb.g) * Math.abs(amount));
+  const b = Math.round(rgb.b + (target - rgb.b) * Math.abs(amount));
+  return rgbToHex(r, g, b);
+}
+
+/** 获取用户自定义主题色（空字符串=使用默认） */
+const customThemeBase = computed(() => {
+  const c = appConfig.value.ui_theme_color;
+  return c && /^#[0-9a-fA-F]{6}$/.test(c) ? c : "";
+});
+
 /** Naive UI 主题（null = 亮色） */
 const naiveTheme = computed<GlobalTheme | null>(() => (effectiveDark.value ? darkTheme : null));
 
@@ -549,14 +580,18 @@ useVConsole(effectiveDark);
 useRemoteDebug();
 
 const naiveThemeOverrides = computed<GlobalThemeOverrides>(() => {
+  // 默认品牌色
+  const lightBase = customThemeBase.value || "#6366f1";
+  const darkBase = customThemeBase.value || "#818cf8";
+
   if (effectiveDark.value) {
     return {
       common: {
-        primaryColor: "#818cf8",
-        primaryColorHover: "#96a0ff",
-        primaryColorPressed: "#707af1",
-        primaryColorSuppl: "#818cf8",
-        infoColor: "#818cf8",
+        primaryColor: darkBase,
+        primaryColorHover: adjustLightness(darkBase, 0.12),
+        primaryColorPressed: adjustLightness(darkBase, -0.12),
+        primaryColorSuppl: darkBase,
+        infoColor: darkBase,
         successColor: "#4ade80",
         warningColor: "#fbbf24",
         errorColor: "#f87171",
@@ -568,7 +603,7 @@ const naiveThemeOverrides = computed<GlobalThemeOverrides>(() => {
         dividerColor: "#3f3f46",
         borderColor: "#3f3f46",
         inputColor: "#27272a",
-        actionColor: "#3f3f46",
+        actionColor: adjustLightness(darkBase, 0.3),
         hoverColor: "rgba(255, 255, 255, 0.06)",
         textColorBase: "#fafafa",
         textColor1: "#fafafa",
@@ -580,11 +615,11 @@ const naiveThemeOverrides = computed<GlobalThemeOverrides>(() => {
 
   return {
     common: {
-      primaryColor: "#6366f1",
-      primaryColorHover: "#5558ee",
-      primaryColorPressed: "#4f46e5",
-      primaryColorSuppl: "#6366f1",
-      infoColor: "#6366f1",
+      primaryColor: lightBase,
+      primaryColorHover: adjustLightness(lightBase, 0.08),
+      primaryColorPressed: adjustLightness(lightBase, -0.08),
+      primaryColorSuppl: lightBase,
+      infoColor: lightBase,
       successColor: "#22c55e",
       warningColor: "#f59e0b",
       errorColor: "#ef4444",
@@ -596,7 +631,7 @@ const naiveThemeOverrides = computed<GlobalThemeOverrides>(() => {
       dividerColor: "#e4e4e7",
       borderColor: "#e4e4e7",
       inputColor: "#ffffff",
-      actionColor: "#eef2ff",
+      actionColor: adjustLightness(lightBase, 0.45),
       hoverColor: "rgba(99, 102, 241, 0.08)",
       textColorBase: "#18181b",
       textColor1: "#18181b",
@@ -607,10 +642,25 @@ const naiveThemeOverrides = computed<GlobalThemeOverrides>(() => {
 });
 
 // 将 data-theme 属性同步到 <html>️元素，驱动 CSS 变量
+// 同时同步用户自定义主题色 CSS 变量
 watch(
-  effectiveDark,
-  (isDark) => {
+  [effectiveDark, customThemeBase],
+  ([isDark, themeColor]) => {
     document.documentElement.setAttribute("data-theme", isDark ? "dark" : "light");
+    // 应用自定义主题色到 CSS 变量，覆盖 theme.css 中的 brand 默认值
+    if (themeColor) {
+      const lightAccent = themeColor;
+      const hoverAccent = adjustLightness(themeColor, isDark ? 0.12 : 0.08);
+      const softAccent = isDark ? themeColor + "28" : adjustLightness(themeColor, 0.45);
+      document.documentElement.style.setProperty("--color-accent", lightAccent);
+      document.documentElement.style.setProperty("--color-accent-hover", hoverAccent);
+      document.documentElement.style.setProperty("--color-accent-soft", softAccent);
+    } else {
+      // 恢复默认（由 theme.css 的 :root / [data-theme] 规则接管）
+      document.documentElement.style.removeProperty("--color-accent");
+      document.documentElement.style.removeProperty("--color-accent-hover");
+      document.documentElement.style.removeProperty("--color-accent-soft");
+    }
   },
   { immediate: true },
 );

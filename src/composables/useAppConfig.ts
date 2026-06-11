@@ -50,6 +50,8 @@ export interface AppConfig {
   ui_layout_mode: string;
   /** UI 主题模式："auto" | "light" | "dark" */
   ui_theme: string;
+  /** 自定义主题颜色（hex 如 #6366f1，空字符串 = 使用默认品牌色） */
+  ui_theme_color: string;
   /** 是否启用 Aplus 数据追踪 */
   ui_enable_aplus_tracking: boolean;
   /** 朗读播放期间保持屏幕唤醒（Android） */
@@ -169,6 +171,7 @@ const config = ref<AppConfig>({
   comic_cache_enabled: true,
   ui_layout_mode: "auto",
   ui_theme: "auto",
+  ui_theme_color: "",
   ui_enable_aplus_tracking: true,
   power_keep_awake_on_tts: false,
   power_reader_awake_mode: "off",
