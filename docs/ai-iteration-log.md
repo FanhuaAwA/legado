@@ -43,11 +43,11 @@
 
 门禁（实测）：cargo fmt PASS；cargo check reader-core/legado-tauri/legado-headless PASS（0w）；cargo test reader-core 全绿（新增 7/7）；cargo test legado-tauri 9/0；pnpm lint 0/0；pnpm build PASS；命令契约 162/161/161，onlyBackend=0（命令名未变）。
 
-下轮第一件事：
+下轮第一件事（本会话末更新）：
 
-NET-003 实现 `engine_timeout_secs`（在 `crates/reader-core/src/parser/js.rs` 的 runtime 上用 `Runtime::set_interrupt_handler` + 截止时间），或对未实现的 DoH/引擎超时在 `SectionNetwork.vue` 加「尚未实现」标注以消除「UI 假可用」。决策见本轮交接说明。
+前后端接入审计四类已全部结清——NET-001/001b/002/003/004 + CLEAN-001 已提交并推送（commit 82590e0~6b01446，origin/master）。后续按 `docs/ai-task-status.md`「后续维护任务路线图」取用：A 段（有网/真机阻塞：DoH live 验证、番茄实网）、B 段（60 个隐藏后端能力本体，每项大特性，动手前先确认用户取舍）、C 段（形态 B 浏览器闭环验收）。先就路线图「待用户决策」三项（百度/FTP 同步是否需要、browser_probe 实现还是下架、unlock 实现还是下架）与用户确认。
 
-不得重复做：不要把 `HttpClient::new` 改回硬编码；不要重新登记审计第二类已接入的 6 键为问题。
+不得重复做：不要把 `HttpClient::new` 改回硬编码；不要重新登记审计第二类已接入的 8 键、第四类已删死键、第三类已复核非缺陷项为问题。
 
 ## 记录标题：2026-06-11 Legado 段评占位与空段落清洗
 
