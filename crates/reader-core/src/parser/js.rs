@@ -983,6 +983,17 @@ fn eval_js_inner_with_source(
             active_context.toc_url.clone().unwrap_or_default(),
         )?;
         book_obj.set("author", "")?;
+        // Legado compatibility: book.getVariable(key) reads from source-scoped variable store.
+        // Used by 番茄 tocUrl JS: book.getVariable("custom")
+        let sk_for_book_var = source_key_val.clone();
+        book_obj.set(
+            "getVariable",
+            Func::new(move |key: Opt<String>| -> String {
+                let map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+                let full_key = source_variable_key(&sk_for_book_var, key.0.as_deref());
+                map.get(&full_key).cloned().unwrap_or_default()
+            }),
+        )?;
         globals.set("book", book_obj)?;
 
         // Populate chapter object from active context
