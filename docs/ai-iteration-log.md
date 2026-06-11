@@ -26,10 +26,11 @@
 
 ⚠️ 行为变化（需告知用户）：`default_app_config()` 中 `http_ignore_tls_errors` 默认值为 `true`。旧代码忽略该键 → TLS 证书始终校验；本轮按声明的默认值接入后，**默认将接受无效证书**。这是 UI 既有声明的默认行为，但与旧实际行为相反，属安全相关变化。
 
-仍未接入（2 键，转 NET-003/NET-004，见下轮第一件事）：
+补充 NET-003（用户「继续后续任务」后实现）：`engine_timeout_secs` 已接入。`parser/js.rs` 新增 `JS_ENGINE_TIMEOUT_SECS: AtomicU64`（默认 0=禁用，保证不经 ReaderCore 的单元测试行为不变）+ thread-local `JS_EVAL_DEADLINE` + RAII `JsEvalDeadlineGuard`（求值前设 deadline，drop 恢复，防池化 runtime 残留）。`acquire_runtime` 对新建 runtime 装 `set_interrupt_handler(js_eval_interrupt)`，handler 仅读 thread-local deadline 判超时。全部用户 JS 求值收口于唯一的 `eval_js_inner_with_source`（唯一 acquire/release 处），在其 `ctx.with` 前置 guard。`ReaderCore::new` 启动下发，`app_config_set("engine_timeout_secs")` 实时更新（deadline 每次求值读取，无需重启）。基准（§44.3）：js_compat 17 测试 1.23s 与改前持平，handler 在 timeout=0 时只做 thread-local 读取，无热路径回归。测试 `tests/js_engine_timeout.rs`：1s 预算下 `while(true){}` 被中断返回 Err（实测 1.01s），正常脚本仍通过。注意：JS 阻塞在 HTTP 桥（跨线程 channel recv）时不被 QuickJS interrupt 中断，这是预期——HTTP 自带超时，engine_timeout 只管 JS 计算。
+
+仍未接入（1 键，转 NET-004，见下轮第一件事）：
 
 - `http_doh_server`：reqwest 默认特性无 DoH 能力，真实实现需自定义解析器/新依赖，属较大改动。
-- `engine_timeout_secs`：JS 引擎执行超时，需在 rquickjs runtime 上加 interrupt handler；当前无 JS 执行级 deadline。
 
 门禁（实测）：cargo fmt PASS；cargo check reader-core/legado-tauri/legado-headless PASS（0w）；cargo test reader-core 全绿（新增 7/7）；cargo test legado-tauri 9/0；pnpm lint 0/0；pnpm build PASS；命令契约 162/161/161，onlyBackend=0（命令名未变）。
 

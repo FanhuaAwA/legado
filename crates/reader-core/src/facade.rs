@@ -77,6 +77,11 @@ impl ReaderCore {
         // Keep the JS HTTP bridge's TLS policy in sync with the main client so
         // the Network panel's "ignore TLS errors" toggle governs every path.
         crate::parser::js::set_js_http_ignore_tls(http_cfg.ignore_tls_errors);
+        crate::parser::js::set_js_engine_timeout_secs(config_u64_value(
+            &app_config,
+            "engine_timeout_secs",
+            30,
+        ));
         let book_service = BookService::new(
             http,
             RuleEngine::new()?,
@@ -1638,6 +1643,13 @@ impl ReaderCore {
                 .or_else(|| value.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
                 .unwrap_or(300);
             crate::parser::js::set_js_http_min_delay_ms(ms);
+        }
+        if key == "engine_timeout_secs" {
+            let secs = value
+                .as_u64()
+                .or_else(|| value.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+                .unwrap_or(30);
+            crate::parser::js::set_js_engine_timeout_secs(secs);
         }
         Ok(())
     }

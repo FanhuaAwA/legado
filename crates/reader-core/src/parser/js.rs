@@ -12,7 +12,7 @@ use rquickjs::function::Opt;
 use rquickjs::promise::MaybePromise;
 use rquickjs::{Context, Object, Runtime, Value};
 use serde_json::Value as JsonValue;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -28,10 +28,66 @@ thread_local! {
     static RUNTIME_POOL: RefCell<Vec<Runtime>> = const { RefCell::new(Vec::new()) };
 }
 
+/// JS engine execution timeout in seconds, driven by the `engine_timeout_secs`
+/// app config key. `0` disables the guard (the default before `ReaderCore::new`
+/// pushes the configured value, so unit tests that bypass it keep the old
+/// unbounded behaviour).
+static JS_ENGINE_TIMEOUT_SECS: AtomicU64 = AtomicU64::new(0);
+
+thread_local! {
+    /// Absolute deadline for the in-flight JS evaluation on this thread. `None`
+    /// outside an evaluation or when the timeout is disabled.
+    static JS_EVAL_DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) };
+}
+
+/// Update the JS engine execution timeout (from `engine_timeout_secs`). Applies
+/// live to the next evaluation — the deadline is read per eval, not at build.
+pub fn set_js_engine_timeout_secs(secs: u64) {
+    JS_ENGINE_TIMEOUT_SECS.store(secs, Ordering::Relaxed);
+}
+
+/// Interrupt callback polled by QuickJS during execution; aborts the script once
+/// the per-eval deadline has passed. Cheap (thread-local read) when no deadline.
+fn js_eval_interrupt() -> bool {
+    JS_EVAL_DEADLINE.with(|cell| match cell.get() {
+        Some(deadline) => Instant::now() >= deadline,
+        None => false,
+    })
+}
+
+/// Sets the per-eval deadline on construction and restores the previous value on
+/// drop (so nested or sequential evals don't leak a stale deadline into a pooled
+/// runtime). A zero/disabled timeout sets `None`, preserving old behaviour.
+struct JsEvalDeadlineGuard {
+    previous: Option<Instant>,
+}
+
+impl JsEvalDeadlineGuard {
+    fn new() -> Self {
+        let previous = JS_EVAL_DEADLINE.with(Cell::get);
+        let secs = JS_ENGINE_TIMEOUT_SECS.load(Ordering::Relaxed);
+        let deadline = (secs > 0).then(|| Instant::now() + Duration::from_secs(secs));
+        JS_EVAL_DEADLINE.with(|cell| cell.set(deadline));
+        Self { previous }
+    }
+}
+
+impl Drop for JsEvalDeadlineGuard {
+    fn drop(&mut self) {
+        JS_EVAL_DEADLINE.with(|cell| cell.set(self.previous));
+    }
+}
+
 fn acquire_runtime() -> Runtime {
     RUNTIME_POOL
         .with(|pool| pool.borrow_mut().pop())
-        .unwrap_or_else(|| Runtime::new().expect("failed to create QuickJS runtime"))
+        .unwrap_or_else(|| {
+            let rt = Runtime::new().expect("failed to create QuickJS runtime");
+            // Installed once per runtime; reads the thread-local deadline so the
+            // handler is shared by every eval that reuses this pooled runtime.
+            rt.set_interrupt_handler(Some(Box::new(js_eval_interrupt)));
+            rt
+        })
 }
 
 fn release_runtime(rt: Runtime) {
@@ -440,6 +496,9 @@ fn eval_js_inner_with_source(
 ) -> anyhow::Result<String> {
     let rt = acquire_runtime();
     let ctx = Context::full(&rt)?;
+    // Bound this evaluation by engine_timeout_secs; the guard restores the prior
+    // deadline on drop so the pooled runtime is clean for the next eval.
+    let _deadline = JsEvalDeadlineGuard::new();
     let result = ctx.with(|ctx| {
         let globals = ctx.globals();
         let input_value = input.unwrap_or("");
