@@ -355,6 +355,7 @@ const {
   drawerBookUrl,
   drawerFileName,
   drawerSourceDir,
+  drawerFallbackBook,
   drawerSourceName,
   drawerSourceType,
   openDetail,
@@ -1021,6 +1022,7 @@ watch(
       :source-dir="drawerSourceDir"
       :source-name="drawerSourceName"
       :source-type="drawerSourceType"
+      :fallback-book="drawerFallbackBook"
       @read-chapter="onReadChapter"
     />
 

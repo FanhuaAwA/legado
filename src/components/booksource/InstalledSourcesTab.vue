@@ -710,32 +710,53 @@ function importFromFile() {
       try {
         const text = await file.text();
         if (file.name.toLowerCase().endsWith(".json")) {
-          // JSON 批量导入：[{ fileName, content }] 格式
-          const arr: Array<{ fileName: string; content: string }> = JSON.parse(text);
-          if (!Array.isArray(arr)) {
-            throw new Error("JSON 格式错误，应为数组");
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(text);
+          } catch {
+            throw new Error("JSON 解析失败");
           }
-          for (const [index, item] of arr.entries()) {
-            try {
-              if (!item || typeof item.fileName !== "string" || typeof item.content !== "string") {
-                throw new Error("缺少 fileName/content 字符串字段");
+          // 项目内部导出包格式：[{ fileName, content }]（exportSources 产物）。
+          // 标准开源阅读/Legado 书源 JSON 的元素是 { bookSourceName, bookSourceUrl, ... }，
+          // 没有 fileName/content 字段——据此区分，避免把上游标准书源误判为导出包。
+          const isInternalBundle =
+            Array.isArray(parsed) &&
+            parsed.length > 0 &&
+            parsed.every(
+              (it) =>
+                !!it &&
+                typeof (it as { fileName?: unknown }).fileName === "string" &&
+                typeof (it as { content?: unknown }).content === "string",
+            );
+          if (isInternalBundle) {
+            const arr = parsed as Array<{ fileName: string; content: string }>;
+            for (const [index, item] of arr.entries()) {
+              try {
+                const validation = validateBookSourceContent(item.content, {
+                  fileName: item.fileName,
+                });
+                const validationErrors = [
+                  ...validateBookSourceFileName(item.fileName),
+                  ...validation.errors,
+                ];
+                if (validationErrors.length) {
+                  throw new Error(formatValidationIssues("书源格式不正确", validationErrors));
+                }
+                await saveBookSource(item.fileName, item.content);
+                ok++;
+              } catch (e: unknown) {
+                errors.push(
+                  `${file.name} 第 ${index + 1} 项: ${e instanceof Error ? e.message : String(e)}`,
+                );
               }
-              const validation = validateBookSourceContent(item.content, {
-                fileName: item.fileName,
-              });
-              const validationErrors = [
-                ...validateBookSourceFileName(item.fileName),
-                ...validation.errors,
-              ];
-              if (validationErrors.length) {
-                throw new Error(formatValidationIssues("书源格式不正确", validationErrors));
-              }
-              await saveBookSource(item.fileName, item.content);
-              ok++;
-            } catch (e: unknown) {
-              errors.push(
-                `${file.name} 第 ${index + 1} 项: ${e instanceof Error ? e.message : String(e)}`,
-              );
+            }
+          } else {
+            // 标准开源阅读/Legado 书源 JSON（单对象或 [{ bookSourceName, ... }] 数组）→
+            // 走 legacy 导入命令，由后端转换为 Tauri JS 书源并安装。
+            const result = await importLegacyJsonText(text, legacySmartSubCategories.value);
+            ok += result.imported;
+            for (const err of result.errors) {
+              errors.push(`${file.name}: ${err}`);
             }
           }
         } else {

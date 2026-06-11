@@ -1,4 +1,9 @@
-use axum::{response::Json, routing::get, Router};
+use axum::{
+    body::Bytes,
+    response::Json,
+    routing::{get, post},
+    Router,
+};
 use reader_core::parser::js::{eval_js, with_js_source};
 use reader_core::{ReaderCore, ReaderCoreOptions};
 use serde_json::json;
@@ -44,6 +49,33 @@ flag
 }
 
 #[test]
+fn eval_js_declares_unicode_legacy_globals() {
+    let script = r#"
+搜索接口1 = 1;
+搜索接口2 = 搜索接口1 + 2;
+搜索接口2
+"#;
+    let result = eval_js(script, "", "").unwrap();
+    assert_eq!(result, "3");
+}
+
+#[test]
+fn eval_js_declares_legacy_for_loop_variables() {
+    let script = r#"
+total = 0;
+for (i in [1, 2, 3]) {
+  total = total + Number(i);
+}
+for (j = 0; j < 2; j++) {
+  total = total + j;
+}
+total
+"#;
+    let result = eval_js(script, "", "").unwrap();
+    assert_eq!(result, "4");
+}
+
+#[test]
 fn eval_js_handles_login_url_globals_shadowed_by_function_locals() {
     let script = r#"
 function update() {
@@ -60,6 +92,34 @@ JSON.stringify({ z: $$$.z, ml: $$$.ml, local: update() })
 "#;
     let result = eval_js(script, "", "").unwrap();
     assert_eq!(result, r#"{"z":3,"ml":0,"local":9}"#);
+}
+
+#[test]
+fn eval_js_round_trips_utf8_result_binding() {
+    let text = r#"<p>二愣子睁大着双眼</p>"#;
+
+    let result = eval_js("result", text, "").unwrap();
+
+    assert_eq!(result, text);
+}
+
+#[test]
+fn java_hex_decode_to_string_decodes_utf8_payloads() {
+    let payload = r#"{"data":{"content":"<p>二愣子睁大着双眼</p>"}}"#;
+    let encoded = hex::encode(payload.as_bytes());
+
+    let result = eval_js(
+        r#"
+let decoded = java.hexDecodeToString(result);
+JSON.parse(decoded).data.content
+"#,
+        &encoded,
+        "",
+    )
+    .unwrap();
+
+    assert_eq!(result, "<p>二愣子睁大着双眼</p>");
+    assert!(!result.contains("äº"));
 }
 
 async fn js_search() -> Json<serde_json::Value> {
@@ -93,6 +153,46 @@ async fn js_toc() -> Json<serde_json::Value> {
 
 async fn js_content() -> Json<serde_json::Value> {
     Json(json!({ "content": "这是 JS 书源的第一章正文。" }))
+}
+
+async fn echo_body_hex(body: Bytes) -> String {
+    hex::encode(body.as_ref())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn okhttp_shim_preserves_base64_decoded_binary_request_body() {
+    let app = Router::new().route("/echo-body", post(echo_body_hex));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let url = format!("http://{addr}/echo-body");
+
+    use base64::Engine as _;
+    let payload = [0x00, 0x01, 0x02, 0x7f, 0x80, 0xff, b'A'];
+    let encoded = base64::engine::general_purpose::STANDARD.encode(payload);
+    let expected = hex::encode(payload);
+
+    let script = format!(
+        r#"
+const imports = new JavaImporter(Packages.okhttp3);
+let responseText = '';
+with (imports) {{
+  const bytes = java.base64DecodeToByteArray('{encoded}');
+  const request = new Request.Builder()
+    .url('{url}')
+    .post(RequestBody.create(bytes, MediaType.parse('application/octet-stream')))
+    .build();
+  responseText = new OkHttpClient().newCall(request).execute().body().string();
+}}
+responseText
+"#
+    );
+    let result = eval_js(&script, "", "").unwrap();
+
+    assert_eq!(result, expected);
+    server.abort();
 }
 
 #[tokio::test]
@@ -268,7 +368,7 @@ fn new_js_apis_work() {
     use base64::Engine as _;
     let input = base64::engine::general_purpose::STANDARD.encode(b"hello");
     let result = eval_js(
-        &format!("java.base64DecodeToByteArray('{}')", input),
+        &format!("String(java.base64DecodeToByteArray('{}'))", input),
         "",
         "",
     )
@@ -373,4 +473,24 @@ with (javaImport) {
     .unwrap();
 
     assert_eq!(result, "true|32|cba|ok|0|false");
+}
+
+#[test]
+fn java_importer_with_block_functions_remain_visible_like_rhino() {
+    let result = eval_js(
+        r#"
+const javaImport = new JavaImporter(Packages.okhttp3);
+with (javaImport) {
+  function compatRequestMediaType() {
+    return MediaType.parse('application/octet-stream').type;
+  }
+}
+compatRequestMediaType()
+"#,
+        "",
+        "",
+    )
+    .unwrap();
+
+    assert_eq!(result, "application/octet-stream");
 }

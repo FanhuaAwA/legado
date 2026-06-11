@@ -1,5 +1,157 @@
 # AI Iteration Log
 
+## 记录标题：2026-06-11 番茄搜索引擎兼容修复
+
+任务 ID：SRC-FANQIE-ENGINE
+
+本轮目标：用户反馈番茄书源搜索小说无结果，后端日志停在 `device_register` 并抛 `JS Exception: network error`。要求继续遵守强制审计与迭代交接文档，方向是让本地引擎兼容上游书源，不修改 `E:\Book\番茄书源` 下的书源 JSON。
+
+关键定位：
+
+1. 根因不在导入路径；番茄本地导入和网络导入都能入库，失败点在搜索前置的 `loginUrl`/`device_register`。
+2. 旧 `java.getVerificationCode` 是编造的 MD5+salt 假实现。对照 `E:\Book\legado-main` 后确认 Legado 真实语义是交互式验证码读取，本项目 headless 场景只能明确降级为空并记录日志，不能伪造校验算法。
+3. `java.base64DecodeToByteArray` 旧实现把字节转成 String，二进制 body 经 OkHttp shim 与 `java.ajax` 时会损坏。
+4. 番茄 jsLib 还依赖 Rhino 兼容行为：`with(JavaImporter(...)) { ... }` 内定义的函数需要在外层可见，中文全局变量和未声明 for 循环变量也要按 Rhino 非 strict 行为处理。
+5. 番茄 `bookList` 为 `<js>...</js>$[*]` 形态，旧搜索解析只执行 JS、不再把 JS 输出继续套用尾部 JSONPath，导致即使请求成功也抽不到列表。
+
+修改文件：
+
+- `crates/reader-core/src/parser/js.rs`：移除伪造 `getVerificationCode`；为 `base64DecodeToByteArray` 增加 byte-array marker/base64 通道；`java.ajax` 识别 `bodyBase64` / `bodyBytesBase64` 并按原始字节 POST；修正 `RequestBody.create` 参数顺序与 OkHttp shim 的标准 `url,{options}` 规格；修复 `with(JavaImporter)` 展开、中文未声明全局变量、旧式 for 循环变量。
+- `crates/reader-core/src/parser/rule_engine.rs`：`search_books_js` 支持 JS 规则执行后继续应用尾部 JSONPath，再按字段规则提取书籍列表。
+- `crates/reader-core/tests/js_compat.rs`：补 OkHttp 二进制 POST 字节级一致、JavaImporter 函数可见性、中文全局变量、旧式 for 循环变量等回归测试。
+- `crates/reader-core/tests/source_compat_import.rs`：番茄实网搜索测试改用用户复现关键词「我不是戏神」，并新增诊断测试，日志避免输出敏感 token/header 值。
+- `docs/source-compat-matrix.md`：同步番茄状态，从旧的 `blocked_by_js_api` 改为搜索已恢复；toc/content 未纳入本轮验收。
+
+验证结果：
+
+- `cargo test -p reader-core --test js_compat -- --nocapture`：PASS，16 passed。
+- `cargo test -p reader-core --test source_compat_import fanqie_source_search_and_book_info -- --ignored --nocapture`：PASS；搜索「我不是戏神」返回 `番茄搜索: 我不是戏神`，详情 URL 进入番茄 book detail API。
+- `cargo test -p reader-core -- --nocapture`：PASS。
+- `cargo check -p reader-core`：PASS。
+- `cargo check -p legado-tauri`：PASS。
+- `cargo fmt --all --check`：PASS。
+- `node scripts/ci/check-command-contract.mjs --json`：164/163/163，onlyBackend=0，onlyFrontend=`js_eval`。
+- `pnpm lint`：PASS，0 warnings / 0 errors。
+- `pnpm build`：PASS；仅既有 Vite/Rolldown 警告。
+- `pnpm run build:windows:release`：PASS；新产物 `E:\Book\Legado-Tauri-main\构建结果\windows\legado-tauri.exe`，大小 21,148,160 bytes，修改时间 2026-06-11 15:23:46。
+
+未纳入本轮验收：番茄 toc/content、详情字段完整性、真实交互验证码 UI。当前用户复现的「搜索无结果」已在后端实网测试中恢复；若后续继续做番茄，应从 toc/content 全链路与 bookInfo 字段补齐开始。
+
+## 记录标题：2026-06-11 斗罗旧乱码章节缓存自动修复
+
+任务 ID：USER-2026-06-11-content-mojibake-cache
+
+本轮目标：用户反馈新版构建后《斗罗大陆》第一章前两页正常、后续「第一章 斗罗大陆，异界唐三（三）」仍显示 `口口a...<p>` 类乱码。需要在不回滚 UTF-8 hex 修复的前提下继续定位并修复。
+
+关键定位：
+
+1. 新版后端重新抓取七猫正文已正常，`diag_qimao_douluo_first_chapters_encoding` 实网验证第 4 个章节 `第一章 斗罗大陆，异界唐三（三）` 返回中文头部 `唐三点了点头...`，不含 `å/ä¸/æ` 等 UTF-8→Latin-1 乱码标记。
+2. 检查 `%APPDATA%\com.legado-tauri\reader\cache\chapters` 后发现 2026-06-11 14:15 之后生成的新缓存为正常中文，但 14:07 / 13:40 旧缓存仍是 `åä¸...`、`é»å...`。
+3. `book_service.get_content` 命中缓存后原逻辑直接返回 `cached`，不会再进入新抓取和 `java.hexDecodeToString` 修复后的正文管线。因此用户看到「前几页正常、后续乱码」符合旧缓存混在新内容中的表现。
+
+修改文件：
+
+- `crates/reader-core/src/service/book_service.rs`：在 `get_content` 缓存命中时检测 UTF-8 字节被 Latin-1 展开的旧乱码；可修复则回写修复后的缓存并返回，不可修复则删除该章缓存并继续网络抓取。新抓取后的正文在写缓存前也做同样兜底修复。
+- `crates/reader-core/tests/source_compat_import.rs`：新增 `diag_qimao_douluo_first_chapters_encoding` 实网诊断，覆盖用户点名的《斗罗大陆》前 4 章，重点锁定 `第一章 斗罗大陆，异界唐三（三）`。
+
+新增回归测试：
+
+- `mojibake_detector_ignores_normal_chinese_content`：正常中文不会误判。
+- `mojibake_detector_repairs_utf8_bytes_decoded_as_latin1`：典型旧乱码可还原为中文。
+- `get_content_repairs_stale_mojibake_cache_before_returning`：旧坏缓存命中时会被修复、回写并返回修复后正文。
+
+验证结果：
+
+- `cargo test -p reader-core service::book_service::tests -- --nocapture`：PASS，4 passed。
+- `cargo test -p reader-core diag_qimao_douluo_first_chapters_encoding -- --ignored --nocapture`：PASS；《斗罗大陆》第 4 章 `第一章 斗罗大陆，异界唐三（三）` 正文头部为中文。
+- `cargo test -p reader-core -- --nocapture`：PASS。
+- `cargo check -p reader-core`：PASS。
+- `cargo check -p legado-tauri`：PASS。
+- `cargo fmt --all --check`：PASS。
+- `node scripts/ci/check-command-contract.mjs --json`：164/163/163，onlyBackend=0。
+- `pnpm lint`：PASS，0 warnings / 0 errors。
+- `pnpm build`：PASS；仅既有 Vite/Rolldown 警告。
+- `pnpm run build:windows:release`：PASS；新产物 `E:\Book\Legado-Tauri-main\构建结果\windows\legado-tauri.exe`，大小 21,135,872 bytes，修改时间 2026-06-11 14:32:40。
+
+使用提示：新版首次打开旧乱码章节时会自动修复并回写该章节缓存；如果当前阅读页面仍停留在内存里的旧内容，返回目录重新进入该章或重启应用即可触发重新读取。
+
+下轮第一件事：若仍收到乱码样本，优先判断样本对应章节是否已触发新版 `get_content`。先查该章节缓存文件时间和内容头部，再跑 `diag_qimao_douluo_first_chapters_encoding` 对比实网返回；不要再把问题归因到前端渲染或 `decode_body`。
+
+## 记录标题：2026-06-11 七猫正文 UTF-8/Latin-1 双重编码乱码修复
+
+任务 ID：USER-2026-06-11-content-mojibake
+
+本轮目标：修复书籍打开后正文显示 `äº...` 这类 UTF-8 字节被当 Latin-1 展开后再编码的乱码，优先验证是否为后端正文链路问题。
+
+修改文件：
+
+- `crates/reader-core/src/parser/js.rs`：将 `java.hexDecodeToString` 从 `u8 as char` 改为 hex bytes → UTF-8 string，保留无效 UTF-8 的有损兜底。
+- `crates/reader-core/tests/js_compat.rs`：新增 `eval_js_round_trips_utf8_result_binding` 与 `java_hex_decode_to_string_decodes_utf8_payloads`，分别锁定 JS `result` 中文往返和 hex(JSON) 中文正文解码。
+- `crates/reader-core/tests/source_compat_import.rs`：仅格式化既有七猫编码诊断测试的两条长输出，不改逻辑。
+
+关键定位：
+
+1. `diag_qimao_content_encoding` 复现后端已乱码：修复前首字节为 `c3a4 c2ba c28c...`，对应原始 UTF-8 `e4 ba 8c` 被按 Latin-1/单字节字符展开。
+2. 直接抓 `https://jh.52dns.cc/qimao/content.php?...` 响应头为 `application/json; charset=utf-8`，原始字节正确包含 `e4 ba 8c`，目标站响应和 `fetcher::decode_body` 不是根因。
+3. 七猫章节 URL 带 `{"type":"qimao"}`，`fetcher` 按既有契约把响应 raw bytes hex 编码传给 `ruleContent`；`ruleContent` 调 `java.hexDecodeToString(result)`。旧实现 `.map(|b| b as char)` 正是乱码来源。
+
+验证结果：
+
+- `cargo test -p reader-core --test js_compat -- --nocapture`：12 passed。
+- `cargo test -p reader-core diag_qimao_content_encoding -- --ignored --nocapture`：PASS；修复后头部恢复为中文，首字节恢复 `e4ba8c...`。
+- `cargo test -p reader-core qimao_source_full_chain -- --ignored --nocapture`：PASS；search → toc(2551) → content(15132 字符)。
+- `cargo check -p reader-core`：PASS。
+- `cargo test -p reader-core -- --nocapture`：PASS；39 passed，1 ignored（按测试输出分文件统计）。
+- `cargo fmt --all --check`：PASS。
+- `cargo check -p legado-tauri`：PASS。
+- `node scripts/ci/check-command-contract.mjs --json`：164/163/163，onlyBackend=0。
+- `pnpm lint`：PASS，0 warnings / 0 errors。
+- `pnpm build`：PASS；仅 vconsole direct eval、chunk size、dynamic import 等既有构建警告。
+
+本轮未提交原因：工作树在接手时已有多份前端/文档未提交改动；本次未把无关前端改动混入 commit。若后续需要按总纲第 52.7 节备份推送，先拆分或确认这些既有改动的归属。
+
+下轮第一件事：若继续处理书源引擎兼容，按 `docs/source-compat-matrix.md` 的 `SRC-FANQIE-ENGINE` 交接，先查 `E:\Book\legado-main` 中 `getVerificationCode` 真实语义，再设计二进制 body 通道；不要再把七猫正文乱码归因到前端或 `decode_body`。
+
+## 记录标题：2026-06-11 书旗/七猫/番茄 Windows 端本地+网络导入验证（用户指令：让引擎兼容上游）
+
+本轮目标：验证书旗/七猫/番茄三个书源在 Windows 端，本地导入与网络导入是否可正常使用；用户中途纠正方向「让本地项目兼容使用上游书源，而不是让上游兼容你」，据此先核查引擎是否对上游忠实，再分清「引擎缺能力」与「书源规则过期」。
+
+读取文件：`crates/reader-core/tests/source_compat_import.rs`、`crates/reader-core/src/facade.rs`（import_legacy_json_url）、`crates/reader-core/src/parser/js.rs`（java_ajax / okhttp shim / base64DecodeToByteArray / getVerificationCode）、各书源 `网络导入.txt` 与 `.json`/`.backup.json`。
+
+修改文件：
+
+- `crates/reader-core/tests/source_compat_import.rs`：新增 3 个网络导入实网测试 `shuqi_network_import_full_chain` / `qimao_network_import_full_chain` / `fanqie_network_import`（走 `import_legacy_json_url`，对应 Tauri 命令 `booksource_import_legacy_json_url`）。
+- `docs/source-compat-matrix.md`：新增「2026-06-11 验证」节、番茄引擎缺口精确定位、「2026-06-11 交接」节。
+
+验证命令与结果（均当轮实测）：
+
+- 本地导入 `imports_and_parses_fields`（书旗/七猫/番茄）→ 3 passed。
+- 全链路 `shuqi_source_full_chain` / `qimao_source_full_chain`（本地版规则）→ 2 passed：书旗 search→toc(329)→content(8725 字符)，七猫 search→toc(2551)→content(22380 字符)。
+- 网络导入 `*_network_import*`（CDN 上游版）→ 3 passed：书旗/七猫 import+search+toc 通过，content 诊断 EMPTY；番茄 import+列表通过。
+- `cargo test -p reader-core` 全量 → 无回归（新增 3 个计入 ignored）。
+- `node scripts/ci/check-command-contract.mjs --json` → 164/163/163，onlyBackend=0，无回归。
+
+关键发现（证据见 source-compat-matrix.md）：
+
+1. 引擎对三个源**无任何特殊适配硬编码**（grep `书旗/七猫/番茄/shuqi/qimao/52dns` 仅命中测试 fixture 与通用 JS API）。
+2. 书旗/七猫**本地导入完整可用**（含正文），证明引擎对其完全兼容。
+3. 书旗/七猫**网络导入正文受限 = 书源规则相对自身 API 过期**：实测 `jh.52dns.cc/.../content.php` 对 4 种 UA 一律直出 JSON，而上游 CDN 版 `ruleContent` 仍按 `hexDecode→URL→二次请求`，结构上无法消费 JSON；任何 Legado 客户端用未改的上游源都会同样失败。非引擎问题。
+4. 番茄是**唯一真正的引擎兼容缺口**：`getVerificationCode` 伪实现（编造 salt，js.rs:628）、`base64DecodeToByteArray` 二进制有损（js.rs:633），叠加外部设备注册中转 `sg.91loli.cc` 依赖。device_register 实网抛 `network error`。
+
+未完成 / 暂停项：番茄引擎修复（二进制 body 属跨 java.ajax 签名的中范围重构、getVerificationCode 真实语义待查 legado-main、外部中转无法在本会话验证）——按用户要求已写入 source-compat-matrix.md「2026-06-11 交接」节，任务 ID SRC-FANQIE-ENGINE。
+
+下轮第一件事：按 source-compat-matrix.md「2026-06-11 交接」节第 1 步，读 `E:\Book\legado-main` 的 `BaseSource`/RhinoJS `getVerificationCode` 真实定义，替换 `crates/reader-core/src/parser/js.rs:624-631` 的伪实现。
+
+不得重复做的事：不要再核查引擎是否对书旗/七猫特殊适配（已确认无）；不要改三个源的 `.json` 去迁就引擎；不要给书旗/七猫网络导入正文问题在引擎层加 per-source 猜测逻辑（属书源规则过期，非引擎问题）。
+
+补充修复（用户反馈实测）：用户用书源页通用「导入」按钮选七猫 `.json`，报「缺少 fileName/content 字符串字段」。根因：`src/components/booksource/InstalledSourcesTab.vue` 的 `importFromFile` 把任何 `.json` 都当成项目内部导出包格式 `[{ fileName, content }]`，而标准开源阅读/Legado 书源 JSON 元素是 `{ bookSourceName, bookSourceUrl, ... }`，无 fileName/content 字段 → 抛错。这正是「让本地项目兼容使用上游书源」的缺口。
+
+修复：`importFromFile` 的 `.json` 分支先判定是否内部导出包（数组且每项含 string 型 fileName+content）；若不是，则视为标准 Legado 书源 JSON（单对象或 `[{ bookSourceName, ... }]` 数组），路由到 `importLegacyJsonText(text, legacySmartSubCategories.value)`（= `booksource_import_legacy_json_text`，与 reader-core 测试 `qimao_source_imports_and_parses_fields` 同后端路径，已证可用）。不改任何书源 JSON。验证：`pnpm lint` 0/0、`pnpm build` PASS；后端导入路径由现有 reader-core 测试覆盖。
+
+修改文件（追加）：`src/components/booksource/InstalledSourcesTab.vue`。
+
+本轮 git 状态：改动（reader-core 测试 + InstalledSourcesTab.vue + 3 份文档）未提交；按 harness 规则待用户确认后再按总纲第 52.7 节备份推送。
+
 ## 记录标题：2026-06-10 R 队列全部清零（R-P2-003 至 R-P2-008-phase4 连续迭代）
 
 本轮目标：按审计文档第 5 节固定顺序，逐项清零所有 R-P2 未完成任务，直到审计文档第 8 节完成标准全部满足。

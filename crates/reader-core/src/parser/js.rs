@@ -623,19 +623,32 @@ fn eval_js_inner_with_source(
 
         java_obj.set(
             "getVerificationCode",
-            Func::new(|input: String| -> String {
-                // Simple verification code: hash the input with some fixed salt
-                let code = md5_hex(&format!("fanqie_verify_{input}_salt"));
-                code[..8].to_string()
+            Func::new(|image_url: String| -> String {
+                tracing::warn!(
+                    target: "reader_core::js_source",
+                    "getVerificationCode requires interactive verification and is unavailable in headless JS runtime: {image_url}"
+                );
+                String::new()
             }),
         )?;
         java_obj.set(
             "base64DecodeToByteArray",
             Func::new(|input: String| -> String {
-                base64::engine::general_purpose::STANDARD
-                    .decode(input)
-                    .map(|bytes| bytes.iter().map(|b| *b as char).collect::<String>())
+                decode_base64_to_utf8(&input).unwrap_or_default()
+            }),
+        )?;
+        java_obj.set(
+            "__base64DecodeToByteArrayBase64",
+            Func::new(|input: String| -> String {
+                decode_base64_bytes(&input)
+                    .map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes))
                     .unwrap_or_default()
+            }),
+        )?;
+        java_obj.set(
+            "__base64DecodeToUtf8",
+            Func::new(|input: String| -> String {
+                decode_base64_to_utf8(&input).unwrap_or_default()
             }),
         )?;
         java_obj.set(
@@ -730,12 +743,7 @@ fn eval_js_inner_with_source(
         java_obj.set(
             "hexDecodeToString",
             Func::new(|hex: String| -> String {
-                let hex = hex.trim_start_matches("0x").trim_start_matches("0X");
-                (0..hex.len())
-                    .step_by(2)
-                    .filter_map(|i| u8::from_str_radix(&hex[i..(i + 2).min(hex.len())], 16).ok())
-                    .map(|b| b as char)
-                    .collect::<String>()
+                decode_hex_to_utf8_string(&hex)
             }),
         )?;
         java_obj.set(
@@ -1085,9 +1093,34 @@ if (typeof globalThis.Packages === 'undefined') {
 
   _okhttp.MediaType = { parse: function(mt) { return { type: mt }; } };
 
+  function _isMediaType(value) {
+    return value && typeof value === 'object' && typeof value.type !== 'undefined';
+  }
+
+  function _byteArrayBase64(value) {
+    if (value && typeof value === 'object' && typeof value.__legadoByteArrayBase64 === 'string') {
+      return value.__legadoByteArrayBase64;
+    }
+    return null;
+  }
+
+  function _requestBody(content, mediaType) {
+    var body = { mediaType: mediaType || null };
+    var base64 = _byteArrayBase64(content);
+    if (base64 !== null) {
+      body.bodyBase64 = base64;
+      return body;
+    }
+    body.content = content === undefined || content === null ? '' : String(content);
+    return body;
+  }
+
   _okhttp.RequestBody = {
-    create: function(mediaType, content) {
-      return { mediaType: mediaType, content: String(content) };
+    create: function(first, second) {
+      if (_isMediaType(first)) {
+        return _requestBody(second, first);
+      }
+      return _requestBody(first, _isMediaType(second) ? second : null);
     }
   };
 
@@ -1142,9 +1175,16 @@ if (typeof globalThis.Packages === 'undefined') {
             });
           }
           var bodyStr = '';
+          var bodyBase64 = null;
           var contentType = headers['Content-Type'] || headers['content-type'] || '';
           if (request.body) {
-            if (request.body.content !== undefined) {
+            if (request.body.bodyBase64 !== undefined) {
+              bodyBase64 = String(request.body.bodyBase64);
+              if (!contentType && request.body.mediaType && request.body.mediaType.type) {
+                contentType = request.body.mediaType.type;
+                headers['Content-Type'] = contentType;
+              }
+            } else if (request.body.content !== undefined) {
               bodyStr = String(request.body.content);
               if (!contentType && request.body.mediaType && request.body.mediaType.type) {
                 contentType = request.body.mediaType.type;
@@ -1155,11 +1195,13 @@ if (typeof globalThis.Packages === 'undefined') {
               if (!contentType) { headers['Content-Type'] = 'application/x-www-form-urlencoded'; }
             }
           }
-          // Build ajax spec: method||url||headersJson||body
-          var specParts = [String(request.method || 'GET'), String(request.url || '')];
-          try { specParts.push(JSON.stringify(headers)); } catch(_) { specParts.push('{}'); }
-          specParts.push(bodyStr);
-          var spec = specParts.join('||');
+          var options = { method: String(request.method || 'GET'), headers: headers };
+          if (bodyBase64 !== null) {
+            options.bodyBase64 = bodyBase64;
+          } else if (bodyStr !== '' || options.method !== 'GET') {
+            options.body = bodyStr;
+          }
+          var spec = String(request.url || '') + ',' + JSON.stringify(options);
           var result = '';
           try { result = java.ajax(spec); } catch(e) { result = ''; }
           var responseHeaders = {};
@@ -1200,6 +1242,16 @@ if (typeof globalThis.Packages === 'undefined') {
   globalThis.FormBody = _okhttp.FormBody;
   globalThis.Headers = _okhttp.Headers;
 })();
+
+java.base64DecodeToByteArray = function(input) {
+  var base64 = java.__base64DecodeToByteArrayBase64(String(input || ''));
+  return {
+    __legadoByteArrayBase64: base64,
+    toString: function() { return java.__base64DecodeToUtf8(base64); },
+    valueOf: function() { return this.toString(); },
+    toJSON: function() { return this.toString(); }
+  };
+};
 
 // ── Hutool shims (merge into existing globals, don't overwrite) ──
 (function() {
@@ -1424,6 +1476,16 @@ fn java_aes_base64_decode_to_string(input: &str, key: &str, algorithm: &str, iv:
         .unwrap_or_default()
 }
 
+fn decode_hex_to_utf8_string(hex: &str) -> String {
+    let hex = hex.trim_start_matches("0x").trim_start_matches("0X");
+    let bytes = (0..hex.len())
+        .step_by(2)
+        .filter_map(|i| u8::from_str_radix(&hex[i..(i + 2).min(hex.len())], 16).ok())
+        .collect::<Vec<_>>();
+    String::from_utf8(bytes)
+        .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned())
+}
+
 fn js_source_arg_literal(arg: &JsSourceArg) -> anyhow::Result<String> {
     Ok(match arg {
         JsSourceArg::String(value) => serde_json::to_string(value)?,
@@ -1487,25 +1549,116 @@ fn catch_js_message(ctx: &rquickjs::Ctx<'_>, err: &rquickjs::Error) -> String {
 }
 
 fn leading_identifier(text: &str) -> String {
-    text.trim_start()
-        .chars()
-        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '$')
-        .collect()
+    let mut ident = String::new();
+    for ch in text.trim_start().chars() {
+        if ident.is_empty() {
+            if is_identifier_start(ch) {
+                ident.push(ch);
+                continue;
+            }
+            break;
+        }
+        if is_identifier_continue(ch) {
+            ident.push(ch);
+            continue;
+        }
+        break;
+    }
+    ident
 }
 
 fn prepare_legacy_js_script(script: &str) -> String {
     // Rhino permits `with(javaImport) { ... }`; QuickJS strict eval rejects `with` at parse time.
-    // The JavaImporter shim exposes imported helpers as globals, so dropping the wrapper preserves
-    // the practical semantics used by Legado book-source scripts.
-    static WITH_RE: Lazy<regex::Regex> =
-        Lazy::new(|| regex::Regex::new(r"\bwith\s*\([^)]*\)\s*\{").unwrap());
+    // The JavaImporter shim exposes imported helpers as globals, so unwrapping the block preserves
+    // Rhino's practical top-level function visibility used by Legado book-source scripts.
     static THIS_DESTRUCTURE_RE: Lazy<regex::Regex> =
         Lazy::new(|| regex::Regex::new(r"\b(const|let|var)\s+\{([^}]*)\}\s*=\s*this\s*;").unwrap());
-    let script = WITH_RE.replace_all(script, "{").into_owned();
+    let script = strip_with_wrappers(script);
     let script = THIS_DESTRUCTURE_RE
         .replace_all(&script, "$1 {$2} = globalThis;")
         .into_owned();
     replace_this_member_outside_strings(&script)
+}
+
+fn strip_with_wrappers(script: &str) -> String {
+    static WITH_RE: Lazy<regex::Regex> =
+        Lazy::new(|| regex::Regex::new(r"\bwith\s*\([^)]*\)\s*\{").unwrap());
+
+    let mut output = String::with_capacity(script.len());
+    let mut pos = 0usize;
+    while let Some(open) = WITH_RE.find_at(script, pos) {
+        output.push_str(&script[pos..open.start()]);
+        let open_brace = open.end() - 1;
+        let Some(close_brace) = find_matching_brace(script, open_brace) else {
+            output.push_str(&script[open.start()..]);
+            return output;
+        };
+        output.push_str(&strip_with_wrappers(&script[open.end()..close_brace]));
+        pos = close_brace + 1;
+    }
+    output.push_str(&script[pos..]);
+    output
+}
+
+fn find_matching_brace(script: &str, open_brace: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut line_comment = false;
+    let mut block_comment = false;
+
+    for (idx, ch) in script[open_brace..].char_indices() {
+        let idx = open_brace + idx;
+        if line_comment {
+            if ch == '\n' {
+                line_comment = false;
+            }
+            continue;
+        }
+        if block_comment {
+            if ch == '/' && script[..idx].ends_with('*') {
+                block_comment = false;
+            }
+            continue;
+        }
+        if let Some(q) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+
+        if ch == '/' {
+            let rest = &script[idx..];
+            if rest.starts_with("//") {
+                line_comment = true;
+                continue;
+            }
+            if rest.starts_with("/*") {
+                block_comment = true;
+                continue;
+            }
+        }
+        if matches!(ch, '"' | '\'' | '`') {
+            quote = Some(ch);
+            continue;
+        }
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(idx);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn inline_source_login_url(script: &str, login_url: Option<&str>) -> String {
@@ -1639,6 +1792,9 @@ fn prepend_undeclared_vars(script: &str) -> String {
                 continue;
             }
         }
+        if let Some(name) = legacy_for_loop_identifier(trimmed) {
+            assigned.insert(name);
+        }
         // Check for bare identifier assignment at line start
         if let Some(eq_pos) = trimmed.find('=') {
             // 跳过 ==、===、=> 等非赋值形态
@@ -1658,13 +1814,40 @@ fn prepend_undeclared_vars(script: &str) -> String {
     format!("var {};\n{}", names.join(", "), script)
 }
 
+fn legacy_for_loop_identifier(line: &str) -> Option<String> {
+    let mut rest = line.strip_prefix("for")?.trim_start();
+    rest = rest.strip_prefix('(')?.trim_start();
+    if rest.starts_with("let ") || rest.starts_with("var ") || rest.starts_with("const ") {
+        return None;
+    }
+    let name = leading_identifier(rest);
+    if name.is_empty() {
+        return None;
+    }
+    let after = rest[name.len()..].trim_start();
+    if after.starts_with("in ") || after.starts_with("of ") || after.starts_with('=') {
+        return Some(name);
+    }
+    None
+}
+
 fn is_valid_identifier(s: &str) -> bool {
     let mut chars = s.chars();
-    match chars.next() {
-        Some(c) if c.is_ascii_alphabetic() || c == '_' || c == '$' => {}
-        _ => return false,
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !is_identifier_start(first) {
+        return false;
     }
-    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+    chars.all(is_identifier_continue)
+}
+
+fn is_identifier_start(ch: char) -> bool {
+    ch == '_' || ch == '$' || ch.is_alphabetic()
+}
+
+fn is_identifier_continue(ch: char) -> bool {
+    is_identifier_start(ch) || ch.is_ascii_digit() || ch.is_numeric()
 }
 
 fn is_keyword(s: &str) -> bool {
@@ -1821,7 +2004,15 @@ fn java_ajax(spec: &str) -> anyhow::Result<String> {
         }
     }
 
-    if let Some(body) = options_json.get("body") {
+    if let Some(body_base64) = options_json
+        .get("bodyBase64")
+        .or_else(|| options_json.get("bodyBytesBase64"))
+        .and_then(|v| v.as_str())
+    {
+        if let Some(bytes) = decode_base64_bytes(body_base64) {
+            req = req.body(bytes);
+        }
+    } else if let Some(body) = options_json.get("body") {
         if let Some(body) = body.as_str() {
             req = req.body(body.to_string());
         } else if !body.is_null() {
@@ -1830,6 +2021,26 @@ fn java_ajax(spec: &str) -> anyhow::Result<String> {
     }
 
     send_text_blocking(req)
+}
+
+fn decode_base64_bytes(input: &str) -> Option<Vec<u8>> {
+    let compact: String = input
+        .chars()
+        .filter(|ch| !ch.is_ascii_whitespace())
+        .collect();
+    if compact.is_empty() {
+        return Some(Vec::new());
+    }
+    base64::engine::general_purpose::STANDARD
+        .decode(compact.as_bytes())
+        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(compact.as_bytes()))
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(compact.as_bytes()))
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(compact.as_bytes()))
+        .ok()
+}
+
+fn decode_base64_to_utf8(input: &str) -> Option<String> {
+    decode_base64_bytes(input).map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
 }
 
 fn java_request_simple(method: &str, url: &str, body: Option<String>) -> anyhow::Result<String> {

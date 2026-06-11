@@ -448,6 +448,7 @@ const {
   drawerBookUrl,
   drawerFileName,
   drawerSourceDir,
+  drawerFallbackBook,
   drawerSourceName,
   drawerSourceType,
   openDetail,
@@ -741,6 +742,7 @@ onUnmounted(() => {
       :source-dir="drawerSourceDir"
       :source-name="drawerSourceName"
       :source-type="drawerSourceType"
+      :fallback-book="drawerFallbackBook"
       @read-chapter="onReadChapter"
     />
 

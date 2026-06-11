@@ -274,6 +274,15 @@ async function handleForceReload() {
   await eventEmit("app:booksource-reload", { scope: "all" });
 }
 
+/**
+ * 子标签页（导入/删除/启停/保存/安装）后的统一刷新：除刷新本页书源列表外，
+ * 还广播 app:booksource-reload，让搜索/发现/书架页即时同步，无需重启应用。
+ */
+async function handleInstalledReload() {
+  await loadSources();
+  await eventEmit("app:booksource-reload", { scope: "all" });
+}
+
 // ── 初始化 ──
 let unlistenFileChange: (() => void) | null = null;
 let unlistenViewReload: (() => void) | null = null;
@@ -449,7 +458,7 @@ onUnmounted(() => {
           :source-dir="sourceDir"
           :source-dirs="sourceDirs"
           :loading="loading"
-          @reload="loadSources"
+          @reload="handleInstalledReload"
           @navigate-tab="onNavigateTab"
           @select-debug-source="onSelectDebugSource"
         />
@@ -460,7 +469,7 @@ onUnmounted(() => {
           ref="onlineRef"
           :sources="sources"
           :active="activeTab === 'online'"
-          @reload="loadSources"
+          @reload="handleInstalledReload"
         />
       </n-tab-pane>
 
@@ -474,7 +483,7 @@ onUnmounted(() => {
 
       <n-tab-pane name="ai" tab="AI 写书源" display-directive="show">
         <div class="bv-pane bv-pane--fill">
-          <AiSourceTab :sources="sources" @reload="loadSources" />
+          <AiSourceTab :sources="sources" @reload="handleInstalledReload" />
         </div>
       </n-tab-pane>
     </n-tabs>

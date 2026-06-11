@@ -505,12 +505,13 @@ impl RuleEngine {
         rule: &SearchRule,
         list_rule: &str,
     ) -> Vec<SearchBook> {
-        let output = match eval_js(self.strip_mode_prefix(list_rule), body, base_url) {
+        let (script, tail_rule) = split_js_rule_and_tail(list_rule);
+        let output = match eval_js(script, body, base_url) {
             Ok(result) => result,
             Err(_) => return vec![],
         };
 
-        if let Some(items) = parse_js_output_items(&output) {
+        if let Some(items) = parse_js_output_items_with_tail(&output, tail_rule) {
             let mut out = Vec::with_capacity(items.len());
             for item in items {
                 if let Some(book) = build_search_book_from_json(source, &item, base_url, rule) {
@@ -2130,6 +2131,18 @@ fn strip_js_rule(rule: &str) -> &str {
     rule
 }
 
+fn split_js_rule_and_tail(rule: &str) -> (&str, Option<&str>) {
+    let rule = rule.trim();
+    if let Some(rest) = rule.strip_prefix("<js>") {
+        if let Some(end) = rest.find("</js>") {
+            let script = &rest[..end];
+            let tail = rest[end + "</js>".len()..].trim();
+            return (script, (!tail.is_empty()).then_some(tail));
+        }
+    }
+    (strip_js_rule(rule), None)
+}
+
 fn prepare_toc_body(body: &str, base_url: &str, rule: &TocRule) -> String {
     let Some(script) = rule
         .pre_update_js
@@ -2172,6 +2185,19 @@ fn parse_js_output_items(output: &str) -> Option<Vec<Value>> {
         Value::Object(_) => Some(vec![value]),
         _ => None,
     }
+}
+
+fn parse_js_output_items_with_tail(output: &str, tail_rule: Option<&str>) -> Option<Vec<Value>> {
+    let Some(tail_rule) = tail_rule.map(str::trim).filter(|rule| !rule.is_empty()) else {
+        return parse_js_output_items(output);
+    };
+    let value = serde_json::from_str::<Value>(output.trim()).ok()?;
+    let tail_rule = strip_mode_prefix(tail_rule);
+    let items = jsonpath::jsonpath_query(&value, tail_rule);
+    if items.is_empty() {
+        return None;
+    }
+    Some(items)
 }
 
 fn search_book_from_book(book: Book) -> Option<SearchBook> {
@@ -2578,6 +2604,31 @@ mod tests {
         let results = engine.search_books(&source, "<html></html>", "https://books.example");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Alpha-lib");
+    }
+
+    #[test]
+    fn test_search_books_js_then_jsonpath_tail() {
+        let engine = RuleEngine::new().unwrap();
+        let source = BookSource {
+            book_source_name: "JS Tail".to_string(),
+            book_source_url: "https://source.example".to_string(),
+            rule_search: Some(SearchRule {
+                book_list: Some(
+                    r#"<js>JSON.stringify({data:[{name:'Tail Book',author:'Tester',bookUrl:'/tail'}]})</js>$.data[*]"#
+                        .to_string(),
+                ),
+                name: Some("name".to_string()),
+                author: Some("author".to_string()),
+                book_url: Some("bookUrl".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let results = engine.search_books(&source, "{}", "https://books.example");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "Tail Book");
+        assert_eq!(results[0].book_url, "https://books.example/tail");
     }
 
     #[test]

@@ -751,8 +751,24 @@ impl BookService {
             book_key
         );
         if let Ok(Some(cached)) = self.cache.get(user_ns, &book_key, chapter_url).await {
-            tracing::debug!("get_content returning cached content, len={}", cached.len());
-            return Ok(cached);
+            if looks_like_utf8_latin1_mojibake(&cached) {
+                tracing::warn!(
+                    "get_content detected stale mojibake cache, repairing, chapter_url={}",
+                    chapter_url
+                );
+                let repaired = repair_utf8_latin1_mojibake(&cached);
+                if !looks_like_utf8_latin1_mojibake(&repaired) {
+                    let _ = self
+                        .cache
+                        .put(user_ns, &book_key, chapter_url, &repaired)
+                        .await;
+                    return Ok(repaired);
+                }
+                let _ = self.cache.remove(user_ns, &book_key, chapter_url).await;
+            } else {
+                tracing::debug!("get_content returning cached content, len={}", cached.len());
+                return Ok(cached);
+            }
         }
         tracing::debug!("get_content cache miss, fetching from network");
 
@@ -773,7 +789,14 @@ impl BookService {
                 .fetch_source_url(user_ns, source, &current_url, &source.book_source_url)
                 .await?;
             tracing::debug!("get_content fetch done, body len={}", res.body.len());
-            let content = self.parser.content(source, &res.body, &res.url);
+            let mut content = self.parser.content(source, &res.body, &res.url);
+            if looks_like_utf8_latin1_mojibake(&content) {
+                tracing::warn!(
+                    "get_content detected mojibake in parsed content, repairing, url={}",
+                    res.url
+                );
+                content = repair_utf8_latin1_mojibake(&content);
+            }
             tracing::debug!("get_content parsed content len={}", content.len());
 
             if !content.is_empty() {
@@ -1729,6 +1752,98 @@ fn content_type_from_ext(ext: &str) -> String {
     .to_string()
 }
 
+fn looks_like_utf8_latin1_mojibake(text: &str) -> bool {
+    let total = text.chars().count();
+    if total < 80 {
+        return false;
+    }
+    let markers = text
+        .chars()
+        .filter(|ch| {
+            let code = *ch as u32;
+            (0x0080..=0x009f).contains(&code) || matches_mojibake_latin_marker(*ch)
+        })
+        .count();
+    markers >= 16 && markers * 100 / total >= 5
+}
+
+fn matches_mojibake_latin_marker(ch: char) -> bool {
+    matches!(
+        ch,
+        'Â' | 'Ã'
+            | 'Ä'
+            | 'Å'
+            | 'Æ'
+            | 'Ç'
+            | 'È'
+            | 'É'
+            | 'Ê'
+            | 'Ë'
+            | 'Ì'
+            | 'Í'
+            | 'Î'
+            | 'Ï'
+            | 'Ð'
+            | 'Ñ'
+            | 'Ò'
+            | 'Ó'
+            | 'Ô'
+            | 'Õ'
+            | 'Ö'
+            | 'Ù'
+            | 'Ú'
+            | 'Û'
+            | 'Ü'
+            | 'Ý'
+            | 'Þ'
+            | 'ß'
+            | 'à'
+            | 'á'
+            | 'â'
+            | 'ã'
+            | 'ä'
+            | 'å'
+            | 'æ'
+            | 'ç'
+            | 'è'
+            | 'é'
+            | 'ê'
+            | 'ë'
+            | 'ì'
+            | 'í'
+            | 'î'
+            | 'ï'
+            | 'ð'
+            | 'ñ'
+            | 'ò'
+            | 'ó'
+            | 'ô'
+            | 'õ'
+            | 'ö'
+            | 'ù'
+            | 'ú'
+            | 'û'
+            | 'ü'
+            | 'ý'
+            | 'þ'
+            | 'ÿ'
+    )
+}
+
+fn repair_utf8_latin1_mojibake(text: &str) -> String {
+    let mut bytes = Vec::with_capacity(text.len());
+    for ch in text.chars() {
+        let code = ch as u32;
+        if code <= 0xff {
+            bytes.push(code as u8);
+        } else {
+            let mut buf = [0u8; 4];
+            bytes.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+        }
+    }
+    String::from_utf8(bytes).unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1760,5 +1875,67 @@ mod tests {
 
         let _ = tokio::fs::remove_dir_all(&storage_dir).await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn mojibake_detector_ignores_normal_chinese_content() {
+        let text = "斗罗大陆，天斗帝国西南，法斯诺行省。</p>圣魂村，如果只是听其名，那么，这绝对是个相当令人惊讶的名字。".repeat(4);
+
+        assert!(!looks_like_utf8_latin1_mojibake(&text));
+    }
+
+    #[test]
+    fn mojibake_detector_repairs_utf8_bytes_decoded_as_latin1() {
+        let original =
+            "唐三点了点头，铁匠这个职业无疑是最适合他来打造暗器的。</p>小三，爷爷来接你了。"
+                .repeat(4);
+        let mojibake = original
+            .as_bytes()
+            .iter()
+            .map(|byte| *byte as char)
+            .collect::<String>();
+
+        assert!(looks_like_utf8_latin1_mojibake(&mojibake));
+        assert_eq!(repair_utf8_latin1_mojibake(&mojibake), original);
+    }
+
+    #[tokio::test]
+    async fn get_content_repairs_stale_mojibake_cache_before_returning() {
+        let temp = tempfile::tempdir().unwrap();
+        let service = BookService::new(
+            HttpClient::new(5, None).unwrap(),
+            RuleEngine::new().unwrap(),
+            FileCache::new(temp.path().join("cache")),
+            temp.path().to_str().unwrap(),
+        );
+        let user_ns = "local";
+        let book_url = "https://example.test/book";
+        let chapter_url = "https://example.test/chapter/1";
+        let book_key = md5_hex(book_url);
+        let original = "唐三点了点头，铁匠这个职业无疑是最适合他来打造暗器的。</p>".repeat(4);
+        let mojibake = original
+            .as_bytes()
+            .iter()
+            .map(|byte| *byte as char)
+            .collect::<String>();
+        service
+            .cache
+            .put(user_ns, &book_key, chapter_url, &mojibake)
+            .await
+            .unwrap();
+
+        let content = service
+            .get_content(user_ns, book_url, &BookSource::default(), chapter_url)
+            .await
+            .unwrap();
+        let cached = service
+            .cache
+            .get(user_ns, &book_key, chapter_url)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(content, original);
+        assert_eq!(cached, original);
     }
 }

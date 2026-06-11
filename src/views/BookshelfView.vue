@@ -228,6 +228,7 @@ const {
   drawerBookUrl: recommendDrawerBookUrl,
   drawerFileName: recommendDrawerFileName,
   drawerSourceDir: recommendDrawerSourceDir,
+  drawerFallbackBook: recommendDrawerFallbackBook,
   drawerSourceName: recommendDrawerSourceName,
   drawerSourceType: recommendDrawerSourceType,
   openDetail: openRecommendDetail,
@@ -575,6 +576,7 @@ onMounted(async () => {
       :source-dir="recommendDrawerSourceDir"
       :source-name="recommendDrawerSourceName"
       :source-type="recommendDrawerSourceType"
+      :fallback-book="recommendDrawerFallbackBook"
       @read-chapter="onRecommendReadChapter"
     />
 

@@ -21,6 +21,7 @@ import {
   getNormalizedLastChapter,
   sanitizeBookDetail,
   sanitizeChapterList,
+  type BookDetailFallback,
   type BookSourceFieldError,
 } from "../../utils/bookMeta";
 import { getChapterPriceLabel, isVipChapter } from "../../utils/chapter";
@@ -36,6 +37,8 @@ const props = defineProps<{
   sourceName: string;
   /** 书源类型：novel（默认）或 comic 或 video */
   sourceType?: string;
+  /** 搜索结果已知字段，bookInfo 未提供时沿用（如七猫 ruleBookInfo={} 时补全书名） */
+  fallbackBook?: BookDetailFallback;
 }>();
 
 const emit = defineEmits<{
@@ -250,7 +253,12 @@ watch(
       // 先获取书籍详情，拿到 tocUrl（目录专属 URL），再用它加载章节列表
       // bookInfo 返回的 tocUrl 可能与 bookUrl 不同（如番茄小说使用独立目录接口）
       const infoRaw = await runBookInfo(props.fileName, props.bookUrl, props.sourceDir);
-      const sanitized = sanitizeBookDetail(infoRaw, props.fileName, props.bookUrl);
+      const sanitized = sanitizeBookDetail(
+        infoRaw,
+        props.fileName,
+        props.bookUrl,
+        props.fallbackBook,
+      );
       detail.value = sanitized.data;
       fieldErrors.value = sanitized.fieldErrors;
       const tocUrl = detail.value.tocUrl ?? props.bookUrl;

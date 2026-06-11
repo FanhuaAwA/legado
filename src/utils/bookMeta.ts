@@ -90,14 +90,41 @@ function coerceNumber(
 }
 
 /**
+ * bookInfo() 字段缺省时可沿用的来源（通常来自搜索结果 SearchBook）。
+ * 与 Legado 语义一致：ruleBookInfo 为空或某字段未提取时，保留搜索结果已有字段，
+ * 而不是把书籍判为「缺少必需字段」。
+ */
+export interface BookDetailFallback {
+  name?: string;
+  author?: string;
+  coverUrl?: CoverImageInput;
+  intro?: string;
+  kind?: string;
+  lastChapter?: string;
+  latestChapter?: string;
+  latestChapterUrl?: string;
+  wordCount?: string;
+  updateTime?: string;
+  status?: string;
+}
+
+function fallbackString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+/**
  * 校验并规范化书源 bookInfo() 的返回值。
  * - 必需字段（name）缺失或类型错误时抛出详细错误，帮助定位书源问题。
  * - 非必需字段类型错误时强制转换并记录到 fieldErrors，不中断流程。
+ * - `fallback`（搜索结果）用于补全 bookInfo 未提供的字段：name 为空但搜索已知书名时
+ *   沿用搜索书名（如七猫 ruleBookInfo={}），不再抛错。
  */
 export function sanitizeBookDetail(
   raw: unknown,
   sourceFile: string,
   fallbackUrl: string,
+  fallback?: BookDetailFallback,
 ): { data: BookDetail; fieldErrors: BookSourceFieldError[] } {
   if (raw === null || raw === undefined || typeof raw !== "object" || Array.isArray(raw)) {
     throw new Error(
@@ -108,7 +135,8 @@ export function sanitizeBookDetail(
   const r = raw as Record<string, unknown>;
   const fieldErrors: BookSourceFieldError[] = [];
 
-  // name：必需
+  // name：必需。bookInfo 未提供时沿用搜索结果书名（Legado 语义）。
+  const fallbackName = fallbackString(fallback?.name);
   let name: string;
   if (typeof r.name === "string" && r.name.trim()) {
     name = r.name.trim();
@@ -119,13 +147,16 @@ export function sanitizeBookDetail(
       actual: typeof r.name,
       rawValue: r.name,
     });
-    name = stringifySourceValue(r.name).trim() || "[书名解析失败]";
+    name = stringifySourceValue(r.name).trim() || fallbackName || "[书名解析失败]";
+  } else if (fallbackName) {
+    name = fallbackName;
   } else {
     throw new Error(`bookInfo 缺少必需字段 name [${sourceFile}]: 书籍 URL=${fallbackUrl}`);
   }
 
-  // author：建议字段，为空视为空字符串
-  const author = coerceString(r.author, "author", fieldErrors) ?? "";
+  // author：建议字段，bookInfo 未提供时沿用搜索结果，仍为空则空字符串
+  const author =
+    coerceString(r.author, "author", fieldErrors) ?? fallbackString(fallback?.author) ?? "";
 
   // tocUrl：bookInfo 中必需，缺失时使用 fallbackUrl 并记录警告
   let tocUrl: string | undefined;
@@ -142,18 +173,26 @@ export function sanitizeBookDetail(
   }
   // undefined 时调用方将使用 fallbackUrl
 
-  // 可选字符串字段
-  const intro = coerceString(r.intro, "intro", fieldErrors);
-  const kind = coerceString(r.kind, "kind", fieldErrors);
-  const lastChapter = coerceString(r.lastChapter, "lastChapter", fieldErrors);
-  const latestChapter = coerceString(r.latestChapter, "latestChapter", fieldErrors);
-  const latestChapterUrl = coerceString(r.latestChapterUrl, "latestChapterUrl", fieldErrors);
-  const wordCount = coerceString(r.wordCount, "wordCount", fieldErrors);
-  const updateTime = coerceString(r.updateTime, "updateTime", fieldErrors);
-  const status = coerceString(r.status, "status", fieldErrors);
+  // 可选字符串字段：bookInfo 未提供时沿用搜索结果（Legado 语义）。
+  const intro = coerceString(r.intro, "intro", fieldErrors) ?? fallbackString(fallback?.intro);
+  const kind = coerceString(r.kind, "kind", fieldErrors) ?? fallbackString(fallback?.kind);
+  const lastChapter =
+    coerceString(r.lastChapter, "lastChapter", fieldErrors) ??
+    fallbackString(fallback?.lastChapter);
+  const latestChapter =
+    coerceString(r.latestChapter, "latestChapter", fieldErrors) ??
+    fallbackString(fallback?.latestChapter);
+  const latestChapterUrl =
+    coerceString(r.latestChapterUrl, "latestChapterUrl", fieldErrors) ??
+    fallbackString(fallback?.latestChapterUrl);
+  const wordCount =
+    coerceString(r.wordCount, "wordCount", fieldErrors) ?? fallbackString(fallback?.wordCount);
+  const updateTime =
+    coerceString(r.updateTime, "updateTime", fieldErrors) ?? fallbackString(fallback?.updateTime);
+  const status = coerceString(r.status, "status", fieldErrors) ?? fallbackString(fallback?.status);
 
-  // coverUrl：透传（可能是 string 或 CoverImageInput 对象）
-  const coverUrl = r.coverUrl as CoverImageInput | undefined;
+  // coverUrl：透传（可能是 string 或 CoverImageInput 对象）；bookInfo 未提供时沿用搜索结果封面
+  const coverUrl = (r.coverUrl as CoverImageInput | undefined) ?? fallback?.coverUrl;
 
   // chapterCount：可选数字
   const chapterCount = coerceNumber(r.chapterCount, "chapterCount", fieldErrors);
