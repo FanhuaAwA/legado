@@ -100,3 +100,19 @@ fn custom_proxy_without_host_or_port_is_skipped() {
     let cfg = HttpClientConfig::from_app_config(&json!({ "proxy_mode": "custom" }), 30);
     assert!(HttpClient::from_config(&cfg).is_ok());
 }
+
+#[test]
+fn doh_server_is_parsed_and_client_builds() {
+    let none = HttpClientConfig::from_app_config(&json!({}), 30);
+    assert_eq!(none.doh_server, "none");
+    assert!(HttpClient::from_config(&none).is_ok());
+
+    // A known DoH provider parses and the client builds (resolver attached).
+    let cfg = HttpClientConfig::from_app_config(&json!({ "http_doh_server": "cloudflare" }), 30);
+    assert_eq!(cfg.doh_server, "cloudflare");
+    assert!(HttpClient::from_config(&cfg).is_ok());
+
+    // An unknown provider is harmless (falls back to system DNS, still builds).
+    let bogus = HttpClientConfig::from_app_config(&json!({ "http_doh_server": "bogus" }), 30);
+    assert!(HttpClient::from_config(&bogus).is_ok());
+}

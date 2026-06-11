@@ -28,9 +28,18 @@
 
 补充 NET-003（用户「继续后续任务」后实现）：`engine_timeout_secs` 已接入。`parser/js.rs` 新增 `JS_ENGINE_TIMEOUT_SECS: AtomicU64`（默认 0=禁用，保证不经 ReaderCore 的单元测试行为不变）+ thread-local `JS_EVAL_DEADLINE` + RAII `JsEvalDeadlineGuard`（求值前设 deadline，drop 恢复，防池化 runtime 残留）。`acquire_runtime` 对新建 runtime 装 `set_interrupt_handler(js_eval_interrupt)`，handler 仅读 thread-local deadline 判超时。全部用户 JS 求值收口于唯一的 `eval_js_inner_with_source`（唯一 acquire/release 处），在其 `ctx.with` 前置 guard。`ReaderCore::new` 启动下发，`app_config_set("engine_timeout_secs")` 实时更新（deadline 每次求值读取，无需重启）。基准（§44.3）：js_compat 17 测试 1.23s 与改前持平，handler 在 timeout=0 时只做 thread-local 读取，无热路径回归。测试 `tests/js_engine_timeout.rs`：1s 预算下 `while(true){}` 被中断返回 Err（实测 1.01s），正常脚本仍通过。注意：JS 阻塞在 HTTP 桥（跨线程 channel recv）时不被 QuickJS interrupt 中断，这是预期——HTTP 自带超时，engine_timeout 只管 JS 计算。
 
-仍未接入（1 键，转 NET-004，见下轮第一件事）：
+补充 NET-004（继续后续任务）：`http_doh_server` 已接入。关键发现：`reqwest::dns::Resolve` 是公开 trait，`ClientBuilder::dns_resolver` 在 async/blocking 均公开——**无需新依赖**即可自定义 DoH 解析器。新模块 `crates/reader-core/src/crawler/doh.rs`：
 
-- `http_doh_server`：reqwest 默认特性无 DoH 能力，真实实现需自定义解析器/新依赖，属较大改动。
+- `DohResolver` 实现 `reqwest::dns::Resolve`，用 JSON DoH API（`application/dns-json`），无需 DNS wire-format 编解码。
+- bootstrap 客户端用 `.resolve(doh_host, 已知IP:443)` 钉死，解析 DoH 服务器自身不递归回本解析器。
+- **fail-open**：任何 DoH 错误（网络/异常 JSON/provider 不支持）回退 `tokio::net::lookup_host` 系统解析；启用 DoH 永不破坏域名解析。
+- 6 provider 映射（alidns/dnspod/360dns/onedns/cloudflare/google）；300s 缓存。
+- 主客户端经 `HttpClientConfig.doh_server`（解析 `http_doh_server`）+ `builder().dns_resolver(...)` 接入，沿用 NET-001 的启动构建路径。
+- 测试：`crawler::doh::tests` 4 个（provider 映射、A/AAAA 解析丢弃 CNAME、空/缺失/非法 IP、各 provider 构建）+ `tests/http_client_config.rs` 增 1（doh_server 解析 + 客户端构建）。
+
+⚠️ live 验证（§6）：DoH 实际解析未在本环境实测（离线，live 测试默认 #[ignore]）。cloudflare/google/alidns/dnspod 为标准 JSON DoH；360dns/onedns 若端点 JSON 格式不符，按 fail-open 退化为系统 DNS（不报错、不破坏）。下轮在有网环境对已知 host 验证各 provider 是否真正走 DoH。JS 桥（blocking 客户端）暂未接 DoH，走系统 DNS（fail-open 一致）。
+
+审计第二类 8 键全部处置完毕（7 键实现 + DoH 实现待 live 验）。剩余：CLEAN-002/003 经复核为「已被既有 capability 门禁覆盖」的装饰性项（sync provider select 已 `:disabled=syncDisabled`；unlock 已弹窗报错），非功能缺陷。
 
 门禁（实测）：cargo fmt PASS；cargo check reader-core/legado-tauri/legado-headless PASS（0w）；cargo test reader-core 全绿（新增 7/7）；cargo test legado-tauri 9/0；pnpm lint 0/0；pnpm build PASS；命令契约 162/161/161，onlyBackend=0（命令名未变）。
 

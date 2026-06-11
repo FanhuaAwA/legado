@@ -1,3 +1,4 @@
+use crate::crawler::doh::DohResolver;
 use reqwest::{Client, ClientBuilder, Proxy};
 use serde_json::Value;
 use std::time::Duration;
@@ -29,6 +30,8 @@ pub struct HttpClientConfig {
     pub proxy_port: u16,
     pub proxy_username: String,
     pub proxy_password: String,
+    /// DNS-over-HTTPS provider key ("none"/empty = system DNS). See doh.rs.
+    pub doh_server: String,
 }
 
 impl Default for HttpClientConfig {
@@ -45,6 +48,7 @@ impl Default for HttpClientConfig {
             proxy_port: 0,
             proxy_username: String::new(),
             proxy_password: String::new(),
+            doh_server: "none".to_string(),
         }
     }
 }
@@ -119,6 +123,9 @@ impl HttpClientConfig {
         if let Some(v) = config_str(value, "proxy_password") {
             cfg.proxy_password = v;
         }
+        if let Some(v) = config_str(value, "http_doh_server") {
+            cfg.doh_server = v;
+        }
         cfg
     }
 
@@ -176,6 +183,12 @@ impl HttpClientConfig {
             // "system" (default): leave reqwest's default behaviour, which reads
             // standard proxy environment variables / system settings.
             _ => {}
+        }
+
+        // DNS-over-HTTPS, when a known provider is configured. Fails open to the
+        // system resolver inside the resolver itself, so this never breaks DNS.
+        if let Some(resolver) = DohResolver::from_config(&self.doh_server, self.ignore_tls_errors) {
+            builder = builder.dns_resolver(resolver);
         }
 
         Ok(builder)
