@@ -409,14 +409,6 @@ pub async fn ai_http_proxy_url() -> CommandResult<()> {
     Err(u("AI HTTP 代理"))
 }
 #[tauri::command]
-pub async fn app_update_download() -> CommandResult<()> {
-    Err(u("应用更新"))
-}
-#[tauri::command]
-pub async fn app_update_install_downloaded_file() -> CommandResult<()> {
-    Err(u("应用更新"))
-}
-#[tauri::command]
 pub async fn frontend_plugin_http_request() -> CommandResult<()> {
     Err(u("前端插件 HTTP"))
 }

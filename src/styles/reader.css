@@ -29,6 +29,41 @@
   overflow-wrap: break-word;
 }
 
+.reader-content-inline-image,
+.reader-legacy-inline-image {
+  display: inline-block;
+  max-width: 1.75em;
+  max-height: 1.35em;
+  margin-inline: 0.25em;
+  vertical-align: -0.25em;
+  object-fit: contain;
+}
+
+.reader-legacy-inline-image[data-legado-js],
+.reader-legacy-inline-image[data-legado-click],
+.reader-legacy-comment-action {
+  cursor: pointer;
+}
+
+.reader-legacy-comment-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.75em;
+  height: 1.45em;
+  margin-inline: 0.25em;
+  padding-inline: 0.45em;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  color: var(--color-accent);
+  font-size: 0.82em;
+  line-height: 1;
+  text-indent: 0;
+  vertical-align: 0.08em;
+  white-space: nowrap;
+}
+
 .reader-progress {
   height: 3px;
   background: var(--reader-border);

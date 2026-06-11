@@ -202,8 +202,33 @@ impl RuleEngine {
             None,
             None,
             || {
-                let rule = source.rule_book_info.clone().unwrap_or_default();
+                let mut rule = source.rule_book_info.clone().unwrap_or_default();
                 let mut context = HashMap::new();
+
+                // Legado runs a pure-JS bookInfo init rule first and evaluates every
+                // other field against its result (AnalyzeRule.setContent). 番茄's init
+                // fetches the real detail JSON via API and returns it, while the page
+                // body itself carries nothing usable.
+                let mut body = body.to_string();
+                let init_rule = rule.init.clone();
+                if let Some(init) = init_rule
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    let (pure, js, _tail) = extract_js(init);
+                    if pure.is_empty() {
+                        if let Some(script) = js {
+                            if let Ok(res) = eval_js(script, &body, base_url) {
+                                if !res.trim().is_empty() {
+                                    body = res;
+                                    rule.init = None;
+                                }
+                            }
+                        }
+                    }
+                }
+                let body = body.as_str();
 
                 let mode = self.detect_mode(rule.name.as_deref().unwrap_or(""), body);
                 match mode {
@@ -291,6 +316,7 @@ impl RuleEngine {
                         &mut context,
                     ),
                 };
+                chapters.retain(|chapter| !(chapter.is_volume && chapter.url.trim().is_empty()));
                 apply_toc_format_js(&mut chapters, rule.format_js.as_deref(), base_url);
                 if reverse {
                     chapters.reverse();
@@ -304,13 +330,24 @@ impl RuleEngine {
     }
 
     pub fn content(&self, source: &BookSource, body: &str, base_url: &str) -> String {
+        self.content_with_chapter_url(source, body, base_url, base_url)
+    }
+
+    pub fn content_with_chapter_url(
+        &self,
+        source: &BookSource,
+        body: &str,
+        base_url: &str,
+        chapter_url: &str,
+    ) -> String {
+        let derived_toc_url = derive_toc_url_from_chapter_url(chapter_url);
         with_js_source(
             source.js_lib.as_deref(),
             source.login_url.as_deref(),
             Some(source.book_source_name.as_str()),
             Some(source.book_source_url.as_str()),
-            None,
-            Some(base_url),
+            derived_toc_url.as_deref(),
+            Some(chapter_url),
             None,
             None,
             || {
@@ -348,8 +385,18 @@ impl RuleEngine {
                             {
                                 return res;
                             }
-                            Ok(_) => false,  // returned empty or non-HTML
-                            Err(_) => false, // JS failed
+                            Ok(other) => {
+                                tracing::debug!(
+                                    "content js returned non-HTML ({} chars): {:?}",
+                                    other.chars().count(),
+                                    other.chars().take(120).collect::<String>()
+                                );
+                                false
+                            } // returned empty or non-HTML
+                            Err(err) => {
+                                tracing::debug!("content js failed: {err}");
+                                false
+                            } // JS failed
                         };
                         // Fallback: if JS failed or returned non-HTML, try JSONPath
                         if !js_ok && content_body.trim_start().starts_with('{') {
@@ -409,19 +456,10 @@ impl RuleEngine {
                         content = apply_legado_regex(&content, replace);
                     }
 
-                    if let Some(callback) = rule
-                        .call_back_js
-                        .as_deref()
-                        .filter(|s| !s.trim().is_empty())
-                    {
-                        if let Ok(processed) =
-                            eval_js(self.strip_mode_prefix(callback), &content, base_url)
-                        {
-                            if !processed.trim().is_empty() {
-                                content = processed;
-                            }
-                        }
-                    }
+                    // NOTE: ruleContent.callBackJs is a reading-event callback in
+                    // legado (event = startRead/endRead/...) — it never runs during
+                    // content parsing and its return value (`back`) must not replace
+                    // the content (番茄 returns `false` from it).
 
                     return content;
                 }
@@ -1513,6 +1551,11 @@ fn resolve_url(base: &str, url: &str) -> String {
     if url.is_empty() {
         return base.to_string();
     }
+    // data URIs are self-contained (番茄 toc/chapter URLs); joining them onto the
+    // base URL would percent-encode the embedded `,{"type":...}` options.
+    if url.starts_with("data:") || url.starts_with("DATA:") {
+        return url.to_string();
+    }
     if url.starts_with("http://") || url.starts_with("https://") {
         return url.to_string();
     }
@@ -2442,17 +2485,50 @@ fn capture_rule_value(rule: Option<&str>, captures: &regex::Captures<'_>) -> Opt
 fn finalize_chapter_url(
     base_url: &str,
     raw_url: &str,
-    title: &str,
+    _title: &str,
     is_volume: bool,
-    index: usize,
+    _index: usize,
 ) -> String {
     if !raw_url.trim().is_empty() {
         return resolve_url(base_url, raw_url);
     }
     if is_volume {
-        return format!("{}{}", title, index);
+        return String::new();
     }
     base_url.to_string()
+}
+
+fn derive_toc_url_from_chapter_url(chapter_url: &str) -> Option<String> {
+    let (_url, options) = split_data_uri_options(chapter_url)?;
+    let value = serde_json::from_str::<Value>(options).ok()?;
+    let info = value.get("info").and_then(Value::as_str)?;
+    let book_id = info.split('#').next().map(str::trim)?;
+    if book_id.is_empty() {
+        return None;
+    }
+    use base64::Engine as _;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(book_id);
+    Some(format!(
+        "data:book_id;base64,{encoded},{{\"type\":\"M_xh\"}}"
+    ))
+}
+
+fn split_data_uri_options(rule: &str) -> Option<(&str, &str)> {
+    let trimmed = rule.trim();
+    if !trimmed.starts_with("data:") && !trimmed.starts_with("DATA:") {
+        return None;
+    }
+    for (idx, ch) in trimmed.char_indices() {
+        if ch != ',' {
+            continue;
+        }
+        let after = &trimmed[idx + ch.len_utf8()..];
+        let option = after.trim_start();
+        if option.starts_with('{') {
+            return Some((trimmed[..idx].trim_end(), option));
+        }
+    }
+    None
 }
 
 fn is_truthy(value: String) -> bool {
@@ -2609,6 +2685,30 @@ mod tests {
     }
 
     #[test]
+    fn test_chapter_list_filters_empty_volume_rows() {
+        let engine = RuleEngine::new().unwrap();
+        let source = BookSource {
+            book_source_name: "JS TOC".to_string(),
+            book_source_url: "https://source.example".to_string(),
+            rule_toc: Some(TocRule {
+                chapter_list: Some("js:JSON.stringify([{chapterName:'第一卷',chapterUrl:'',isVolume:true},{chapterName:'第一章',chapterUrl:'data:item_id;base64,YWJj,{\"type\":\"Z_xh\",\"info\":\"book#abc\"}',isVolume:false}])".to_string()),
+                chapter_name: Some("chapterName".to_string()),
+                chapter_url: Some("chapterUrl".to_string()),
+                is_volume: Some("isVolume".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let (chapters, next_urls) =
+            engine.chapter_list(&source, "<html></html>", "https://books.example");
+        assert!(next_urls.is_empty());
+        assert_eq!(chapters.len(), 1);
+        assert_eq!(chapters[0].title, "第一章");
+        assert!(chapters[0].url.starts_with("data:item_id;base64,"));
+    }
+
+    #[test]
     fn test_chapter_list_keeps_real_chapterlist_container() {
         let engine = RuleEngine::new().unwrap();
         let source = BookSource {
@@ -2708,5 +2808,60 @@ mod tests {
         );
         assert_eq!(book.name, "Book-Alias");
         assert_eq!(book.author, "Tester");
+    }
+
+    #[test]
+    fn test_book_info_js_init_result_becomes_field_scope() {
+        // Mirrors 番茄: the fetched body is unusable, a pure-JS init produces the
+        // detail JSON, and tocUrl combines a JSON field + <js> + {{result}} tail
+        // into a data URI.
+        let engine = RuleEngine::new().unwrap();
+        let source = BookSource {
+            book_source_name: "番茄".to_string(),
+            book_source_url: "https://reading.snssdk.com#test".to_string(),
+            rule_book_info: Some(BookInfoRule {
+                init: Some(
+                    "@js:JSON.stringify({book_name:'测试书', author:'作者', book_id:'7276384138653862966'})"
+                        .to_string(),
+                ),
+                name: Some("book_name".to_string()),
+                author: Some("author".to_string()),
+                toc_url: Some(
+                    "book_id\n<js>java.base64Encode(result)</js>\ndata:book_id;base64,{{result}},{\"type\":\"M_xh\"}"
+                        .to_string(),
+                ),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let book = engine.book_info(
+            &source,
+            "not json at all",
+            "https://reading.snssdk.com/reading/bookapi/detail/v/?book_id=7276384138653862966",
+            "https://reading.snssdk.com/reading/bookapi/detail/v/?book_id=7276384138653862966",
+        );
+
+        assert_eq!(book.name, "测试书");
+        assert_eq!(book.author, "作者");
+        assert_eq!(
+            book.toc_url.as_deref(),
+            Some("data:book_id;base64,NzI3NjM4NDEzODY1Mzg2Mjk2Ng==,{\"type\":\"M_xh\"}")
+        );
+    }
+
+    #[test]
+    fn test_resolve_url_keeps_data_uri_intact() {
+        let url = "data:item_id;base64,YWJj,{\"type\":\"Z_xh\",\"info\":\"1#2\"}";
+        assert_eq!(resolve_url("https://example.com/page", url), url);
+    }
+
+    #[test]
+    fn test_derive_toc_url_from_data_uri_info() {
+        let chapter_url = "data:item_id;base64,NzI3NjY2MzU2MDQyNzQ3MTQxMg==,{\"type\":\"Z_xh\",\"info\":\"7276384138653862966#7276663560427471412\"}";
+        assert_eq!(
+            derive_toc_url_from_chapter_url(chapter_url).as_deref(),
+            Some("data:book_id;base64,NzI3NjM4NDEzODY1Mzg2Mjk2Ng==,{\"type\":\"M_xh\"}")
+        );
     }
 }

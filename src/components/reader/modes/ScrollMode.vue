@@ -21,6 +21,8 @@ import {
 } from "../composables/useReaderPosition";
 import { splitReaderParagraphs, type ReaderParagraph } from "../utils/paragraphs";
 
+const READER_INLINE_HTML_RE = /<(?:img|span)\b[^>]*\breader-legacy-[^>]*>(?:<\/span>)?/giu;
+
 const props = defineProps<{
   content: string;
   chapterTitle?: string;
@@ -224,7 +226,7 @@ async function runRestoreAnchor(anchor: number, token: number): Promise<void> {
 watch(
   () => props.content,
   async (val) => {
-    paragraphs.value = splitReaderParagraphs(val);
+    paragraphs.value = splitReaderParagraphs(val, { preserveInlineHtml: true });
     atBottom.value = false;
     atTop.value = true;
     prevChapterEnteredFired = false;
@@ -283,7 +285,7 @@ watch(
 watch(
   () => props.nextChapterContent,
   async (val) => {
-    nextParagraphs.value = val ? splitReaderParagraphs(val) : [];
+    nextParagraphs.value = val ? splitReaderParagraphs(val, { preserveInlineHtml: true }) : [];
     nextBoundaryFallbackFired = false;
     teardownSentinel();
     if (val) {
@@ -301,7 +303,7 @@ watch(
   async (val, oldVal) => {
     const wasEmpty = !oldVal;
     const isNowFilled = !!val;
-    prevParagraphs.value = val ? splitReaderParagraphs(val) : [];
+    prevParagraphs.value = val ? splitReaderParagraphs(val, { preserveInlineHtml: true }) : [];
     prevChapterEnteredFired = false;
     prevBoundaryFallbackFired = false;
 
@@ -345,9 +347,25 @@ function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
+function escapeHtmlPreservingReaderInline(text: string): string {
+  const controls: string[] = [];
+  const masked = text.replace(READER_INLINE_HTML_RE, (tag) => {
+    const index = controls.push(tag) - 1;
+    return `\uE000READER_INLINE_${index}\uE001`;
+  });
+  return escapeHtml(masked).replace(
+    /\uE000READER_INLINE_(\d+)\uE001/gu,
+    (_, index: string) => controls[Number(index)] ?? "",
+  );
+}
+
+function renderParagraphHtml(text: string): string {
+  return escapeHtmlPreservingReaderInline(text);
+}
+
 function highlightParagraph(text: string): string {
   const texts = props.bookmarkTexts;
-  const escaped = escapeHtml(text);
+  const escaped = renderParagraphHtml(text);
   if (!texts || texts.length === 0) {
     return escaped;
   }
@@ -367,7 +385,12 @@ function getParagraphCommentSummary(paragraphIndex: number): ParagraphCommentSum
 }
 
 function isParagraphCommentTarget(target: EventTarget | null): boolean {
-  return !!(target instanceof Element && target.closest(".reader-paragraph-comment"));
+  return !!(
+    target instanceof Element &&
+    target.closest(
+      ".reader-paragraph-comment, .reader-legacy-comment-action, .reader-legacy-inline-image[data-legado-js], .reader-legacy-inline-image[data-legado-click]",
+    )
+  );
 }
 
 function onParagraphCommentClick(paragraphIndex: number) {
@@ -861,7 +884,7 @@ defineExpose({
               marginBottom: `${paragraphSpacing}px`,
             }"
           >
-            <span class="scroll-mode__text">{{ para.text }}</span>
+            <span class="scroll-mode__text" v-html="renderParagraphHtml(para.text)" />
           </p>
         </template>
         <div v-else class="scroll-mode__chapter-loading">
@@ -955,7 +978,7 @@ defineExpose({
               marginBottom: `${paragraphSpacing}px`,
             }"
           >
-            <span class="scroll-mode__text">{{ para.text }}</span>
+            <span class="scroll-mode__text" v-html="renderParagraphHtml(para.text)" />
           </p>
         </template>
         <div v-else class="scroll-mode__chapter-loading">

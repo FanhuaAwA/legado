@@ -84,12 +84,59 @@ fn resolve_proxy_url(raw: &str) -> String {
     raw.to_string()
 }
 
+/// Legado-compatible data URI: `data:<mediatype>;base64,<payload>` is not fetched
+/// over the network — the decoded payload IS the response body (番茄 tocUrl /
+/// chapterUrl carry the book/item id this way). The empty-mediatype form
+/// `data:;base64,` is this project's proxy-URL convention handled by
+/// `resolve_proxy_url`, so it is excluded here.
+pub(crate) fn decode_data_uri(url: &str) -> Option<Vec<u8>> {
+    use base64::Engine as _;
+    let trimmed = url.trim();
+    let rest = trimmed
+        .strip_prefix("data:")
+        .or_else(|| trimmed.strip_prefix("DATA:"))?;
+    let (mediatype, payload) = rest.split_once(";base64,")?;
+    if mediatype.is_empty() {
+        return None;
+    }
+    base64::engine::general_purpose::STANDARD
+        .decode(payload)
+        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(payload))
+        .ok()
+}
+
 pub async fn fetch(client: &HttpClient, req: RequestSpec) -> anyhow::Result<FetchResponse> {
+    let req = {
+        let mut req = req;
+        req.url = resolve_proxy_url(&req.url);
+        req
+    };
+    if let Some(bytes) = decode_data_uri(&req.url) {
+        // Legado returns hex-encoded bytes when the url options declare a `type`
+        // (sources then call java.hexDecodeToString), plain text otherwise.
+        let body = if req
+            .response_type
+            .as_deref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false)
+        {
+            hex::encode(&bytes)
+        } else {
+            String::from_utf8_lossy(&bytes).into_owned()
+        };
+        return Ok(FetchResponse {
+            url: req.url,
+            status: 200,
+            body,
+            content_type: None,
+            headers: Vec::new(),
+            is_successful: true,
+        });
+    }
     let mut last_err: Option<anyhow::Error> = None;
     let max_retries = req.retry;
     for attempt in 0..=max_retries {
-        let mut req = req.clone();
-        req.url = resolve_proxy_url(&req.url);
+        let req = req.clone();
         let mut builder = match req.method {
             HttpMethod::GET => client.client().get(&req.url),
             HttpMethod::POST => client.client().post(&req.url),
@@ -272,6 +319,57 @@ fn is_xml_response(content_type: Option<&str>, body: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crawler::http_client::HttpClient;
+
+    #[test]
+    fn decode_data_uri_decodes_base64_payload_with_mediatype() {
+        // base64("7276384138653862966")
+        let url = "data:book_id;base64,NzI3NjM4NDEzODY1Mzg2Mjk2Ng==";
+        assert_eq!(
+            decode_data_uri(url).as_deref(),
+            Some("7276384138653862966".as_bytes())
+        );
+    }
+
+    #[test]
+    fn decode_data_uri_ignores_proxy_convention_and_plain_urls() {
+        // empty mediatype = project proxy-URL convention, handled elsewhere
+        assert_eq!(decode_data_uri("data:;base64,aHR0cHM6Ly9hLmI="), None);
+        assert_eq!(decode_data_uri("https://example.com"), None);
+        assert_eq!(decode_data_uri("data:text/plain,hello"), None);
+    }
+
+    #[tokio::test]
+    async fn fetch_serves_data_uri_without_network() {
+        let client = HttpClient::new(5, None).unwrap();
+
+        // with a response type the body is hex-encoded (legado behaviour)
+        let res = fetch(
+            &client,
+            RequestSpec {
+                url: "data:book_id;base64,NzI3NjM4NDEzODY1Mzg2Mjk2Ng==".to_string(),
+                response_type: Some("M_xh".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.status, 200);
+        assert!(res.is_successful);
+        assert_eq!(res.body, hex::encode("7276384138653862966"));
+
+        // without a response type the body is the decoded text
+        let res = fetch(
+            &client,
+            RequestSpec {
+                url: "data:book_id;base64,NzI3NjM4NDEzODY1Mzg2Mjk2Ng==".to_string(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.body, "7276384138653862966");
+    }
 
     #[test]
     fn decode_body_uses_response_charset() {

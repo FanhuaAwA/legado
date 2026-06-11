@@ -159,12 +159,6 @@ pub const CAPABILITY_SPECS: &[CapabilitySpec] = &[
         ],
     },
     CapabilitySpec {
-        key: "appUpdate",
-        supported: false,
-        reason: "In-app update download is not implemented in this build; download releases manually.",
-        commands: &["app_update_download", "app_update_install_downloaded_file"],
-    },
-    CapabilitySpec {
         key: "unlock",
         supported: false,
         reason: "Secure-mode unlock challenges are not implemented in this build.",

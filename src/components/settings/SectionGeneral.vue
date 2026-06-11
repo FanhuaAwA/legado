@@ -13,7 +13,6 @@ const { setConfig } = _appCfg;
 const prefsStore = usePreferencesStore();
 const tocCfg = computed(() => prefsStore.tocAutoUpdate);
 const searchCfg = computed(() => prefsStore.search);
-const appUpdateCfg = computed(() => prefsStore.appUpdate);
 const isAndroidPlatform = computed(() => platform.value === "Android");
 
 async function handleSet(key: string, value: string) {
@@ -61,16 +60,6 @@ const INTERVAL_OPTIONS = [
         <n-radio-button value="mobile">手机</n-radio-button>
         <n-radio-button value="desktop">电脑</n-radio-button>
       </n-radio-group>
-    </SettingItem>
-
-    <SettingItem label="启动后检查更新" desc="应用启动后在后台检查版本；发现新版本时提示下载">
-      <n-switch
-        :value="appUpdateCfg.autoCheckOnStartup !== false"
-        @update:value="(v: boolean) => prefsStore.patchAppUpdate({ autoCheckOnStartup: v })"
-      >
-        <template #checked>开启</template>
-        <template #unchecked>关闭</template>
-      </n-switch>
     </SettingItem>
   </SettingSection>
 

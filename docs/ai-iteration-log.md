@@ -1,5 +1,82 @@
 # AI Iteration Log
 
+## 记录标题：2026-06-11 Legado 段评占位与空段落清洗
+
+任务 ID：READER-LEGACY-COMMENT-CLEANUP
+
+本轮目标：用户反馈番茄正文阶段最新日志已能传出正常数字 `item_id=7287058552051794491`，但 `pyfq.52dns.cc/content` 请求失败；同时番茄、七猫、书旗三个书源疑似段评功能污染正文，出现 `</p><p idx="18"> </p>` 空段落。
+
+关键定位：
+
+1. 新日志中的 `item_id` 已不是乱码，说明上一轮章节 data URI / item_id 恢复问题已生效；当前 `pyfq.52dns.cc` 失败属于外部中转接口不可用或不稳定。
+2. 阅读器前端 `splitReaderParagraphs()` 只按换行拆段，不识别 HTML `<p>`，因此空 `<p idx>` 和 Legado 内嵌段评图片占位会直接进入正文。
+3. 番茄 `getContent()` 会调用 `chapter.putVariable('fqContent', ...)` 保存段评上下文，但本地 JS 兼容层只提供了 `book/source` 变量能力，缺少 `chapter.getVariable/putVariable`。
+4. 七猫段评把 `data:image/svg+xml;base64,...,{...}` 放入 `img src`，番茄段评可能生成 `http://,{...}`；这些都不是浏览器标准图片 URL，需要在渲染前拆出 JSON 参数。
+
+修改文件：
+
+- `crates/reader-core/src/parser/js.rs`：补齐 `chapter.getVariable/setVariable/putVariable/putImgUrl`，变量按 `source_key + chapter_url` 隔离。
+- `crates/reader-core/tests/js_compat.rs`：新增章节变量按章节 URL 隔离并跨 eval 保持的回归测试。
+- `src/components/reader/utils/paragraphs.ts`：正文拆段支持 HTML `<p>/<br>`；过滤空 `<p idx>`；纯文本路径去除 HTML/段评占位；滚动模式路径保留受控的 Legado 段评入口。
+- `src/components/reader/modes/ScrollMode.vue`、`src/components/reader/ReaderContentArea.vue`、`src/styles/reader.css`：滚动阅读模式渲染受控段评入口，避免点击/触摸段评入口时误触翻页或长按选词。
+- `src/components/reader/composables/useReaderTtsManager.ts`：TTS 使用同一纯文本拆段逻辑，避免朗读 HTML 和段评 JSON。
+
+剩余说明：本轮没有把 Legado `java.startBrowser/showBrowser` 内嵌浏览器脚本完整桥接到桌面端评论抽屉；点击旧书源段评入口时会提示已识别入口但评论页打开仍需后续桥接。外部正文中转站 `pyfq/gofq` 不可用时，应用只能降级提示，无法在本地保证代理站恢复。
+
+## 记录标题：2026-06-11 移除应用版本更新入口
+
+任务 ID：UI-REMOVE-APP-UPDATE
+
+本轮目标：用户要求删除项目中的应用版本更新检测驱动、发布页入口和页面展示，并覆盖手机端相关下载安装路径；同时关于页软件贡献者只保留 `Fanhua`。
+
+修改文件：
+
+- `src/App.vue`：移除启动后应用更新弹窗挂载。
+- `src/components/settings/SectionAbout.vue`：移除“版本更新”面板、发布页按钮、检测渠道、下载并安装入口；贡献者列表仅保留 `Fanhua`。
+- `src/components/settings/SectionGeneral.vue`、`src/stores/preferences.ts`、`src/stores/index.ts`：移除启动后检查更新偏好和导出类型。
+- `src/components/AppUpdateDialog.vue`、`src/composables/useAppUpdateDownload.ts`、`src/utils/appUpdate.ts`：删除应用更新检测、GitHub releases 查询和应用内下载安装前端代码。
+- `src/composables/useCapabilities.ts`、`src-tauri/src/commands/system.rs`、`src-tauri/src/commands/sync_misc.rs`、`src-tauri/src/commands/mod.rs`：移除 `appUpdate` 能力域和 `app_update_*` 后端占位命令注册。
+- `docs/command-matrix.md`、`docs/ai-task-status.md`：更新命令矩阵，不再列出应用更新驱动。
+
+验证计划：执行命令契约检查、前端 lint/build、Rust check/test，以及 Windows/Android release 构建；构建通过后提交并推送到 GitHub。
+
+## 记录标题：2026-06-11 番茄 toc/content 全链路修复
+
+任务 ID：SRC-FANQIE-TOC-CONTENT
+
+本轮目标：用户反馈番茄书源搜索和详情已成功，但目录/正文失败；后端日志显示正文阶段先请求 `https://reading.snssdk.com/第一卷：戏中人0` 得到 404，随后中转接口收到乱码 `item_id` 并超时。要求基于 `E:\Book\legado-tauri-ai-iteration-plan.md`、`E:\Book\legado-tauri-mandatory-completion-audit.md` 和 `E:\Book\番茄书源` 修复，不修改原始书源 JSON。
+
+关键定位：
+
+1. 番茄 `ruleToc.chapterList` 返回的数组同时包含卷标题行和真实章节行。卷标题行 `isVolume=true` 且 `chapterUrl=""`。
+2. 旧 `finalize_chapter_url()` 会把无 URL 的卷标题合成为 `标题+index`，因此第一条目录变成 `第一卷：戏中人0`，前端无法识别它不是章节，点击后触发用户日志中的 404。
+3. 番茄正文规则依赖 `book.tocUrl` 获取 book_id，但 `booksource_chapter_content` 命令契约只传 chapterUrl。经过 `analyze_url/fetch` 后，章节 data URI 的 `,{"info":"book_id#item_id"}` options 会被剥离，正文 JS 上下文拿不到恢复 book_id 的信息。
+
+修改文件：
+
+- `crates/reader-core/src/parser/rule_engine.rs`：过滤 `isVolume=true` 且无真实 URL 的目录项；`finalize_chapter_url()` 不再为卷标题生成伪 URL；新增 `content_with_chapter_url()`，从章节 data URI 的 `info` 还原 `book.tocUrl`；补单元回归。
+- `crates/reader-core/src/service/book_service.rs`：正文解析时把原始 `current_url` 传入规则引擎，保留 data URI options 上下文。
+- `crates/reader-core/tests/source_compat_import.rs`：新增/收紧 `fanqie_source_full_chain`，要求目录第一条就是真实章节 data URI，并用该章节直接读取正文。
+- `docs/source-compat-matrix.md`：更新番茄状态为 search→bookInfo→toc→content 实网通过，记录剩余未验收项。
+
+验证结果：
+
+- `cargo test -p reader-core test_chapter_list_filters_empty_volume_rows --lib`：PASS。
+- `cargo test -p reader-core test_derive_toc_url_from_data_uri_info --lib`：PASS。
+- `cargo test -p reader-core --test source_compat_import fanqie_source_full_chain -- --ignored --nocapture --test-threads=1`：PASS；搜索「我不是戏神」，toc 1928 章，第一条 `第1章 戏鬼回家`，URL 为 `data:item_id;base64,...`，正文 3135 字符。
+- 补充复测：同轮后续短时间重复运行 `fanqie_source_full_chain` / `fanqie_source_search_and_book_info` 时，均停在外部 `device_register` 并报 `JS Exception: network error`，未进入 toc/content；归类为 `source_site = device_register_unreachable`，不改变前述已通过的目录/正文修复证据。
+- `cargo test -p reader-core`：PASS，34 passed / 1 ignored（lib），集成测试均通过或按 live/diagnostic ignore。
+- `cargo check -p reader-core`：PASS。
+- `cargo check -p legado-tauri`：PASS。
+- `cargo test -p legado-tauri`：PASS；1 个 lib 测试 + 9 个 WS/router 集成测试通过，仅有 MSVC linker stdout warning。
+- `node scripts/ci/check-command-contract.mjs --json`：164/163/163，onlyBackend=0，onlyFrontend=`js_eval`。
+- `pnpm lint`：PASS，0 warnings / 0 errors。
+- `pnpm build`：PASS；仅既有 Vite/Rolldown 警告（vconsole eval、chunk size、动态导入提示）。
+
+未纳入本轮验收：番茄 bookInfo 展示字段完整性（intro/kind/wordCount 等逐项校验）、真实交互验证码 UI。
+
+下轮第一件事：补番茄 bookInfo 字段完整性测试和字段映射修复；不要再重复排查 `getVerificationCode`、OkHttp 二进制 body、搜索 JSONPath 尾部规则或 toc/content 全链路。
+
 ## 记录标题：2026-06-11 番茄搜索引擎兼容修复
 
 任务 ID：SRC-FANQIE-ENGINE

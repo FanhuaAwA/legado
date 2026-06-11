@@ -9,7 +9,6 @@ export type CapabilityKey =
   | "comicCache"
   | "coverCache"
   | "repository"
-  | "appUpdate"
   | "unlock"
   | "aiProxy"
   | "pluginHttp"
@@ -109,10 +108,6 @@ const fallbackCapabilities: AppCapabilities = {
       "booksource_check_update",
       "booksource_apply_update",
     ],
-  ),
-  appUpdate: unsupported(
-    "In-app update download is not implemented in this build; download releases manually.",
-    ["app_update_download", "app_update_install_downloaded_file"],
   ),
   unlock: unsupported("Secure-mode unlock challenges are not implemented in this build.", [
     "issue_full_mode_challenge",

@@ -450,6 +450,72 @@ data.z + ':' + data.ml
 }
 
 #[test]
+fn legado_chapter_variables_are_scoped_by_chapter_url() {
+    let first = with_js_source(
+        Some(""),
+        None,
+        Some("番茄小说"),
+        Some("https://reading.snssdk.com#mgz0326"),
+        Some("data:book_id;base64,NzI3NjM4NDEzODY1Mzg2Mjk2Ng=="),
+        Some("https://reading.snssdk.com/chapter/7287058552051794491"),
+        Some("第一章"),
+        Some(1),
+        || {
+            eval_js(
+                r#"
+chapter.putVariable('fqContent', JSON.stringify(['第一段', '第二段']));
+chapter.getVariable('fqContent')
+"#,
+                "",
+                "https://reading.snssdk.com/chapter/7287058552051794491",
+            )
+        },
+    )
+    .unwrap();
+    assert_eq!(first, r#"["第一段","第二段"]"#);
+
+    let second = with_js_source(
+        Some(""),
+        None,
+        Some("番茄小说"),
+        Some("https://reading.snssdk.com#mgz0326"),
+        Some("data:book_id;base64,NzI3NjM4NDEzODY1Mzg2Mjk2Ng=="),
+        Some("https://reading.snssdk.com/chapter/7287058552051794491"),
+        Some("第一章"),
+        Some(1),
+        || {
+            eval_js(
+                "chapter.getVariable('fqContent')",
+                "",
+                "https://reading.snssdk.com/chapter/7287058552051794491",
+            )
+        },
+    )
+    .unwrap();
+    assert_eq!(second, first);
+
+    let other_chapter = with_js_source(
+        Some(""),
+        None,
+        Some("番茄小说"),
+        Some("https://reading.snssdk.com#mgz0326"),
+        Some("data:book_id;base64,NzI3NjM4NDEzODY1Mzg2Mjk2Ng=="),
+        Some("https://reading.snssdk.com/chapter/7287058552051794492"),
+        Some("第二章"),
+        Some(2),
+        || {
+            eval_js(
+                "chapter.getVariable('fqContent')",
+                "",
+                "https://reading.snssdk.com/chapter/7287058552051794492",
+            )
+        },
+    )
+    .unwrap();
+    assert!(other_chapter.is_empty());
+}
+
+#[test]
 fn legado_android_and_ajaxall_shims_are_available_without_ui_side_effects() {
     let result = eval_js(
         r#"

@@ -789,7 +789,9 @@ impl BookService {
                 .fetch_source_url(user_ns, source, &current_url, &source.book_source_url)
                 .await?;
             tracing::debug!("get_content fetch done, body len={}", res.body.len());
-            let mut content = self.parser.content(source, &res.body, &res.url);
+            let mut content =
+                self.parser
+                    .content_with_chapter_url(source, &res.body, &res.url, &current_url);
             if looks_like_utf8_latin1_mojibake(&content) {
                 tracing::warn!(
                     "get_content detected mojibake in parsed content, repairing, url={}",

@@ -2,7 +2,7 @@
 
 记录各本地测试书源在 Tauri 项目中的兼容状态。
 
-最后实测：2026-06-11（Windows 端本地导入 + 网络导入专项验证；番茄搜索引擎兼容复测）。
+最后实测：2026-06-11（Windows 端本地导入 + 网络导入专项验证；番茄 search → bookInfo → toc → content 全链路复测）。
 
 实测命令：
 
@@ -43,7 +43,17 @@ cargo test -p reader-core --test source_compat_import fanqie_source_search_and_b
 - `JavaImporter` / Rhino 兼容：正确展开 `with(JavaImporter(...)) { ... }` 并保留顶层函数可见性；补中文未声明变量和旧式 for 循环变量声明。
 - `rule_engine`：`search_books_js` 支持 JS 规则输出后继续套用尾部 JSONPath，再按字段规则提取书籍。
 
-复测：`fanqie_source_search_and_book_info` 实网通过，搜索关键词「我不是戏神」返回 `番茄搜索: 我不是戏神`，书籍详情请求进入番茄 book detail API。toc/content 未纳入本轮验收。
+复测：`fanqie_source_search_and_book_info` 实网通过，搜索关键词「我不是戏神」返回 `番茄搜索: 我不是戏神`，书籍详情请求进入番茄 book detail API。
+
+## 2026-06-11 番茄 toc/content 全链路修复
+
+用户反馈：搜索和详情成功后，打开正文时后端先请求 `https://reading.snssdk.com/第一卷：戏中人0` 返回 404，随后正文中转接口收到乱码 `item_id`，最终 35s 超时且正文为空。
+
+根因：番茄目录 JS 会返回卷标题行和真实章节行。卷标题行 `isVolume=true` 且 `chapterUrl=""`，旧规则引擎把无 URL 的卷标题合成为 `标题+index` 伪 URL，前端无法区分卷标题与章节，点击第一项就会把 `第一卷：戏中人0` 当章节 URL。正文阶段还会丢失原始章节 data URI options 中的 `info=book_id#item_id`，使 `book.tocUrl` 为空。
+
+修复：无真实 URL 的卷标题不再进入可读章节列表；`book_service.get_content` 保留原始 chapter URL 传给规则引擎；规则引擎从 `data:item_id;base64,...,{"info":"book_id#item_id"}` 还原 `book.tocUrl=data:book_id;base64,...`，供番茄 `ruleContent` 原规则继续执行。未修改 `E:\Book\番茄书源\*.json`。
+
+复测：`fanqie_source_full_chain` 实网通过，搜索「我不是戏神」→ bookInfo → toc 1928 章，第一条为 `第1章 戏鬼回家` 且 URL 为 `data:item_id;base64,...`，content 返回 3135 字符正文。补充：同轮后续短时间重复运行时，外部设备注册链路多次返回 `JS Exception: network error at device_register`，测试未进入 toc/content；该失败归类为 `source_site = device_register_unreachable`，不是本轮修复的目录/正文回归。
 
 ## 2026-06-11 Windows 端本地导入 + 网络导入验证
 
@@ -53,7 +63,7 @@ cargo test -p reader-core --test source_compat_import fanqie_source_search_and_b
 | ---- | -------------------- | -------------------- | ------------- | ---------- | --------------------- | ------------------------------------------------------------------- |
 | 书旗 | ✅ live_network_pass | ✅ live_network_pass | ✅            | ✅ 329 章  | ✅ 本地版 / ⚠️ CDN 版 | 本地导入完整可用；网络导入可搜索可读目录，正文受 CDN 规则新鲜度限制 |
 | 七猫 | ✅ live_network_pass | ✅ live_network_pass | ✅            | ✅ 2551 章 | ✅ 本地版 / ⚠️ CDN 版 | 同上                                                                |
-| 番茄 | ✅（导入+列表）      | ✅（导入+列表）      | ✅ 我不是戏神 | 未验收     | 未验收                | 搜索已恢复；toc/content 与详情字段完整性未纳入本轮验收              |
+| 番茄 | ✅（导入+列表）      | ✅（导入+列表）      | ✅ 我不是戏神 | ✅ 1928 章 | ✅ 3135 字符          | search→bookInfo→toc→content 全链路已恢复；详情字段完整性仍待补验收  |
 
 原则（2026-06-11 用户指令）：本地项目引擎必须兼容使用上游书源，不得反过来改书源去迁就引擎。本轮先证明引擎是否对上游忠实，再分清「引擎缺能力」与「书源规则过期」。
 
@@ -69,7 +79,7 @@ cargo test -p reader-core --test source_compat_import fanqie_source_search_and_b
 4. **番茄 search 链路已恢复，属于本轮已解除的引擎兼容缺口**。旧失败点确实在引擎侧：`java.getVerificationCode` 伪实现、`base64DecodeToByteArray` 二进制 body 有损、OkHttp shim 规格不兼容、`with(JavaImporter)` 作用域不兼容、Rhino 非 strict 全局变量兼容不足，以及 `<js>...</js>$[*]` 搜索列表尾部 JSONPath 未执行。本轮已逐项修复并实网复测通过：搜索「我不是戏神」返回书籍结果，详情请求进入番茄 book detail API。
    - **`java.getVerificationCode` 不再伪造**：Legado 真实语义是交互式验证码读取；当前 headless 环境明确降级为空并记录日志，不再编造 MD5/salt。
    - **二进制 body 通道已打通**：`base64DecodeToByteArray` 返回 byte-array marker，OkHttp shim 通过 `bodyBase64` / `bodyBytesBase64` 交给 `java.ajax`，Rust 侧按原始字节发送 reqwest body。
-   - **仍未验收的范围**：番茄 toc/content、bookInfo 字段完整性、真实交互验证码 UI。不应把这些未验收项反写成搜索仍失败。
+   - **已补验收范围**：番茄 toc/content 全链路已通过 `fanqie_source_full_chain` 实网复测。剩余未验收项是 bookInfo 字段完整性和真实交互验证码 UI，不应把这些未验收项反写成搜索或正文仍失败。
 
 ## 测试书源列表
 
@@ -109,15 +119,15 @@ cargo test -p reader-core --test source_compat_import fanqie_source_search_and_b
 | toc      | live_network_pass | **此前 BLOCKED → 已解除**。2551 章；根因是 `let device... chapters=...` 在 strict-mode 下 redeclaration 失败，已修 `eval_script`                                           |
 | content  | live_network_pass | **此前 BLOCKED → 已解除**。14648 字符；修了 reqwest blocking 在 tokio 上下文 panic + ruleContent 三格式兼容 + bid/cid 从 chapterId 派生（临时规避未绑定的 `book.bookUrl`） |
 
-### 番茄小说（search live_network_pass，2026-06-11）
+### 番茄小说（live_network_pass，2026-06-11）
 
-| 能力     | 状态              | 备注                                                                                      |
-| -------- | ----------------- | ----------------------------------------------------------------------------------------- |
-| 导入     | strict_pass       | source_compat_import 通过                                                                 |
-| search   | live_network_pass | 2026-06-11 实网复测，搜索「我不是戏神」返回书籍结果                                       |
-| bookInfo | partial           | 详情 API 已请求成功；当前测试允许从 search 结果保留 bookUrl，字段完整性未作为本轮验收目标 |
-| toc      | not_verified      | 未纳入本轮验收                                                                            |
-| content  | not_verified      | 未纳入本轮验收                                                                            |
+| 能力     | 状态              | 备注                                                                             |
+| -------- | ----------------- | -------------------------------------------------------------------------------- |
+| 导入     | strict_pass       | source_compat_import 通过                                                        |
+| search   | live_network_pass | 2026-06-11 实网复测，搜索「我不是戏神」返回书籍结果                              |
+| bookInfo | partial           | 详情 API 已请求成功；tocUrl 为 `data:book_id;base64,...`，字段完整性仍待专项补齐 |
+| toc      | live_network_pass | 1928 章；无 URL 卷标题已过滤，第一条为真实章节 `第1章 戏鬼回家`                  |
+| content  | live_network_pass | 第一章正文 3135 字符；正文阶段可从 chapter data URI `info` 恢复 `book.tocUrl`    |
 
 #### 番茄书源 JS API 清单（共 49 个唯一 API）
 
@@ -201,8 +211,7 @@ cargo test -p reader-core --test source_compat_import fanqie_source_search_and_b
 
 剩余未验收：
 
-- 番茄 toc/content 全链路。
-- bookInfo 字段完整性；当前测试只要求搜索结果与详情请求链路可达。
+- bookInfo 字段完整性；当前测试已确认 tocUrl 和阅读链路可用，但未逐项校验 intro/kind/wordCount 等展示字段。
 - 真实交互验证码 UI；headless 场景只能明确降级。
 - 外部中转服务仍是实网依赖，不应在最终报告中输出 auth token 或生成的敏感 header 值。
 
@@ -214,30 +223,30 @@ cargo test -p reader-core --test source_compat_import fanqie_source_search_and_b
 
 ## JS API 实现状态
 
-| JS API                                       | 书旗 | 七猫 | 番茄 | 实现状态                                                                    |
-| -------------------------------------------- | ---- | ---- | ---- | --------------------------------------------------------------------------- |
-| `java.ajax`                                  | Y    | Y    | Y    | OK（2026-06-10 改走独立线程，修复 tokio 上下文 panic）                      |
-| `java.ajaxAll`                               | -    | -    | Y    | OK                                                                          |
-| `java.hexDecodeToString`                     | Y    | Y    | -    | OK（2026-06-11 修复 UTF-8 hex 解码）                                        |
-| `java.get` / `java.put`                      | -    | Y    | -    | OK                                                                          |
-| `java.base64Encode`                          | Y    | Y    | -    | OK                                                                          |
-| `java.base64DecodeToByteArray`               | -    | -    | Y    | OK（2026-06-11 修复二进制 body 通道，避免经 String 损坏字节）               |
-| `java.getVerificationCode`                   | -    | -    | Y    | DEGRADED（Legado 交互验证码语义，headless 为空并记录日志，不再伪造 MD5）    |
-| `java.deviceID`                              | -    | Y    | -    | OK                                                                          |
-| `source.getLoginInfoMap`                     | Y    | Y    | ?    | OK                                                                          |
-| `source.getVariable/setVariable`             | -    | -    | Y    | OK                                                                          |
-| `cookie.getCookie`                           | Y    | Y    | Y    | OK                                                                          |
-| `cache.getFromMemory/putMemory`              | -    | Y    | -    | OK                                                                          |
-| `this.zdym()` / `jsmy()`                     | Y    | Y    | -    | OK                                                                          |
-| `book.bookUrl`（规则引擎路径绑定 book 对象） | -    | 需要 | ?    | MISSING — 规则引擎 content 路径未绑定真实 book 上下文，当前由书源规则侧规避 |
-| `Packages.okhttp3.*`                         | -    | -    | Y    | OK（2026-06-11 修复 RequestBody 顺序、二进制 body、标准 `url,{options}`）   |
-| `JavaImporter` / `with(...)`                 | -    | -    | Y    | OK（2026-06-11 修复 wrapper 展开与函数可见性）                              |
+| JS API                                                       | 书旗 | 七猫 | 番茄 | 实现状态                                                                                                     |
+| ------------------------------------------------------------ | ---- | ---- | ---- | ------------------------------------------------------------------------------------------------------------ |
+| `java.ajax`                                                  | Y    | Y    | Y    | OK（2026-06-10 改走独立线程，修复 tokio 上下文 panic）                                                       |
+| `java.ajaxAll`                                               | -    | -    | Y    | OK                                                                                                           |
+| `java.hexDecodeToString`                                     | Y    | Y    | -    | OK（2026-06-11 修复 UTF-8 hex 解码）                                                                         |
+| `java.get` / `java.put`                                      | -    | Y    | -    | OK                                                                                                           |
+| `java.base64Encode`                                          | Y    | Y    | -    | OK                                                                                                           |
+| `java.base64DecodeToByteArray`                               | -    | -    | Y    | OK（2026-06-11 修复二进制 body 通道，避免经 String 损坏字节）                                                |
+| `java.getVerificationCode`                                   | -    | -    | Y    | DEGRADED（Legado 交互验证码语义，headless 为空并记录日志，不再伪造 MD5）                                     |
+| `java.deviceID`                                              | -    | Y    | -    | OK                                                                                                           |
+| `source.getLoginInfoMap`                                     | Y    | Y    | ?    | OK                                                                                                           |
+| `source.getVariable/setVariable`                             | -    | -    | Y    | OK                                                                                                           |
+| `cookie.getCookie`                                           | Y    | Y    | Y    | OK                                                                                                           |
+| `cache.getFromMemory/putMemory`                              | -    | Y    | -    | OK                                                                                                           |
+| `this.zdym()` / `jsmy()`                                     | Y    | Y    | -    | OK                                                                                                           |
+| `book.bookUrl` / `book.tocUrl`（规则引擎路径绑定 book 对象） | -    | 需要 | Y    | PARTIAL — 番茄 content 路径已从 chapter data URI `info` 恢复 `book.tocUrl`；真实 `book.bookUrl` 仍待通用绑定 |
+| `Packages.okhttp3.*`                                         | -    | -    | Y    | OK（2026-06-11 修复 RequestBody 顺序、二进制 body、标准 `url,{options}`）                                    |
+| `JavaImporter` / `with(...)`                                 | -    | -    | Y    | OK（2026-06-11 修复 wrapper 展开与函数可见性）                                                               |
 
 状态说明：Y = 书源使用，? = 不确定，OK = 已实现，DEGRADED = 按平台能力明确降级，MISSING = 未实现。
 
 ## 已知项目能力缺口（区别于书源规则过期）
 
-- 规则引擎（Legado JSON 源）的 content/toc JS 执行未绑定 `book` 对象（`book.bookUrl` 等为 undefined）。本轮七猫通过「从 chapterId 派生 bid/cid」在书源侧临时规避，并让段评增强失败时不阻断正文；通用修复需在 rule_engine content 路径绑定当前 book 上下文。JS 源运行时（非 Legado 规则）路径不受影响。
+- 规则引擎（Legado JSON 源）的真实 `book.bookUrl` 仍未在所有 content/toc 路径完整绑定。番茄 content 已能从章节 data URI 的 `info` 恢复 `book.tocUrl`，七猫仍通过「从 chapterId 派生 bid/cid」规避；后续通用修复需在不改变命令契约的前提下保存/传递书籍上下文。JS 源运行时（非 Legado 规则）路径不受影响。
 - TODO：完成 R-P2-007 后，复查七猫 `ruleContent`，优先改回从 `book.bookUrl` 获取 `bid`，仅保留 `chapterId` 派生作为兼容回退；回切后必须重跑 `qimao_source_full_chain`。
 
 ## 验证命令
@@ -254,6 +263,8 @@ cargo test -p reader-core --test source_compat_import shuqi_source_full_chain --
 cargo test -p reader-core --test source_compat_import qimao_source_full_chain -- --ignored --nocapture
 # 番茄搜索专项
 cargo test -p reader-core --test source_compat_import fanqie_source_search_and_book_info -- --ignored --nocapture
+# 番茄全链路
+cargo test -p reader-core --test source_compat_import fanqie_source_full_chain -- --ignored --nocapture --test-threads=1
 ```
 
 说明：`source_compat_import` 测试依赖 `E:\Book\书旗书源`、`E:\Book\七猫书源`、`E:\Book\番茄书源`、`E:\Book\番茄短剧` 下的本机私有样本，GitHub Actions 默认跳过。手动验证时需指定具体测试名并加 `--ignored`。多个实网测试同跑时加 `--test-threads=1` 避免并发占用。
@@ -270,12 +281,12 @@ cargo test -p reader-core --test source_compat_import fanqie_source_search_and_b
 4. Rhino 兼容已修：`with(JavaImporter)` wrapper 展开后保留顶层函数可见性；中文未声明全局变量和旧式 for 循环变量已兼容。
 5. 搜索列表规则已修：`<js>...</js>$[*]` 支持 JS 输出后继续执行尾部 JSONPath。
 6. 实网复测已通过：`fanqie_source_search_and_book_info` 搜索「我不是戏神」返回书籍结果。
+7. 后续实网复测已通过：`fanqie_source_full_chain` 返回 toc 1928 章，第一条为真实章节 `第1章 戏鬼回家`，content 返回 3135 字符。
 
 下一轮第一件事：
 
-1. 验证番茄 toc/content 全链路，不要重复排查 `getVerificationCode` 和二进制 body。
-2. 补 bookInfo 字段完整性；当前测试仅确认详情 API 可达和搜索结果保留 bookUrl。
-3. 若涉及真实交互验证码 UI，需单独设计前端交互与 headless 降级边界。
+1. 补番茄 bookInfo 字段完整性；当前测试已确认详情 API、tocUrl 和阅读链路可用，但未逐项校验展示字段。
+2. 若涉及真实交互验证码 UI，需单独设计前端交互与 headless 降级边界。
 
 不得做的事：
 

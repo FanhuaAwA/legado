@@ -398,13 +398,36 @@ function enterSelectionMode() {
   }
 }
 
+function findLegacyCommentActionTarget(target: EventTarget | null): HTMLElement | null {
+  if (!(target instanceof Element)) {
+    return null;
+  }
+  return target.closest<HTMLElement>(
+    ".reader-legacy-comment-action, .reader-legacy-inline-image[data-legado-js], .reader-legacy-inline-image[data-legado-click]",
+  );
+}
+
+function onReaderClickCapture(event: MouseEvent) {
+  const action = findLegacyCommentActionTarget(event.target);
+  if (!action) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+
+  const payload = `${action.dataset.legadoJs ?? ""} ${action.dataset.legadoClick ?? ""}`;
+  const label = payload.includes("getSP") ? "神评" : payload.includes("getZP") ? "章评" : "段评";
+  message.info(`${label}入口已识别；该书源使用 Legado 内嵌浏览器脚本，桌面端暂未桥接打开评论页`);
+}
+
 function onReaderPointerDown(event: PointerEvent) {
   if (
     sourceType.value !== "novel" ||
     selectionMode.value ||
     event.pointerType === "mouse" ||
     event.button !== 0 ||
-    (event.target instanceof Element && !!event.target.closest(".reader-paragraph-comment"))
+    (event.target instanceof Element && !!event.target.closest(".reader-paragraph-comment")) ||
+    !!findLegacyCommentActionTarget(event.target)
   ) {
     return;
   }
@@ -523,6 +546,7 @@ onBeforeUnmount(() => {
     class="reader-modal__body"
     :class="{ 'reader-modal__body--selection-mode': selectionMode }"
     @contextmenu="onReaderContextMenu"
+    @click.capture="onReaderClickCapture"
     @pointerdown.capture="onReaderPointerDown"
     @pointermove.capture="onReaderPointerMove"
     @pointerup.capture="onReaderPointerUp"

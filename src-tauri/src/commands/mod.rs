@@ -180,8 +180,6 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         sync_misc::repository_install,
         sync_misc::repository_preview_source,
         sync_misc::ai_http_proxy_url,
-        sync_misc::app_update_download,
-        sync_misc::app_update_install_downloaded_file,
         sync_misc::get_local_ips,
         sync_misc::frontend_plugin_http_request,
         sync_misc::explore_clear_cache,

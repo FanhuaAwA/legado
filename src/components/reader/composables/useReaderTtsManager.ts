@@ -2,6 +2,7 @@ import type { ComputedRef, Ref } from "vue";
 import { nextTick, ref, watch } from "vue";
 import { useTts, splitIntoSegments } from "@/composables/useTts";
 import type { PagedModeApi, ScrollModeApi } from "./useReaderModeBridge";
+import { splitReaderParagraphs } from "../utils/paragraphs";
 
 interface UseReaderTtsManagerOptions {
   activeChapterIndex: Ref<number>;
@@ -216,7 +217,7 @@ export function useReaderTtsManager(options: UseReaderTtsManagerOptions) {
     const startPara = scrollModeRef.value?.getFirstVisibleParaIndex?.() ?? 0;
     ttsFeedChapter = activeChapterIndex.value;
 
-    const paragraphs = content.value.split(/\n+/).filter((p) => p.trim());
+    const paragraphs = splitReaderParagraphs(content.value).map((p) => p.text);
     const initialSegs = paragraphs.slice(startPara).flatMap((p) => splitIntoSegments(p));
 
     if (initialSegs.length === 0) {
@@ -237,7 +238,7 @@ export function useReaderTtsManager(options: UseReaderTtsManagerOptions) {
       void fetchRawChapterText(activeChapterIndex.value + 1);
       await gotoNextChapterAndWait();
       ttsFeedChapter = activeChapterIndex.value;
-      const newParas = content.value.split(/\n+/).filter((p) => p.trim());
+      const newParas = splitReaderParagraphs(content.value).map((p) => p.text);
       const newSegs = newParas.flatMap((p) => splitIntoSegments(p));
       for (let pi = 0; pi < newParas.length; pi++) {
         const segs = splitIntoSegments(newParas[pi] ?? "");

@@ -1,67 +1,34 @@
 /** * SectionAbout — 设置页“关于”面板，展示应用版本、运行环境、桥接能力与 WebView 诊断信息。 */
 
 <script setup lang="ts">
-import { Download, ExternalLink, RefreshCw } from "lucide-vue-next";
-import { useMessage } from "naive-ui";
 import { storeToRefs } from "pinia";
 import { computed, onMounted, ref } from "vue";
 import {
+  envLabel,
   hasNativeTransport,
   isHarmonyNative,
-  isTauri,
   isMobile,
-  envLabel,
+  isTauri,
   platform,
 } from "@/composables/useEnv";
 import { getCustomWsUrl, getTransportType, isTransportAvailable } from "@/composables/useTransport";
 import { usePreferencesStore } from "@/stores/preferences";
-import {
-  checkAppUpdate,
-  formatAppUpdateAssetSize,
-  getAppUpdateChannelLabel,
-  getAppUpdateReleasePageUrl,
-  isAppUpdateChannel,
-  resolveAppUpdatePlatform,
-  type AppUpdateChannel,
-  type AppUpdateCheckResult,
-} from "@/utils/appUpdate";
 import packageJson from "../../../package.json";
 import tauriConfig from "../../../src-tauri/tauri.conf.json";
 import FullModeUnlockDialog from "./FullModeUnlockDialog.vue";
-import SettingItem from "./SettingItem.vue";
 import SettingSection from "./SettingSection.vue";
 
-const message = useMessage();
 const prefStore = usePreferencesStore();
-const { devTools, appUpdate } = storeToRefs(prefStore);
+const { devTools } = storeToRefs(prefStore);
 
 type TransportMode = "tauri" | "harmony" | "websocket" | "none";
-type TagType = "default" | "info" | "success" | "warning" | "error";
 
 const transportMode = ref<TransportMode>(getTransportType());
 const transportReady = ref(hasNativeTransport);
-
 const rawUserAgent = ref("读取中");
-const updateChecking = ref(false);
-const updateResult = ref<AppUpdateCheckResult | null>(null);
-const updateError = ref("");
 const showFullModeUnlockDialog = ref(false);
 
-const updateChannelOptions = [
-  { label: "正式", value: "stable" },
-  { label: "开发", value: "development" },
-] satisfies { label: string; value: AppUpdateChannel }[];
-
-const contributors = [
-  "Mg",
-  "丽拓朝夕",
-  "喵公子",
-  "聚.散",
-  "杯呗is me",
-  "I'm yours",
-  "凉子",
-  "目目",
-];
+const contributors = ["Fanhua"];
 
 const runtimeModeLabel = computed(() => {
   switch (transportMode.value) {
@@ -165,170 +132,6 @@ const uaRows = computed(() => [
   },
 ]);
 
-const updatePlatformInfo = computed(() => resolveAppUpdatePlatform(platform.value));
-
-const updateReleasePageUrl = computed(() => getAppUpdateReleasePageUrl(appUpdate.value.channel));
-
-const updateChannelLabel = computed(() => getAppUpdateChannelLabel(appUpdate.value.channel));
-
-const updateResultChannelLabel = computed(() =>
-  getAppUpdateChannelLabel(updateResult.value?.channel ?? appUpdate.value.channel),
-);
-
-const updateStatusLabel = computed(() => {
-  if (updateChecking.value) {
-    return "检查中";
-  }
-  if (updateError.value) {
-    return "检查失败";
-  }
-  if (!updateResult.value) {
-    return "尚未检查";
-  }
-  if (updateResult.value.hasUpdate) {
-    return "发现新版本";
-  }
-  if (updateResult.value.unavailableReason) {
-    return "无本平台包";
-  }
-  return "已是最新";
-});
-
-const updateStatusTagType = computed<TagType>(() => {
-  if (updateError.value) {
-    return "error";
-  }
-  if (updateChecking.value) {
-    return "info";
-  }
-  if (updateResult.value?.hasUpdate) {
-    return "success";
-  }
-  if (updateResult.value?.unavailableReason) {
-    return "warning";
-  }
-  return "default";
-});
-
-const updateSummaryTitle = computed(() => {
-  if (updateError.value) {
-    return updateError.value;
-  }
-  if (!updateResult.value) {
-    return `等待检查 ${updateChannelLabel.value} 渠道`;
-  }
-  if (updateResult.value.hasUpdate) {
-    return `${updateResult.value.latestDisplayVersion || updateResult.value.latestVersion} 可用`;
-  }
-  if (updateResult.value.unavailableReason) {
-    return "未找到当前平台安装包";
-  }
-  return `当前核心版本 ${updateResult.value.currentVersion}`;
-});
-
-const updateSummaryDesc = computed(() => {
-  if (updateError.value) {
-    return "请稍后重试，或打开对应发布页手动查看。";
-  }
-  if (!updateResult.value) {
-    return `当前平台识别为 ${updatePlatformInfo.value.label}，检查时会匹配该平台最近可用的发布产物。`;
-  }
-  if (updateResult.value.unavailableReason) {
-    return updateResult.value.unavailableReason;
-  }
-  if (updateResult.value.hasUpdate) {
-    return `当前版本 ${updateResult.value.currentVersion}，${updateResultChannelLabel.value} 渠道最新核心版本为 ${updateResult.value.latestVersion}。`;
-  }
-  return `当前核心版本不低于 ${updateResultChannelLabel.value} 渠道最新可用版本。`;
-});
-
-const updatePublishedAt = computed(() => formatReleaseTime(updateResult.value?.releasePublishedAt));
-
-const updateAssetSize = computed(() =>
-  updateResult.value?.asset ? formatAppUpdateAssetSize(updateResult.value.asset.size) : "",
-);
-
-const updateCanDownload = computed(() => {
-  const resultPlatform = updateResult.value?.platform;
-  return resultPlatform === "windows" || resultPlatform === "android";
-});
-
-function formatReleaseTime(value?: string) {
-  if (!value) {
-    return "未知";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return new Intl.DateTimeFormat("zh-CN", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
-}
-
-function handleUpdateChannel(value: string) {
-  if (!isAppUpdateChannel(value)) {
-    return;
-  }
-  prefStore.patchAppUpdate({ channel: value });
-  updateResult.value = null;
-  updateError.value = "";
-}
-
-async function handleCheckUpdate() {
-  updateChecking.value = true;
-  updateError.value = "";
-  try {
-    const result = await checkAppUpdate({
-      channel: appUpdate.value.channel,
-      currentVersion: tauriConfig.version,
-      platform: platform.value,
-    });
-    updateResult.value = result;
-    if (result.hasUpdate) {
-      message.success("发现可用更新");
-    } else if (result.unavailableReason) {
-      message.warning(result.unavailableReason);
-    } else {
-      message.info("当前已是最新核心版本");
-    }
-  } catch (error: unknown) {
-    const text = error instanceof Error ? error.message : String(error);
-    updateError.value = text;
-    message.error(text);
-  } finally {
-    updateChecking.value = false;
-  }
-}
-
-async function openUrl(url: string) {
-  if (!url) {
-    return;
-  }
-  try {
-    const { openUrl: tauriOpenUrl } = await import("@tauri-apps/plugin-opener");
-    await tauriOpenUrl(url);
-  } catch {
-    window.open(url, "_blank", "noopener,noreferrer");
-  }
-}
-
-async function openUpdateReleasePage() {
-  await openUrl(updateResult.value?.releaseUrl || updateReleasePageUrl.value);
-}
-
-async function openUpdateDownload() {
-  if (!updateResult.value?.asset || !updateCanDownload.value) {
-    return;
-  }
-  window.dispatchEvent(
-    new CustomEvent("legado:show-app-update", {
-      detail: updateResult.value,
-    }),
-  );
-}
-
 function collectUserAgentInfo() {
   if (typeof navigator === "undefined") {
     rawUserAgent.value = "当前环境没有 navigator";
@@ -370,105 +173,6 @@ onMounted(async () => {
         <span class="about-label">{{ item.label }}</span>
         <strong class="about-card__value">{{ item.value }}</strong>
         <p class="about-card__desc">{{ item.desc }}</p>
-      </div>
-    </div>
-
-    <div class="about-panel about-panel--update">
-      <div class="about-panel__head">
-        <h4 class="about-panel__title">版本更新</h4>
-        <n-tag size="small" :type="updateStatusTagType as any" :bordered="false">
-          {{ updateStatusLabel }}
-        </n-tag>
-      </div>
-
-      <SettingItem
-        label="检测渠道"
-        :desc="`当前平台：${updatePlatformInfo.label}`"
-        :vertical="true"
-      >
-        <div class="about-update-actions">
-          <n-radio-group
-            :value="appUpdate.channel"
-            size="small"
-            @update:value="handleUpdateChannel"
-          >
-            <n-radio-button
-              v-for="option in updateChannelOptions"
-              :key="option.value"
-              :value="option.value"
-            >
-              {{ option.label }}
-            </n-radio-button>
-          </n-radio-group>
-          <n-button
-            size="small"
-            type="primary"
-            :loading="updateChecking"
-            @click="handleCheckUpdate"
-          >
-            <template #icon>
-              <n-icon><RefreshCw /></n-icon>
-            </template>
-            检查
-          </n-button>
-          <n-button size="small" quaternary @click="openUpdateReleasePage">
-            <template #icon>
-              <n-icon><ExternalLink /></n-icon>
-            </template>
-            发布页
-          </n-button>
-        </div>
-      </SettingItem>
-
-      <div class="about-update-summary">
-        <div class="about-update-summary__head">
-          <strong>{{ updateSummaryTitle }}</strong>
-          <span>{{ updateChannelLabel }}渠道</span>
-        </div>
-        <p>{{ updateSummaryDesc }}</p>
-      </div>
-
-      <div v-if="updateResult" class="about-update-meta">
-        <div>
-          <span>最新版本</span>
-          <strong>{{ updateResult.latestDisplayVersion || updateResult.latestVersion }}</strong>
-        </div>
-        <div>
-          <span>发布时间</span>
-          <strong>{{ updatePublishedAt }}</strong>
-        </div>
-        <div>
-          <span>发布标签</span>
-          <strong>{{ updateResult.releaseTag || "未知" }}</strong>
-        </div>
-        <div>
-          <span>匹配平台</span>
-          <strong>{{ updateResult.platformLabel }}</strong>
-        </div>
-      </div>
-
-      <div v-if="updateResult?.asset" class="about-update-asset">
-        <div class="about-update-asset__info">
-          <span>安装包</span>
-          <strong>{{ updateResult.asset.name }}</strong>
-          <small>{{ updateAssetSize }}</small>
-          <small v-if="updateResult.asset.digest" class="about-update-asset__digest">
-            {{ updateResult.asset.digest }}
-          </small>
-        </div>
-        <n-button
-          v-if="updateCanDownload"
-          size="small"
-          type="primary"
-          secondary
-          @click="openUpdateDownload"
-        >
-          <template #icon>
-            <n-icon><Download /></n-icon>
-          </template>
-          下载并安装
-        </n-button>
-        <n-tag v-else size="small" :bordered="false" type="info">仅提示</n-tag>
       </div>
     </div>
 
@@ -548,7 +252,7 @@ onMounted(async () => {
       <div class="about-panel">
         <div class="about-panel__head">
           <h4 class="about-panel__title">软件贡献者</h4>
-          <span class="about-panel__hint">排名不分先后</span>
+          <span class="about-panel__hint">当前展示</span>
         </div>
         <div class="about-contributors">
           <span v-for="name in contributors" :key="name" class="about-contributor">
@@ -646,10 +350,6 @@ onMounted(async () => {
   padding: 14px;
 }
 
-.about-panel--update {
-  margin-top: var(--space-3);
-}
-
 .about-panel--ua {
   margin-top: var(--space-3);
 }
@@ -701,105 +401,6 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-}
-
-.about-update-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-  width: 100%;
-}
-
-.about-update-summary {
-  margin-top: var(--space-2);
-  padding: 12px;
-  border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--color-border) 18%, transparent);
-}
-
-.about-update-summary__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.about-update-summary__head strong {
-  min-width: 0;
-  color: var(--color-text);
-  font-size: var(--fs-14);
-  overflow-wrap: anywhere;
-}
-
-.about-update-summary__head span {
-  flex: 0 0 auto;
-  font-size: var(--fs-12);
-  color: var(--color-text-muted);
-}
-
-.about-update-summary p {
-  margin-top: 6px;
-  font-size: var(--fs-12);
-  line-height: 1.65;
-  color: var(--color-text-soft);
-}
-
-.about-update-meta {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-}
-
-.about-update-meta > div {
-  min-width: 0;
-  padding: 10px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--color-border) 16%, transparent);
-}
-
-.about-update-meta span,
-.about-update-asset__info span,
-.about-update-asset__info small {
-  display: block;
-  font-size: var(--fs-12);
-  color: var(--color-text-muted);
-}
-
-.about-update-meta strong,
-.about-update-asset__info strong {
-  display: block;
-  margin-top: 4px;
-  min-width: 0;
-  color: var(--color-text);
-  font-size: var(--fs-13);
-  overflow-wrap: anywhere;
-}
-
-.about-update-asset {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  margin-top: var(--space-2);
-  padding: 12px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
-}
-
-.about-update-asset__info {
-  min-width: 0;
-}
-
-.about-update-asset__info small {
-  margin-top: 4px;
-}
-
-.about-update-asset__digest {
-  overflow-wrap: anywhere;
 }
 
 .about-ua-list {
@@ -890,21 +491,6 @@ onMounted(async () => {
   .about-badge-row {
     flex-direction: column;
     align-items: flex-start;
-  }
-
-  .about-update-actions,
-  .about-update-asset {
-    align-items: flex-start;
-    justify-content: flex-start;
-  }
-
-  .about-update-summary__head,
-  .about-update-asset {
-    flex-direction: column;
-  }
-
-  .about-update-meta {
-    grid-template-columns: 1fr;
   }
 }
 </style>

@@ -374,14 +374,24 @@ fn eval_js_inner_with_source(
         // Default url variable for Legado compatibility
         globals.set("url", base_url_value)?;
 
-        // Legado source object — provides source-scoped variables, login info, and key
-        let source_key_val = source_key.unwrap_or("").to_string();
+        // Legado source object — provides source-scoped variables, login info, and key.
+        // Callers that don't pass an explicit source key (eval_js from rule_engine)
+        // inherit it from the ambient with_js_source context, so source.get/setVariable
+        // shares one namespace with the url_analyzer path (eval_js_url). Otherwise
+        // sources like 番茄 re-register their device once per namespace.
+        let source_key_val = source_key
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .or_else(|| active_context.book_source_url.clone())
+            .unwrap_or_default();
         let source_obj = Object::new(ctx.clone())?;
         let source_name_value = active_context.book_source_name.clone().unwrap_or_default();
+        // loginUrl is executed via dynamic `eval(String(source.loginUrl))`, so it
+        // bypasses eval_script — apply the same Rhino-compat transforms here.
         let login_url_value = active_context
             .login_url
             .clone()
-            .map(|value| prepare_legacy_js_script(&value))
+            .map(|value| demote_global_lexicals(&prepare_legacy_js_script(&value)))
             .unwrap_or_default();
         let sk_clone = source_key_val.clone();
         source_obj.set("key", source_key_val.clone())?;
@@ -579,7 +589,15 @@ fn eval_js_inner_with_source(
         let java_obj = Object::new(ctx.clone())?;
         java_obj.set(
             "ajax",
-            Func::new(|spec: String| -> String { java_ajax(&spec).unwrap_or_default() }),
+            Func::new(|spec: String| -> String {
+                match java_ajax(&spec) {
+                    Ok(text) => text,
+                    Err(err) => {
+                        tracing::warn!(target: "reader_core::js_source", "java.ajax failed: {err} (spec: {spec})");
+                        String::new()
+                    }
+                }
+            }),
         )?;
         java_obj.set(
             "md5Encode",
@@ -678,7 +696,18 @@ fn eval_js_inner_with_source(
         let input_for_get_string = input_value.to_string();
         java_obj.set(
             "getString",
-            Func::new(move |path: String| -> String { java_get_string(&input_for_get_string, &path) }),
+            // Legado AnalyzeRule.getString(ruleStr, mContent?, isUrl?) — an explicit
+            // second argument is the content to query (番茄: java.getString("$.data.content", res)).
+            Func::new(move |path: String, content: Opt<Value<'_>>| -> String {
+                let explicit = content
+                    .0
+                    .filter(|value| !value.is_null() && !value.is_undefined())
+                    .map(js_callback_arg_to_string);
+                match explicit {
+                    Some(content) => java_get_string(&content, &path),
+                    None => java_get_string(&input_for_get_string, &path),
+                }
+            }),
         )?;
         java_obj.set(
             "getReadBookConfigMap",
@@ -1014,6 +1043,52 @@ fn eval_js_inner_with_source(
             active_context.chapter_index.unwrap_or(0),
         )?;
         chapter_obj.set("isVip", false)?;
+        let chapter_url_for_var = active_context
+            .chapter_url
+            .clone()
+            .unwrap_or_else(|| base_url_value.to_string());
+        let sk_for_chapter_var = source_key_val.clone();
+        let chapter_url_for_get = chapter_url_for_var.clone();
+        chapter_obj.set(
+            "getVariable",
+            Func::new(move |key: Opt<String>| -> String {
+                let map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+                let full_key =
+                    chapter_variable_key(&sk_for_chapter_var, &chapter_url_for_get, key.0.as_deref());
+                map.get(&full_key).cloned().unwrap_or_default()
+            }),
+        )?;
+        let sk_for_chapter_set = source_key_val.clone();
+        let chapter_url_for_set = chapter_url_for_var.clone();
+        chapter_obj.set(
+            "setVariable",
+            Func::new(move |key_or_value: String, value: Opt<String>| -> bool {
+                let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+                let (name, val) = match value.0 {
+                    Some(val) => (Some(key_or_value.as_str()), val),
+                    None => (None, key_or_value),
+                };
+                let full_key = chapter_variable_key(&sk_for_chapter_set, &chapter_url_for_set, name);
+                map.insert(full_key, val);
+                true
+            }),
+        )?;
+        let sk_for_chapter_put = source_key_val.clone();
+        let chapter_url_for_put = chapter_url_for_var.clone();
+        chapter_obj.set(
+            "putVariable",
+            Func::new(move |key_or_value: String, value: Opt<String>| -> bool {
+                let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+                let (name, val) = match value.0 {
+                    Some(val) => (Some(key_or_value.as_str()), val),
+                    None => (None, key_or_value),
+                };
+                let full_key = chapter_variable_key(&sk_for_chapter_put, &chapter_url_for_put, name);
+                map.insert(full_key, val);
+                true
+            }),
+        )?;
+        chapter_obj.set("putImgUrl", Func::new(|_value: Opt<String>| -> bool { true }))?;
         globals.set("chapter", chapter_obj)?;
 
         globals.set(
@@ -1032,7 +1107,18 @@ fn eval_js_inner_with_source(
             }
         }
 
-        let script = inline_source_login_url(script, active_context.login_url.as_deref());
+        // NOTE: `eval(String(source.loginUrl))` is executed dynamically (the
+        // source object carries the prepared loginUrl script). Inlining the text
+        // here would merge its top-level `var`s into the rule script and clash
+        // with the rule's own global `let`s (Rhino runs loginUrl in a nested
+        // eval scope, so sources never expect them in one program text).
+        //
+        // Demote only the RULE script's global lexicals (Rhino treats them as
+        // globals; QuickJS would TDZ-break eval(loginUrl) writing the same
+        // names). jsLib is left untouched: rule scripts don't redeclare its
+        // top-level names, and its huge HTML template literals defeat the
+        // lightweight scanner in demote_global_lexicals.
+        let script = demote_global_lexicals(&prepare_legacy_js_script(script));
         let script = if shared_js.trim().is_empty() {
             script
         } else {
@@ -1415,6 +1501,13 @@ fn source_variable_key(source_key: &str, key: Option<&str>) -> String {
     }
 }
 
+fn chapter_variable_key(source_key: &str, chapter_url: &str, key: Option<&str>) -> String {
+    match key.filter(|value| !value.trim().is_empty()) {
+        Some(key) => format!("__chapter_var_{}::{}::{}", source_key, chapter_url, key),
+        None => format!("__chapter_var_{}::{}::__default", source_key, chapter_url),
+    }
+}
+
 fn source_login_prefix(source_key: &str) -> String {
     format!("__source_login_{}::", source_key)
 }
@@ -1520,23 +1613,35 @@ fn is_safe_js_identifier(value: &str) -> bool {
     chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
 }
 
+fn eval_non_strict<'js>(
+    ctx: &rquickjs::Ctx<'js>,
+    script: &str,
+) -> Result<Value<'js>, rquickjs::Error> {
+    // Legado 书源脚本沿用 Rhino 非严格语义：未声明全局赋值（chapters = ...）、
+    // 动态 eval(source.loginUrl) 的 var 提升等。rquickjs 默认 strict 模式会把
+    // 未声明赋值抛成 "x is not defined"，并让 eval 获得独立作用域。
+    let mut options = rquickjs::context::EvalOptions::default();
+    options.strict = false;
+    ctx.eval_with_options(script, options)
+}
+
 fn eval_script<'js>(ctx: rquickjs::Ctx<'js>, script: &str) -> anyhow::Result<Value<'js>> {
-    // Legado 书源脚本沿用 Rhino 非严格语义，常见未声明全局赋值（chapters = ...），
-    // rquickjs eval 为严格模式会抛 "x is not defined"。var 补全必须在首次 eval 之前：
-    // 首次执行失败时，脚本里已执行的顶层 let/const 已进入该 Context 的全局词法环境，
-    // 同一 Context 内重试会因 redeclaration 立即失败（这正是旧版"失败后重试"永远
-    // 修不好"let + 未声明赋值"组合脚本的原因）。
+    // var 补全兜底必须在首次 eval 之前：首次执行失败时，脚本里已执行的顶层
+    // let/const 已进入该 Context 的全局词法环境，同一 Context 内重试会因
+    // redeclaration 立即失败。补全采用 globalThis 属性注入而非 `var x;`，
+    // 因此与脚本内任意 `let x` 都不会产生 redefinition 冲突。
     let script = prepare_legacy_js_script(script);
     let prepared = prepend_undeclared_vars(&script);
     if prepared != script {
-        match ctx.eval(&*prepared) {
+        match eval_non_strict(&ctx, &prepared) {
             Ok(v) => return Ok(v),
             Err(err) => {
                 let msg = catch_js_message(&ctx, &err);
-                // 补全名单误判与脚本内 let/const 冲突时是解析期 redeclaration 错误，
-                // 解析失败不会执行任何代码、Context 仍干净，可安全回退原脚本。
-                if msg.contains("redeclar") {
-                    return ctx.eval(&*script).map_err(|e2| {
+                // 补全注入与脚本冲突属解析期错误，解析失败不会执行任何代码、
+                // Context 仍干净，可安全回退原脚本。QuickJS 的报错文案是
+                // "invalid redefinition of global identifier"。
+                if msg.contains("redeclar") || msg.contains("redefinition") {
+                    return eval_non_strict(&ctx, &script).map_err(|e2| {
                         anyhow::anyhow!("JS Exception: {}", catch_js_message(&ctx, &e2))
                     });
                 }
@@ -1544,7 +1649,7 @@ fn eval_script<'js>(ctx: rquickjs::Ctx<'js>, script: &str) -> anyhow::Result<Val
             }
         }
     }
-    ctx.eval(&*script)
+    eval_non_strict(&ctx, &script)
         .map_err(|err| anyhow::anyhow!("JS Exception: {}", catch_js_message(&ctx, &err)))
 }
 
@@ -1672,23 +1777,6 @@ fn find_matching_brace(script: &str, open_brace: usize) -> Option<usize> {
     None
 }
 
-fn inline_source_login_url(script: &str, login_url: Option<&str>) -> String {
-    let Some(login_url) = login_url.filter(|value| !value.trim().is_empty()) else {
-        return script.to_string();
-    };
-    static LOGIN_EVAL_RE: Lazy<regex::Regex> = Lazy::new(|| {
-        regex::Regex::new(r"eval\s*\(\s*String\s*\(\s*source\.loginUrl\s*\)\s*\)\s*;?").unwrap()
-    });
-    if !LOGIN_EVAL_RE.is_match(script) {
-        return script.to_string();
-    }
-    let login_url = prepare_legacy_js_script(login_url);
-    let replacement = format!("{login_url}\n");
-    LOGIN_EVAL_RE
-        .replace_all(script, regex::NoExpand(&replacement))
-        .into_owned()
-}
-
 fn replace_this_member_outside_strings(input: &str) -> String {
     let mut output = String::with_capacity(input.len());
     let mut i = 0usize;
@@ -1770,6 +1858,241 @@ fn replace_this_member_outside_strings(input: &str) -> String {
 ///
 /// 已用 var/let/const/function 声明过的名字必须排除，否则补出的 `var x;`
 /// 会与脚本内 `let x` 冲突，整段脚本解析失败。
+/// Demote GLOBAL-scope `var`/`let`/`const` declarations to bare assignments.
+///
+/// Rhino (legado) effectively treats top-level lexicals as globals across the
+/// rule script and its dynamic `eval(source.loginUrl)`: sources rely on e.g.
+/// loginUrl's `let ck = ...` being visible to the rule afterwards. Under
+/// QuickJS semantics a global `let` (a) does not leak out of `eval`, and
+/// (b) creates a TDZ that breaks `eval(loginUrl)` assigning the same name
+/// (番茄 ruleContent declares a global `let result` while loginUrl has
+/// `var result = ...`). Demoting them to non-strict global assignments —
+/// combined with non-strict evaluation — restores the Rhino behaviour.
+///
+/// Block/function-scoped declarations (brace depth > 0) keep their keyword.
+fn demote_global_lexicals(script: &str) -> String {
+    let mut output = String::with_capacity(script.len());
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut line_comment = false;
+    let mut block_comment = false;
+    let mut in_regex = false;
+    let mut in_regex_class = false;
+    let mut at_line_start = true;
+    // last significant char, used to tell a regex literal from division
+    let mut prev_sig: Option<char> = None;
+
+    let mut iter = script.char_indices().peekable();
+    while let Some((idx, ch)) = iter.next() {
+        if line_comment {
+            output.push(ch);
+            if ch == '\n' {
+                line_comment = false;
+                at_line_start = true;
+            }
+            continue;
+        }
+        if block_comment {
+            output.push(ch);
+            if ch == '/' && script[..idx].ends_with('*') {
+                block_comment = false;
+            }
+            continue;
+        }
+        if let Some(q) = quote {
+            output.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        if in_regex {
+            output.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if in_regex_class {
+                if ch == ']' {
+                    in_regex_class = false;
+                }
+            } else if ch == '[' {
+                in_regex_class = true;
+            } else if ch == '/' {
+                in_regex = false;
+                prev_sig = Some('/');
+            }
+            continue;
+        }
+
+        if ch == '\n' {
+            output.push(ch);
+            at_line_start = true;
+            continue;
+        }
+        if ch.is_whitespace() {
+            output.push(ch);
+            continue;
+        }
+
+        let rest = &script[idx..];
+        if rest.starts_with("//") {
+            output.push(ch);
+            line_comment = true;
+            continue;
+        }
+        if rest.starts_with("/*") {
+            output.push(ch);
+            block_comment = true;
+            continue;
+        }
+        if matches!(ch, '"' | '\'' | '`') {
+            output.push(ch);
+            quote = Some(ch);
+            at_line_start = false;
+            prev_sig = Some(ch);
+            continue;
+        }
+        if ch == '/' {
+            // regex literal vs division: a regex can only follow an operator,
+            // an opening bracket, a separator or the start of a statement.
+            let is_regex = matches!(
+                prev_sig,
+                None | Some(
+                    '(' | ','
+                        | '='
+                        | ':'
+                        | '['
+                        | '!'
+                        | '&'
+                        | '|'
+                        | '?'
+                        | '{'
+                        | '}'
+                        | ';'
+                        | '+'
+                        | '-'
+                        | '*'
+                        | '%'
+                        | '<'
+                        | '>'
+                        | '~'
+                        | '^'
+                )
+            );
+            output.push(ch);
+            if is_regex {
+                in_regex = true;
+                in_regex_class = false;
+                escaped = false;
+            } else {
+                prev_sig = Some(ch);
+            }
+            at_line_start = false;
+            continue;
+        }
+
+        if at_line_start && depth == 0 {
+            let line_end = rest.find('\n').map(|p| idx + p).unwrap_or(script.len());
+            let line = &script[idx..line_end];
+            let keyword_len = ["var ", "let ", "const "]
+                .iter()
+                .find(|kw| line.starts_with(**kw))
+                .map(|kw| kw.len());
+            if let Some(keyword_len) = keyword_len {
+                let decl = line[keyword_len..].trim_start();
+                // 解构声明保留原样（裸 `{a} = b` 会被解析成块语句）；
+                // 带初始化的普通声明去掉关键字变成全局赋值；
+                // 纯声明（`let a, b;` 整行无 `=`）替换为 globalThis 属性注入。
+                if !decl.starts_with('{') && !decl.starts_with('[') {
+                    let has_assignment = line_has_top_level_assignment(line);
+                    if has_assignment {
+                        // drop just the keyword, keep the rest of the line flowing
+                        while iter
+                            .peek()
+                            .map_or(false, |&(next_idx, _)| next_idx < idx + keyword_len)
+                        {
+                            iter.next();
+                        }
+                        at_line_start = false;
+                        prev_sig = Some(';');
+                        continue;
+                    }
+                    if line.trim_end().ends_with(';') || !line[keyword_len..].contains(',') {
+                        let names: Vec<String> = line[keyword_len..]
+                            .trim_end()
+                            .trim_end_matches(';')
+                            .split(',')
+                            .map(|part| leading_identifier(part))
+                            .filter(|name| !name.is_empty())
+                            .collect();
+                        if !names.is_empty()
+                            && names
+                                .iter()
+                                .all(|name| is_valid_identifier(name) && !is_keyword(name))
+                        {
+                            let list = names
+                                .iter()
+                                .map(|name| format!("\"{name}\""))
+                                .collect::<Vec<_>>()
+                                .join(",");
+                            output.push_str(&format!(
+                                ";[{list}].forEach(function(n){{ if (!(n in globalThis)) globalThis[n] = undefined; }});"
+                            ));
+                            // skip the rest of the original line
+                            while iter
+                                .peek()
+                                .map_or(false, |&(next_idx, _)| next_idx < line_end)
+                            {
+                                iter.next();
+                            }
+                            at_line_start = false;
+                            prev_sig = Some(';');
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        match ch {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        output.push(ch);
+        at_line_start = false;
+        prev_sig = Some(ch);
+    }
+    output
+}
+
+/// Whether a declaration line contains an actual initializer `=`
+/// (not `==`, `===`, `=>`, `<=`, `>=`, `!=`).
+fn line_has_top_level_assignment(line: &str) -> bool {
+    let bytes = line.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if b != b'=' {
+            continue;
+        }
+        let prev = if i > 0 { bytes[i - 1] } else { 0 };
+        let next = if i + 1 < bytes.len() { bytes[i + 1] } else { 0 };
+        if matches!(prev, b'=' | b'!' | b'<' | b'>') {
+            continue;
+        }
+        if matches!(next, b'=' | b'>') {
+            continue;
+        }
+        return true;
+    }
+    false
+}
+
 fn prepend_undeclared_vars(script: &str) -> String {
     let mut declared = std::collections::BTreeSet::new();
     let mut assigned = std::collections::BTreeSet::new();
@@ -1786,7 +2109,8 @@ fn prepend_undeclared_vars(script: &str) -> String {
                 .or_else(|| trimmed.strip_prefix("const "))
             {
                 // `let a = 1, b = 2` 记录 a、b；表达式内逗号会带来多余候选名，
-                // 只会让 declared 集合偏大（少补 var），不会引入 redeclaration。
+                // 只会让 declared 集合偏大（少补几个名字），通常无害：补全用的是
+                // globalThis 属性注入，对确实未声明的名字漏补才会在运行期报错。
                 for part in rest.split(',') {
                     let name = leading_identifier(part);
                     if !name.is_empty() {
@@ -1822,7 +2146,19 @@ fn prepend_undeclared_vars(script: &str) -> String {
     if names.is_empty() {
         return script.to_string();
     }
-    format!("var {};\n{}", names.join(", "), script)
+    // 以 globalThis 属性注入代替 `var x;`：严格模式下未声明赋值仍可命中
+    // global object 属性，而脚本内任意作用域（含全局、任意缩进）的
+    // `let x`/`const x` 与同名 globalThis 属性合法共存——`var x;` 则会与
+    // 全局 `let x` 冲突（如番茄 ruleContent 缩进的 `let version, content, result;`
+    // 触发 "invalid redefinition of global identifier"）。误补多余名字无害。
+    let list = names
+        .iter()
+        .map(|name| format!("\"{name}\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        ";[{list}].forEach(function(n){{ if (!(n in globalThis)) globalThis[n] = undefined; }});\n{script}"
+    )
 }
 
 fn legacy_for_loop_identifier(line: &str) -> Option<String> {
@@ -1995,6 +2331,21 @@ fn java_ajax(spec: &str) -> anyhow::Result<String> {
     let options_json = options
         .and_then(|raw| serde_json::from_str::<JsonValue>(raw).ok())
         .unwrap_or(JsonValue::Null);
+
+    // Legado-compatible data URI: the payload is the response; with a `type`
+    // option the body is hex-encoded (sources call java.hexDecodeToString).
+    if let Some(bytes) = crate::crawler::fetcher::decode_data_uri(url) {
+        let typed = options_json
+            .get("type")
+            .and_then(|v| v.as_str())
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false);
+        return Ok(if typed {
+            hex::encode(&bytes)
+        } else {
+            String::from_utf8_lossy(&bytes).into_owned()
+        });
+    }
 
     let method = options_json
         .get("method")
@@ -2201,14 +2552,107 @@ fn split_ajax_spec(spec: &str) -> (&str, Option<&str>) {
             }
             '{' | '[' if !in_string => depth += 1,
             '}' | ']' if !in_string => depth -= 1,
+            // Legado splits url from options at `,\s*(?={)` only — a comma not
+            // followed by `{` is part of the url (e.g. data:id;base64,payload).
             ',' if !in_string && depth == 0 => {
                 let left = &spec[..idx];
                 let right = &spec[idx + ch.len_utf8()..];
-                return (left, Some(right.trim()));
+                if right.trim_start().starts_with('{') {
+                    return (left, Some(right.trim()));
+                }
             }
             _ => {}
         }
     }
 
     (spec, None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_ajax_spec_splits_only_before_brace() {
+        assert_eq!(
+            split_ajax_spec(r#"https://a.b/c,{"method":"POST"}"#),
+            ("https://a.b/c", Some(r#"{"method":"POST"}"#))
+        );
+        // data URI: the comma after `;base64` belongs to the url
+        assert_eq!(
+            split_ajax_spec(r#"data:item_id;base64,YWJj,{"type":"Z_xh"}"#),
+            ("data:item_id;base64,YWJj", Some(r#"{"type":"Z_xh"}"#))
+        );
+        assert_eq!(
+            split_ajax_spec("https://a.b/c?ids=1,2,3"),
+            ("https://a.b/c?ids=1,2,3", None)
+        );
+    }
+
+    #[test]
+    #[ignore = "diagnostic: requires local private source fixture"]
+    fn diag_demote_on_fanqie_scripts() {
+        let content = std::fs::read_to_string(r"E:\Book\番茄书源\fqfix0529_45469384.json").unwrap();
+        let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let src = &v[0];
+        let rule_content = src["ruleContent"]["content"].as_str().unwrap();
+        let script = rule_content
+            .trim()
+            .strip_prefix("<js>")
+            .unwrap()
+            .strip_suffix("</js>")
+            .unwrap();
+        let demoted = demote_global_lexicals(&prepare_legacy_js_script(script));
+        let login_url = src["loginUrl"].as_str().unwrap();
+        let login_demoted = demote_global_lexicals(&prepare_legacy_js_script(login_url));
+        assert!(
+            !login_demoted.contains("\nlet ck") && !login_demoted.contains("\nvar result"),
+            "loginUrl lexicals not demoted"
+        );
+        for needle in ["let version", "let ret = 0"] {
+            if demoted.contains(needle) {
+                let pos = demoted.find(needle).unwrap();
+                let context: String = demoted[..pos]
+                    .chars()
+                    .rev()
+                    .take(300)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .chain(demoted[pos..].chars().take(80))
+                    .collect();
+                panic!("not demoted: {needle}\ncontext:\n{context}");
+            }
+        }
+    }
+
+    #[test]
+    fn demote_global_lexicals_basics() {
+        let input = "const a = 1;\nlet b = 2, c = 3;\n  let d, e;\nfunction f() { let inner = 1; return inner; }\nif (x) { let block = 2; }\n";
+        let out = demote_global_lexicals(input);
+        assert!(out.contains("a = 1;"), "{out}");
+        assert!(out.contains("b = 2, c = 3;"), "{out}");
+        assert!(!out.contains("let b "), "{out}");
+        assert!(out.contains("\"d\",\"e\""), "{out}");
+        assert!(out.contains("let inner = 1"), "{out}");
+        assert!(out.contains("let block = 2"), "{out}");
+    }
+
+    #[test]
+    fn demote_global_lexicals_survives_regex_and_templates() {
+        let input = "x = s.replace(/}/g, '');\ny = `tpl ${a} { } \"q\"`;\nlet z = 1;\n";
+        let out = demote_global_lexicals(input);
+        assert!(out.contains("z = 1;") && !out.contains("let z"), "{out}");
+    }
+
+    #[test]
+    fn java_ajax_serves_data_uri_without_network() {
+        // typed → hex-encoded payload (legado behaviour)
+        assert_eq!(
+            java_ajax(r#"data:item_id;base64,YWJj,{"type":"Z_xh"}"#).unwrap(),
+            hex::encode("abc")
+        );
+        // untyped → decoded text
+        assert_eq!(java_ajax("data:item_id;base64,YWJj").unwrap(), "abc");
+    }
 }

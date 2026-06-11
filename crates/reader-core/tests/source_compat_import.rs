@@ -229,6 +229,86 @@ async fn qimao_source_full_chain() {
     .ok();
 }
 
+/// 番茄书源全链路验证：search → bookInfo → chapterList(data URI tocUrl) → content
+///
+/// 番茄的 tocUrl/chapterUrl 是 `data:<name>;base64,<payload>,{"type":...}` 形式，
+/// 依赖 bookInfo init JS 结果作为字段作用域 + fetch/java.ajax 的 data URI 支持。
+/// strict 模式；需要实网；CI 默认 ignore。
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live network + local private source fixture"]
+async fn fanqie_source_full_chain() {
+    let temp = tempfile::tempdir().unwrap();
+    let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
+        .await
+        .unwrap();
+
+    let content = read_source_fixture(r"E:\Book\番茄书源\fqfix0529_45469384.json");
+    let result = core.import_legacy_json_text(&content, false).await.unwrap();
+    assert!(result.imported > 0, "番茄书源应能成功导入");
+
+    let file_name = &result.files[0];
+
+    // Step 1: 搜索 — strict
+    let books = core
+        .search(file_name, "我不是戏神", 1, None)
+        .await
+        .expect("番茄搜索应成功（源站可达时）");
+    assert!(!books.is_empty(), "番茄搜索应返回非空结果");
+    let book_url = &books[0].book_url;
+    eprintln!("番茄搜索: {} (book_url={})", books[0].name, book_url);
+
+    // Step 2: bookInfo — init JS 结果应成为字段作用域，tocUrl 应为 data URI
+    let detail = core
+        .book_info(file_name, book_url, None)
+        .await
+        .expect("番茄 bookInfo 应成功");
+    assert!(!detail.name.trim().is_empty(), "番茄书名不应为空");
+    let toc_url = detail.toc_url.as_deref().expect("番茄 tocUrl 不应缺失");
+    assert!(
+        toc_url.starts_with("data:book_id;base64,"),
+        "番茄 tocUrl 应为 data URI，实际: {toc_url}"
+    );
+    eprintln!("番茄 bookInfo: name='{}' tocUrl={}", detail.name, toc_url);
+
+    // Step 3: chapterList — 使用 tocUrl（data URI），strict
+    let chapters = core
+        .chapter_list(file_name, toc_url, None)
+        .await
+        .expect("番茄 chapterList 应成功");
+    assert!(!chapters.is_empty(), "番茄目录不应为空");
+    eprintln!(
+        "番茄目录: 共 {} 章, 第一章={} (url={})",
+        chapters.len(),
+        chapters[0].name,
+        chapters[0].url
+    );
+    assert!(
+        chapters[0].url.starts_with("data:item_id;base64,"),
+        "番茄目录第一条应是可读章节 data URI，不应是卷标题伪 URL: {}",
+        chapters[0].url
+    );
+
+    // Step 4: content — chapterUrl 也是 data URI，strict
+    let body = core
+        .chapter_content(file_name, &chapters[0].url, None)
+        .await
+        .expect("番茄 chapterContent 应成功");
+    assert!(!body.trim().is_empty(), "番茄正文不应为空");
+    eprintln!(
+        "番茄 content: 正文长度={} 字符, 预览={:?}",
+        body.chars().count(),
+        body.chars().take(120).collect::<String>()
+    );
+
+    drop(core);
+    let tmp_path = temp.keep();
+    tokio::task::spawn_blocking(move || {
+        let _ = std::fs::remove_dir_all(&tmp_path);
+    })
+    .await
+    .ok();
+}
+
 #[tokio::test]
 #[ignore = "requires local private source fixture"]
 async fn shuqi_source_imports_and_parses_fields() {

@@ -52,7 +52,6 @@ export type {
   ViewDensityPreferences,
   SearchPreferences,
   TocAutoUpdatePreferences,
-  AppUpdatePreferences,
 } from "./preferences";
 // ShelfBook 类型（组件/视图直接从 stores 引入）
 export type {
