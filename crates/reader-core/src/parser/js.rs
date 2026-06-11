@@ -15,7 +15,7 @@ use serde_json::Value as JsonValue;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 /// Thread-local pool of QuickJS runtimes to avoid per-eval construction cost.
@@ -45,6 +45,13 @@ fn release_runtime(rt: Runtime) {
 static JS_KV: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 static JS_LIB_CACHE: Lazy<Mutex<HashMap<String, String>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
+/// Per-host rate limiter — prevents JS sources from firing unbounded requests.
+/// Without this, a JS rule evaluated hundreds of times per second hits upstream
+/// APIs at that rate, causing IP bans. Minimum 300 ms between same-host requests.
+static JS_HTTP_RATE_STATE: Lazy<Mutex<HashMap<String, Instant>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+const JS_HTTP_MIN_HOST_DELAY_MS: u64 = 300;
+
 static JS_HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
     // reqwest::blocking 客户端不能在 tokio 异步上下文中构建；Lazy 首次触发点
     // 可能位于异步规则引擎线程，因此固定在独立线程上完成构建。
@@ -62,6 +69,47 @@ static JS_HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
     .join()
     .expect("JS HTTP client init thread panicked")
 });
+
+/// Extract host from URL for rate-limiting; returns None for data: URIs / unparseable.
+fn js_http_host(url: &str) -> Option<String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() || trimmed.starts_with("data:") {
+        return None;
+    }
+    reqwest::Url::parse(trimmed)
+        .ok()
+        .and_then(|p| p.host_str().map(|h| h.to_ascii_lowercase()))
+}
+
+/// Spin until ≥ JS_HTTP_MIN_HOST_DELAY_MS elapsed since last request to same host.
+fn js_http_wait_for_rate(url: &str) {
+    let Some(host) = js_http_host(url) else {
+        return;
+    };
+    let min = Duration::from_millis(JS_HTTP_MIN_HOST_DELAY_MS);
+    loop {
+        let wait = {
+            let mut states = JS_HTTP_RATE_STATE.lock().unwrap_or_else(|e| e.into_inner());
+            let now = Instant::now();
+            if let Some(last) = states.get(&host) {
+                let elapsed = now.saturating_duration_since(*last);
+                if elapsed < min {
+                    Some(min - elapsed)
+                } else {
+                    states.insert(host.clone(), now);
+                    None
+                }
+            } else {
+                states.insert(host.clone(), now);
+                None
+            }
+        };
+        match wait {
+            Some(d) if d > Duration::ZERO => std::thread::sleep(d),
+            _ => return,
+        }
+    }
+}
 
 /// Dedicated thread pool for reqwest::blocking HTTP calls (used by java.ajax / legado.http).
 ///
@@ -119,6 +167,15 @@ fn send_text_blocking_pool(target: reqwest::blocking::RequestBuilder) -> anyhow:
 /// where blocking is not allowed". This function bridges the call to a plain OS thread
 /// (via the dedicated pool) so the calling tokio worker is not polluted.
 fn send_text_blocking(req: reqwest::blocking::RequestBuilder) -> anyhow::Result<String> {
+    send_text_blocking_pool(req)
+}
+
+/// Same as `send_text_blocking` but enforces per-host minimum request interval.
+fn send_text_blocking_rated(
+    req: reqwest::blocking::RequestBuilder,
+    url: &str,
+) -> anyhow::Result<String> {
+    js_http_wait_for_rate(url);
     send_text_blocking_pool(req)
 }
 static JS_DEVICE_ID: Lazy<String> = Lazy::new(|| {
@@ -2308,7 +2365,7 @@ fn compile_js_lib(js_lib: &str) -> anyhow::Result<String> {
 fn resolve_js_lib_entry(entry: &str) -> anyhow::Result<String> {
     let value = entry.trim();
     if value.starts_with("http://") || value.starts_with("https://") {
-        return send_text_blocking(JS_HTTP_CLIENT.get(value));
+        return send_text_blocking_rated(JS_HTTP_CLIENT.get(value), value);
     }
     Ok(value.to_string())
 }
@@ -2401,7 +2458,7 @@ fn java_ajax(spec: &str) -> anyhow::Result<String> {
         }
     }
 
-    send_text_blocking(req)
+    send_text_blocking_rated(req, url.trim())
 }
 
 fn decode_base64_bytes(input: &str) -> Option<Vec<u8>> {
@@ -2447,7 +2504,7 @@ fn legado_http_request(
     if let Some(body) = body {
         req = req.body(body);
     }
-    send_text_blocking(req)
+    send_text_blocking_rated(req, url.trim())
 }
 
 fn js_callback_arg_to_string(value: Value<'_>) -> String {
@@ -2515,7 +2572,7 @@ fn legado_http_request_options(options: &str) -> anyhow::Result<String> {
             req = req.body(body.to_string());
         }
     }
-    send_text_blocking(req)
+    send_text_blocking_rated(req, url.trim())
 }
 
 fn apply_source_fast_fail_timeout(
