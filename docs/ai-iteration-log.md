@@ -22,6 +22,8 @@
 
 已接入（审计第二类 8 键中的 6 项）：`http_user_agent`、`http_follow_redirects`、`http_connect_timeout_secs`、`http_ignore_tls_errors`、`proxy_*`（5 键，主客户端）、`request_min_delay_ms`（JS 桥）。
 
+补充 NET-001b（用户澄清「现在无 TLS 校验，后续需要 TLS 校验」后追加）：JS HTTP 桥客户端（`java.ajax`/`legado.http`，`parser/js.rs:JS_HTTP_CLIENT`）原本恒定校验证书，与主客户端不一致——主客户端按 toggle 默认忽略，JS 桥却强制校验。新增 `JS_HTTP_IGNORE_TLS: AtomicBool` + `set_js_http_ignore_tls`，`ReaderCore::new` 用 `http_cfg.ignore_tls_errors` 下发，使「忽略 TLS 证书」开关统一作用于全部 HTTP 路径。Lazy 客户端构建时读取（首个 JS HTTP 请求前由启动设置），切换需重启，与主客户端契约一致。这样将来把 `http_ignore_tls_errors` 改为 `false` 即可对主客户端与 JS 桥同时启用 TLS 校验。默认保持 `true`（现状无 TLS 校验，符合用户当前需求）。
+
 ⚠️ 行为变化（需告知用户）：`default_app_config()` 中 `http_ignore_tls_errors` 默认值为 `true`。旧代码忽略该键 → TLS 证书始终校验；本轮按声明的默认值接入后，**默认将接受无效证书**。这是 UI 既有声明的默认行为，但与旧实际行为相反，属安全相关变化。
 
 仍未接入（2 键，转 NET-003/NET-004，见下轮第一件事）：

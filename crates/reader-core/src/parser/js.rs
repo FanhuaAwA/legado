@@ -14,7 +14,7 @@ use rquickjs::{Context, Object, Runtime, Value};
 use serde_json::Value as JsonValue;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -62,10 +62,24 @@ pub fn set_js_http_min_delay_ms(ms: u64) {
     JS_HTTP_MIN_HOST_DELAY_MS.store(ms, Ordering::Relaxed);
 }
 
+/// Whether the JS HTTP bridge accepts invalid TLS certificates. Driven by the
+/// `http_ignore_tls_errors` app config key so the Network panel toggle governs
+/// every HTTP path, not just the main client. Read once when `JS_HTTP_CLIENT`
+/// is first built (after `ReaderCore::new` sets it); changes need a restart,
+/// matching the main client's contract.
+static JS_HTTP_IGNORE_TLS: AtomicBool = AtomicBool::new(true);
+
+/// Update the JS HTTP bridge TLS policy (from `http_ignore_tls_errors`). Must be
+/// called before the first JS HTTP request for it to take effect this session.
+pub fn set_js_http_ignore_tls(ignore: bool) {
+    JS_HTTP_IGNORE_TLS.store(ignore, Ordering::Relaxed);
+}
+
 static JS_HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
     // reqwest::blocking 客户端不能在 tokio 异步上下文中构建；Lazy 首次触发点
     // 可能位于异步规则引擎线程，因此固定在独立线程上完成构建。
-    std::thread::spawn(|| {
+    let ignore_tls = JS_HTTP_IGNORE_TLS.load(Ordering::Relaxed);
+    std::thread::spawn(move || {
         Client::builder()
             .timeout(Duration::from_secs(35))
             .connect_timeout(Duration::from_secs(10))
@@ -73,6 +87,7 @@ static JS_HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
             .gzip(true)
             .brotli(true)
             .deflate(true)
+            .danger_accept_invalid_certs(ignore_tls)
             .build()
             .expect("failed to build JS HTTP client")
     })
