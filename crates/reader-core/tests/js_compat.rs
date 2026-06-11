@@ -392,6 +392,9 @@ fn new_js_apis_work() {
     eval_js("cache.delete('del_test')", "", "").unwrap();
     let result = eval_js("cache.get('del_test')", "", "").unwrap();
     assert!(result.is_empty());
+    eval_js("cache.putFromMemory('mem_test', 'mem_val')", "", "").unwrap();
+    let result = eval_js("cache.getFromMemory('mem_test')", "", "").unwrap();
+    assert_eq!(result, "mem_val");
 
     // source.putLoginInfo / source.getLoginInfoMap
     eval_js("source.putLoginInfo('li_key', 'li_val')", "", "").unwrap();

@@ -364,8 +364,14 @@ export function useChapterReaderModalController(
     },
   );
 
-  watch(activeChapterIndex, (idx) => {
+  watch(activeChapterIndex, () => {
     readingChapterOffset.value = 0;
+  });
+
+  watch([activeChapterIndex, content], ([idx, currentContent]) => {
+    if (!props.show || !String(currentContent || "").trim()) {
+      return;
+    }
     const count = config.value.cache_prefetch_count;
     if (count === 0 || sourceType.value === "video" || !currentShelfId.value) {
       return;

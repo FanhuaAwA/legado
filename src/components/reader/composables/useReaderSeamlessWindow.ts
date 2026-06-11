@@ -318,6 +318,11 @@ export function useReaderSeamlessWindow(options: UseReaderSeamlessWindowOptions)
       return;
     }
 
+    if (!options.content.value) {
+      clearSeamlessSlots(mode);
+      return;
+    }
+
     clearSeamlessSlots(mode === "scroll" ? "comic" : "scroll");
 
     const { prev, next } = getSeamlessModeSlots(mode);
@@ -474,6 +479,7 @@ export function useReaderSeamlessWindow(options: UseReaderSeamlessWindowOptions)
       () => options.getSourceType(),
       () => options.getChapterCount(),
       options.currentChapterUrl,
+      options.content,
     ],
     () => {
       void syncLinearSeamlessWindow();

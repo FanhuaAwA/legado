@@ -2498,7 +2498,7 @@ fn finalize_chapter_url(
     base_url.to_string()
 }
 
-fn derive_toc_url_from_chapter_url(chapter_url: &str) -> Option<String> {
+pub(crate) fn derive_toc_url_from_chapter_url(chapter_url: &str) -> Option<String> {
     let (_url, options) = split_data_uri_options(chapter_url)?;
     let value = serde_json::from_str::<Value>(options).ok()?;
     let info = value.get("info").and_then(Value::as_str)?;

@@ -134,13 +134,17 @@ pub async fn fetch(client: &HttpClient, req: RequestSpec) -> anyhow::Result<Fetc
         });
     }
     let mut last_err: Option<anyhow::Error> = None;
-    let max_retries = req.retry;
+    let fast_fail = is_source_fast_fail_url(&req.url);
+    let max_retries = if fast_fail { 0 } else { req.retry };
     for attempt in 0..=max_retries {
         let req = req.clone();
         let mut builder = match req.method {
             HttpMethod::GET => client.client().get(&req.url),
             HttpMethod::POST => client.client().post(&req.url),
         };
+        if fast_fail {
+            builder = builder.timeout(Duration::from_secs(5));
+        }
 
         let mut has_content_type = false;
         for (k, v) in &req.headers {
@@ -230,6 +234,16 @@ pub async fn fetch(client: &HttpClient, req: RequestSpec) -> anyhow::Result<Fetc
         }
     }
     Err(last_err.unwrap_or_else(|| anyhow::anyhow!("fetch failed")))
+}
+
+pub(crate) fn is_source_fast_fail_url(url: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url.trim()) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str().map(|value| value.to_ascii_lowercase()) else {
+        return false;
+    };
+    host == "52dns.cc" || host.ends_with(".52dns.cc")
 }
 
 fn decode_body(bytes: &[u8], charset: Option<&str>, content_type: Option<&str>) -> String {
@@ -387,5 +401,19 @@ mod tests {
         let text = decode_body(bytes, None, None);
 
         assert!(text.contains("飞卢小说"));
+    }
+
+    #[test]
+    fn source_fast_fail_detects_52dns_hosts_only() {
+        assert!(is_source_fast_fail_url(
+            "https://gofq.52dns.cc/content?item_id=1"
+        ));
+        assert!(is_source_fast_fail_url(
+            "https://jh.52dns.cc/qimao/content.php?chapterId=1"
+        ));
+        assert!(!is_source_fast_fail_url(
+            "https://reading.snssdk.com/reading/bookapi/detail/v/"
+        ));
+        assert!(!is_source_fast_fail_url("data:item_id;base64,MTIz"));
     }
 }

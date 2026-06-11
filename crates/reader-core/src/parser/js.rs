@@ -15,6 +15,7 @@ use serde_json::Value as JsonValue;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
+use std::time::Duration;
 use uuid::Uuid;
 
 /// Thread-local pool of QuickJS runtimes to avoid per-eval construction cost.
@@ -49,6 +50,8 @@ static JS_HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
     // 可能位于异步规则引擎线程，因此固定在独立线程上完成构建。
     std::thread::spawn(|| {
         Client::builder()
+            .timeout(Duration::from_secs(35))
+            .connect_timeout(Duration::from_secs(10))
             .cookie_store(true)
             .gzip(true)
             .brotli(true)
@@ -570,6 +573,21 @@ fn eval_js_inner_with_source(
         )?;
         cache_obj.set(
             "putMemory",
+            Func::new(|key: String, val: Value<'_>| -> bool {
+                let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+                map.insert(key, js_callback_arg_to_string(val));
+                true
+            }),
+        )?;
+        cache_obj.set(
+            "getFromMemory",
+            Func::new(|key: String| -> Option<String> {
+                let map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+                map.get(&key).cloned()
+            }),
+        )?;
+        cache_obj.set(
+            "putFromMemory",
             Func::new(|key: String, val: Value<'_>| -> bool {
                 let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
                 map.insert(key, js_callback_arg_to_string(val));
@@ -2355,6 +2373,7 @@ fn java_ajax(spec: &str) -> anyhow::Result<String> {
     let method = Method::from_bytes(method.as_bytes()).unwrap_or(Method::GET);
 
     let mut req = JS_HTTP_CLIENT.request(method, url.trim());
+    req = apply_source_fast_fail_timeout(req, url.trim());
 
     if let Some(headers) = options_json.get("headers").and_then(|v| v.as_object()) {
         for (key, value) in headers {
@@ -2408,6 +2427,7 @@ fn decode_base64_to_utf8(input: &str) -> Option<String> {
 fn java_request_simple(method: &str, url: &str, body: Option<String>) -> anyhow::Result<String> {
     let method = Method::from_bytes(method.as_bytes()).unwrap_or(Method::GET);
     let mut req = JS_HTTP_CLIENT.request(method, url.trim());
+    req = apply_source_fast_fail_timeout(req, url.trim());
     if let Some(body) = body {
         req = req.body(body);
     }
@@ -2422,6 +2442,7 @@ fn legado_http_request(
 ) -> anyhow::Result<String> {
     let method = Method::from_bytes(method.as_bytes()).unwrap_or(Method::GET);
     let mut req = JS_HTTP_CLIENT.request(method, url.trim());
+    req = apply_source_fast_fail_timeout(req, url.trim());
     req = apply_header_js_value(req, headers);
     if let Some(body) = body {
         req = req.body(body);
@@ -2483,6 +2504,7 @@ fn legado_http_request_options(options: &str) -> anyhow::Result<String> {
         .to_uppercase();
     let method = Method::from_bytes(method.as_bytes()).unwrap_or(Method::GET);
     let mut req = JS_HTTP_CLIENT.request(method, url.trim());
+    req = apply_source_fast_fail_timeout(req, url.trim());
     if let Some(headers) = value.get("headers") {
         req = apply_header_value(req, headers);
     }
@@ -2494,6 +2516,27 @@ fn legado_http_request_options(options: &str) -> anyhow::Result<String> {
         }
     }
     send_text_blocking(req)
+}
+
+fn apply_source_fast_fail_timeout(
+    req: reqwest::blocking::RequestBuilder,
+    url: &str,
+) -> reqwest::blocking::RequestBuilder {
+    if is_source_fast_fail_url(url) {
+        req.timeout(Duration::from_secs(5))
+    } else {
+        req
+    }
+}
+
+pub(crate) fn is_source_fast_fail_url(url: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url.trim()) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str().map(|value| value.to_ascii_lowercase()) else {
+        return false;
+    };
+    host == "52dns.cc" || host.ends_with(".52dns.cc")
 }
 
 fn apply_header_json(

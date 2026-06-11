@@ -1,6 +1,7 @@
 <!-- ReaderContentArea — 阅读正文区域，负责阅读模式承载、文字选择菜单与选区插件动作。 -->
 <script setup lang="ts">
-import { NSpin, NAlert, NButton, NDropdown, useMessage } from "naive-ui";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { NSpin, NAlert, NButton, NDropdown, NModal, useMessage } from "naive-ui";
 import { storeToRefs } from "pinia";
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import type {
@@ -11,6 +12,7 @@ import {
   useFrontendPlugins,
   type ReaderTextSelectionContext,
 } from "@/composables/useFrontendPlugins";
+import { invokeWithTimeout } from "@/composables/useInvoke";
 import { useOverlay } from "@/composables/useOverlay";
 import { useReaderBookmarksStore } from "@/features/reader/stores/readerBookmarks";
 import {
@@ -35,6 +37,7 @@ const {
   activePagedPages,
   blockingError,
   blockingLoading,
+  bookInfo,
   bookName,
   bookUrl,
   contentRefs,
@@ -75,6 +78,32 @@ const bookmarksStore = useReaderBookmarksStore();
 const selectionMode = ref(false);
 const paragraphCommentsVisible = ref(false);
 const paragraphCommentTarget = ref<ParagraphCommentTarget | null>(null);
+const legacyCommentOpening = ref(false);
+const legacyBrowserDialog = reactive({
+  show: false,
+  title: "",
+  html: "",
+});
+
+const LEGADO_BROWSER_ACTION_FN = "__legado_browser_action";
+
+interface LegacyBrowserAction {
+  kind?: string;
+  url?: string;
+  title?: string;
+  html?: string;
+  script?: string;
+  options?: string;
+}
+
+interface LegacyBrowserActionResponse {
+  ok?: boolean;
+  action?: string;
+  result?: string;
+  error?: string;
+  raw?: string;
+  browser?: LegacyBrowserAction | null;
+}
 
 /** 当前章节中所有书签文本列表，用于高亮渲染 */
 const chapterBookmarkTexts = computed(() =>
@@ -407,7 +436,106 @@ function findLegacyCommentActionTarget(target: EventTarget | null): HTMLElement 
   );
 }
 
-function onReaderClickCapture(event: MouseEvent) {
+function getLegacyCommentExpression(action: HTMLElement): string {
+  return (action.dataset.legadoClick || action.dataset.legadoJs || "").trim();
+}
+
+function legacyCommentLabel(expression: string): string {
+  if (expression.includes("getSP")) {
+    return "神评";
+  }
+  if (expression.includes("getZP")) {
+    return "章评";
+  }
+  return "段评";
+}
+
+function parseQimaoCommentUrl(expression: string): string | null {
+  const match = /^showCmt\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]/u.exec(
+    expression,
+  );
+  if (!match) {
+    return null;
+  }
+  const [, bid, cid, para] = match;
+  const query = new URLSearchParams({
+    chapter_id: cid,
+    book_id: bid,
+    paragraph_id: para,
+  });
+  return `https://jh.52dns.cc/qimao/qmdlpl.php?${query.toString()}`;
+}
+
+function normalizeLegacyBrowserAction(raw: unknown): LegacyBrowserActionResponse {
+  if (typeof raw === "string") {
+    try {
+      return JSON.parse(raw) as LegacyBrowserActionResponse;
+    } catch {
+      return { ok: false, raw };
+    }
+  }
+  if (raw && typeof raw === "object") {
+    return raw as LegacyBrowserActionResponse;
+  }
+  return { ok: false, raw: String(raw ?? "") };
+}
+
+async function openLegacyBrowserAction(expression: string) {
+  if (!fileName.value) {
+    throw new Error("当前书源文件名为空，无法打开评论");
+  }
+  const raw = await invokeWithTimeout<unknown>(
+    "booksource_call_fn",
+    {
+      fileName: fileName.value,
+      fnName: LEGADO_BROWSER_ACTION_FN,
+      args: [
+        {
+          expression,
+          chapterUrl: currentChapterUrl.value,
+          chapterTitle: currentChapterName.value,
+          chapterIndex: activeChapterIndex.value,
+        },
+      ],
+      sourceDir: bookInfo.value?.sourceDir || null,
+    },
+    15_000,
+  );
+  return normalizeLegacyBrowserAction(raw);
+}
+
+async function handleLegacyBrowserResult(
+  expression: string,
+  response: LegacyBrowserActionResponse,
+) {
+  const browser = response.browser;
+  const url = browser?.url?.trim();
+  if (url) {
+    await openUrl(url);
+    return true;
+  }
+
+  const html = browser?.html?.trim();
+  if (html) {
+    legacyBrowserDialog.title = browser?.title?.trim() || legacyCommentLabel(expression);
+    legacyBrowserDialog.html = html;
+    legacyBrowserDialog.show = true;
+    return true;
+  }
+
+  const qimaoUrl = parseQimaoCommentUrl(expression);
+  if (qimaoUrl) {
+    await openUrl(qimaoUrl);
+    return true;
+  }
+
+  if (response.ok === false && response.error) {
+    throw new Error(response.error);
+  }
+  return false;
+}
+
+async function onReaderClickCapture(event: MouseEvent) {
   const action = findLegacyCommentActionTarget(event.target);
   if (!action) {
     return;
@@ -415,9 +543,28 @@ function onReaderClickCapture(event: MouseEvent) {
   event.preventDefault();
   event.stopPropagation();
 
-  const payload = `${action.dataset.legadoJs ?? ""} ${action.dataset.legadoClick ?? ""}`;
-  const label = payload.includes("getSP") ? "神评" : payload.includes("getZP") ? "章评" : "段评";
-  message.info(`${label}入口已识别；该书源使用 Legado 内嵌浏览器脚本，桌面端暂未桥接打开评论页`);
+  const expression = getLegacyCommentExpression(action);
+  if (!expression || legacyCommentOpening.value) {
+    return;
+  }
+
+  legacyCommentOpening.value = true;
+  try {
+    const response = await openLegacyBrowserAction(expression);
+    const opened = await handleLegacyBrowserResult(expression, response);
+    if (!opened) {
+      message.warning(`${legacyCommentLabel(expression)}入口未返回可打开的评论页`);
+    }
+  } catch (error) {
+    const qimaoUrl = parseQimaoCommentUrl(expression);
+    if (qimaoUrl) {
+      await openUrl(qimaoUrl);
+    } else {
+      message.error(error instanceof Error ? error.message : String(error));
+    }
+  } finally {
+    legacyCommentOpening.value = false;
+  }
 }
 
 function onReaderPointerDown(event: PointerEvent) {
@@ -680,6 +827,20 @@ onBeforeUnmount(() => {
     :target="paragraphCommentTarget"
   />
 
+  <n-modal
+    v-model:show="legacyBrowserDialog.show"
+    preset="card"
+    :title="legacyBrowserDialog.title || '评论'"
+    class="reader-legacy-browser-modal"
+    :style="{ width: 'min(92vw, 760px)' }"
+  >
+    <iframe
+      class="reader-legacy-browser-frame"
+      :srcdoc="legacyBrowserDialog.html"
+      sandbox="allow-forms allow-popups allow-same-origin allow-scripts"
+    />
+  </n-modal>
+
   <!-- 测量宿主（分页排版用） -->
   <div
     :ref="(el) => (contentRefs.measureHostRef.value = el as HTMLElement | null)"
@@ -734,6 +895,14 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.reader-legacy-browser-frame {
+  width: 100%;
+  height: min(72vh, 720px);
+  border: 0;
+  border-radius: 6px;
+  background: #fff;
 }
 
 .reader-modal__measure-host {

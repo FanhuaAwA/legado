@@ -12,8 +12,8 @@ use crate::model::book::Book;
 use crate::model::book_chapter::BookChapter;
 use crate::model::book_source::{book_source_from_value, BookSource};
 use crate::model::search::SearchBook;
-use crate::parser::js::JsSourceArg;
-use crate::parser::rule_engine::RuleEngine;
+use crate::parser::js::{eval_js, with_js_source, JsSourceArg};
+use crate::parser::rule_engine::{derive_toc_url_from_chapter_url, RuleEngine};
 use crate::service::book_service::BookService;
 use crate::service::book_source_service::BookSourceService;
 use crate::service::json_document_service::JsonDocumentService;
@@ -35,6 +35,7 @@ const FRONTEND_STORAGE_PREFIX: &str = "frontend:";
 const APP_CONFIG_SCOPE: &str = "app.config";
 const SOURCE_DIRS_CONFIG_SCOPE: &str = "booksource.dirs";
 const SOURCE_DIRS_CONFIG_KEY: &str = "external";
+const LEGADO_BROWSER_ACTION_FN: &str = "__legado_browser_action";
 
 #[derive(Clone)]
 pub struct ReaderCore {
@@ -965,9 +966,70 @@ impl ReaderCore {
                 .await
                 .map_err(js_join_error)?;
         }
+        if fn_name == LEGADO_BROWSER_ACTION_FN {
+            return self.legado_browser_action(file_name, args).await;
+        }
         Err(ReaderCoreError::Message(format!(
             "Legado 规则书源不支持自定义 JS 函数调用: {fn_name}"
         )))
+    }
+
+    async fn legado_browser_action(
+        &self,
+        file_name: &str,
+        args: Vec<Value>,
+    ) -> Result<Value, ReaderCoreError> {
+        let payload = args.first().cloned().unwrap_or(Value::Null);
+        let expression = payload
+            .get("expression")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or_default();
+        if expression.is_empty() {
+            return Err(ReaderCoreError::Message("缺少浏览器动作表达式".to_string()));
+        }
+
+        let chapter_url = payload
+            .get("chapterUrl")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let chapter_title = payload
+            .get("chapterTitle")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let chapter_index = payload
+            .get("chapterIndex")
+            .and_then(Value::as_i64)
+            .and_then(|value| i32::try_from(value).ok());
+        let source = self.require_legado_source(file_name).await?;
+        let script = legado_browser_action_script(expression)?;
+
+        tokio::task::spawn_blocking(move || {
+            let toc_url = derive_toc_url_from_chapter_url(&chapter_url);
+            let raw = with_js_source(
+                source.js_lib.as_deref(),
+                source.login_url.as_deref(),
+                Some(&source.book_source_name),
+                Some(&source.book_source_url),
+                toc_url.as_deref(),
+                Some(&chapter_url),
+                Some(&chapter_title),
+                chapter_index,
+                || eval_js(&script, "", &chapter_url),
+            )?;
+            let value = serde_json::from_str::<Value>(&raw).unwrap_or_else(|_| {
+                json!({
+                    "ok": false,
+                    "error": "浏览器动作返回非 JSON",
+                    "raw": raw,
+                })
+            });
+            Ok(value)
+        })
+        .await
+        .map_err(js_join_error)?
     }
 
     pub async fn explore(
@@ -2407,6 +2469,71 @@ fn value_to_js_source_arg(value: Value) -> JsSourceArg {
         Value::String(s) => JsSourceArg::String(s),
         other => JsSourceArg::Json(other),
     }
+}
+
+fn legado_browser_action_script(expression: &str) -> Result<String, ReaderCoreError> {
+    let expression_json = serde_json::to_string(expression)?;
+    Ok(r#"
+(function() {
+  var __legacyAction = __LEGADO_BROWSER_ACTION__;
+  var __browser = null;
+  function __text(value) {
+    return value === undefined || value === null ? "" : String(value);
+  }
+  function __json(value) {
+    if (value === undefined || value === null) return "";
+    if (typeof value === "string") return value;
+    try { return JSON.stringify(value); } catch (_) { return String(value); }
+  }
+  function __capture(kind, url, title, html, script, options) {
+    __browser = {
+      kind: __text(kind),
+      url: __text(url),
+      title: __text(title),
+      html: __text(html),
+      script: __text(script),
+      options: __text(options)
+    };
+    return true;
+  }
+  java.startBrowser = function(url, title, html) {
+    return __capture("startBrowser", url, title, html, "", "");
+  };
+  java.startBrowserAwait = function(url, title, refetchAfterSuccess, html) {
+    __capture("startBrowserAwait", url, title, html, "", JSON.stringify({
+      refetchAfterSuccess: !!refetchAfterSuccess
+    }));
+    return "";
+  };
+  java.showBrowser = function(url, html, preloadJs, config) {
+    return __capture("showBrowser", url, "", html, preloadJs, config);
+  };
+  java.showReadingBrowser = function(url, title) {
+    return __capture("showReadingBrowser", url, title, "", "", "");
+  };
+  try {
+    var __result;
+    var __tries = /^\s*showCmt\s*\(/.test(__legacyAction) ? 2 : 1;
+    for (var __i = 0; __i < __tries; __i++) {
+      __result = (0, eval)(__legacyAction);
+      if (__browser) break;
+    }
+    return JSON.stringify({
+      ok: true,
+      action: __legacyAction,
+      result: __json(__result),
+      browser: __browser
+    });
+  } catch (e) {
+    return JSON.stringify({
+      ok: false,
+      action: __legacyAction,
+      error: String(e && (e.stack || e.message) || e)
+    });
+  }
+})()
+"#
+    .replace("__LEGADO_BROWSER_ACTION__", &expression_json))
 }
 
 fn js_join_error(err: tokio::task::JoinError) -> ReaderCoreError {
