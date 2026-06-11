@@ -1668,11 +1668,15 @@ fn eval_field_html_with_ctx(
         return Some(res);
     }
 
+    // Extract tail from original rule to preserve {{result}} for after-JS interpolation
+    let (_, _original_js, original_tail) = extract_js(rule);
+
     let input = html::extract_text(el, "textNodes").unwrap_or_default();
     let interpolated_rule = interpolate_common_templates(rule, &input, base_url, ctx);
     let had_templates = interpolated_rule != rule;
     let (pure_rule, regex_part) = split_legado_regex(&interpolated_rule);
-    let (pure, js, tail) = extract_js(&pure_rule);
+    let (pure, js, _tail) = extract_js(&pure_rule);
+    let tail = original_tail;
 
     let mut text = if pure.is_empty() {
         "".to_string()
@@ -1725,9 +1729,13 @@ fn eval_field_html_doc_with_ctx(
         return Some(res);
     }
 
+    // Extract tail from original rule to preserve {{result}}
+    let (_, _original_js, original_tail) = extract_js(rule);
+
     let interpolated_rule = interpolate_common_templates(rule, &doc.html(), base_url, ctx);
     let had_templates = interpolated_rule != rule;
-    let (pure, js, tail) = extract_js(&interpolated_rule);
+    let (pure, js, _tail) = extract_js(&interpolated_rule);
+    let tail = original_tail;
     let mut text = if pure.is_empty() {
         "".to_string()
     } else {
@@ -1781,10 +1789,14 @@ fn eval_field_xpath_with_ctx(
         return Some(res);
     }
 
+    // Extract tail from original rule to preserve {{result}}
+    let (_, _original_js, original_tail) = extract_js(rule);
+
     let interpolated_rule = interpolate_common_templates(rule, &node.string_value(), base_url, ctx);
     let had_templates = interpolated_rule != rule;
     let (pure_rule, regex_part) = split_legado_regex(&interpolated_rule);
-    let (pure, js, tail) = extract_js(&pure_rule);
+    let (pure, js, _tail) = extract_js(&pure_rule);
+    let tail = original_tail;
     let mut text = if pure.trim().is_empty() {
         node.string_value()
     } else {
@@ -1879,9 +1891,15 @@ fn eval_field_json_with_ctx(
         return Some(res);
     }
 
+    // Extract JS and tail from the ORIGINAL rule BEFORE template interpolation,
+    // so that {{result}} in the tail survives for after-JS replacement.
+    let (_, _original_js, original_tail) = extract_js(rule);
+
     let interpolated_rule = interpolate_json_templates(rule, v, base_url, ctx);
     let (pure_rule, regex_part) = split_legado_regex(&interpolated_rule);
-    let (pure, js, tail) = extract_js(&pure_rule);
+    let (pure, js, _tail) = extract_js(&pure_rule);
+    // Use tail from original rule (with {{result}} preserved), not from interpolated rule
+    let tail = original_tail;
 
     // When pure is empty and there is JS, use the full JSON as input so that
     // java.getString / java.get can extract fields from the response body.
@@ -1914,13 +1932,9 @@ fn eval_field_json_with_ctx(
         if let Ok(res) = eval_js(script, &text, base_url) {
             text = res;
             // Apply tail template after JS evaluation — replaces {{result}} with JS output.
-            // This handles multi-line rules like:
-            //   book_id
-            //   <js>java.base64Encode(result)</js>
-            //   data:book_id;base64,{{result}},{"type":"M_xh"}
+            // The tail is from the ORIGINAL rule (before template interpolation) so that
+            // {{result}} is not prematurely replaced by interpolate_json_templates.
             if let Some(tail) = tail {
-                // Only interpolate {{result}} in the tail; other templates were already
-                // handled by interpolate_json_templates above.
                 let re = regex::Regex::new(r"\{\{result\}\}").unwrap();
                 text = re.replace_all(tail, &text).into_owned();
             }
