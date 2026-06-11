@@ -29,6 +29,7 @@ reqwest = { version = "0.12", default-features = false, features = [
   "deflate",
   "blocking",
   "cookies",
+  "socks",
 ] }
 rquickjs = { version = "0.7", features = ["bindgen", "futures"] }
 scraper = "0.20"

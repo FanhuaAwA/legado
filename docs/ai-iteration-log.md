@@ -1,5 +1,42 @@
 # AI Iteration Log
 
+## 记录标题：2026-06-11 网络设置死配置键接入（NET-001 / NET-002）
+
+任务 ID：NET-001、NET-002
+
+本轮目标：用户要求按前后端审计完善「有 UI 但后端不消费」的网络配置项。审计第二类列出 8 个死配置键（代理、UA、TLS、DoH、连接超时、重定向、引擎超时、最小请求间隔）。本轮接入其中可直接落地的部分，并复核审计名单。
+
+复核结论（实测确认审计准确）：
+
+- `crawler/http_client.rs:HttpClient::new()` 旧实现硬编码 UA、固定 `None` 代理、不设连接超时/重定向/TLS 策略；`facade.rs:69` 旧代码始终传 `None`。审计第二类属实。
+- 前端 `SectionNetwork.vue` 用 `handleSet(key, String(v))` 保存，数字/布尔被存成字符串；后端解析必须同时接受 JSON 原生类型与字符串编码（已在 `config_bool/config_u64` 处理）。
+- 代理面板已自带「修改后需重启生效」提示，故采用启动时读取配置构建客户端的契约，无需运行时热替换。
+
+修改文件：
+
+- `crates/reader-core/src/crawler/http_client.rs`：新增 `HttpClientConfig`（从 app config 解析 UA/重定向/连接超时/TLS/代理）与 `HttpClient::from_config`；保留 `new()` 供测试/内部调用。代理支持 `system/none/custom` 三模式与 `http`/`socks5` 类型，含可选 basic auth。
+- `crates/reader-core/src/facade.rs`：`ReaderCore::new` 启动时 `load_app_config` 后用 `HttpClientConfig::from_app_config` 构建主 HTTP 客户端；`app_config_get_all` 复用 `load_app_config`（去重）；`app_config_set("request_min_delay_ms")` 实时下发到 JS 桥。
+- `crates/reader-core/src/parser/js.rs`：`JS_HTTP_MIN_HOST_DELAY_MS` 由常量 300 改为 `AtomicU64`，新增 `set_js_http_min_delay_ms`，接入 `request_min_delay_ms`。
+- `Cargo.toml`：reqwest 增加 `socks` feature（UI 已提供 SOCKS5 选项，否则该选项无效）。
+- `crates/reader-core/tests/http_client_config.rs`：7 个新测试覆盖默认值、字符串编码解析、JSON 原生解析、空 UA 回退、各代理模式构建、SOCKS5 构建。
+
+已接入（审计第二类 8 键中的 6 项）：`http_user_agent`、`http_follow_redirects`、`http_connect_timeout_secs`、`http_ignore_tls_errors`、`proxy_*`（5 键，主客户端）、`request_min_delay_ms`（JS 桥）。
+
+⚠️ 行为变化（需告知用户）：`default_app_config()` 中 `http_ignore_tls_errors` 默认值为 `true`。旧代码忽略该键 → TLS 证书始终校验；本轮按声明的默认值接入后，**默认将接受无效证书**。这是 UI 既有声明的默认行为，但与旧实际行为相反，属安全相关变化。
+
+仍未接入（2 键，转 NET-003/NET-004，见下轮第一件事）：
+
+- `http_doh_server`：reqwest 默认特性无 DoH 能力，真实实现需自定义解析器/新依赖，属较大改动。
+- `engine_timeout_secs`：JS 引擎执行超时，需在 rquickjs runtime 上加 interrupt handler；当前无 JS 执行级 deadline。
+
+门禁（实测）：cargo fmt PASS；cargo check reader-core/legado-tauri/legado-headless PASS（0w）；cargo test reader-core 全绿（新增 7/7）；cargo test legado-tauri 9/0；pnpm lint 0/0；pnpm build PASS；命令契约 162/161/161，onlyBackend=0（命令名未变）。
+
+下轮第一件事：
+
+NET-003 实现 `engine_timeout_secs`（在 `crates/reader-core/src/parser/js.rs` 的 runtime 上用 `Runtime::set_interrupt_handler` + 截止时间），或对未实现的 DoH/引擎超时在 `SectionNetwork.vue` 加「尚未实现」标注以消除「UI 假可用」。决策见本轮交接说明。
+
+不得重复做：不要把 `HttpClient::new` 改回硬编码；不要重新登记审计第二类已接入的 6 键为问题。
+
 ## 记录标题：2026-06-11 Legado 段评占位与空段落清洗
 
 任务 ID：READER-LEGACY-COMMENT-CLEANUP

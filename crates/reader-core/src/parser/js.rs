@@ -14,6 +14,7 @@ use rquickjs::{Context, Object, Runtime, Value};
 use serde_json::Value as JsonValue;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -50,7 +51,16 @@ static JS_LIB_CACHE: Lazy<Mutex<HashMap<String, String>>> =
 /// APIs at that rate, causing IP bans. Minimum 300 ms between same-host requests.
 static JS_HTTP_RATE_STATE: Lazy<Mutex<HashMap<String, Instant>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
-const JS_HTTP_MIN_HOST_DELAY_MS: u64 = 300;
+/// Minimum delay between same-host requests, in milliseconds. Driven by the
+/// `request_min_delay_ms` app config key (default 300); `ReaderCore` pushes the
+/// configured value at startup and whenever it changes via
+/// [`set_js_http_min_delay_ms`].
+static JS_HTTP_MIN_HOST_DELAY_MS: AtomicU64 = AtomicU64::new(300);
+
+/// Update the per-host JS HTTP minimum delay (from `request_min_delay_ms`).
+pub fn set_js_http_min_delay_ms(ms: u64) {
+    JS_HTTP_MIN_HOST_DELAY_MS.store(ms, Ordering::Relaxed);
+}
 
 static JS_HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
     // reqwest::blocking 客户端不能在 tokio 异步上下文中构建；Lazy 首次触发点
@@ -86,7 +96,10 @@ fn js_http_wait_for_rate(url: &str) {
     let Some(host) = js_http_host(url) else {
         return;
     };
-    let min = Duration::from_millis(JS_HTTP_MIN_HOST_DELAY_MS);
+    let min = Duration::from_millis(JS_HTTP_MIN_HOST_DELAY_MS.load(Ordering::Relaxed));
+    if min.is_zero() {
+        return;
+    }
     loop {
         let wait = {
             let mut states = JS_HTTP_RATE_STATE.lock().unwrap_or_else(|e| e.into_inner());

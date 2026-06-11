@@ -1,5 +1,5 @@
 use crate::app_state::ReaderCoreOptions;
-use crate::crawler::http_client::HttpClient;
+use crate::crawler::http_client::{HttpClient, HttpClientConfig};
 use crate::dto::{
     AddBookPayload, BookDetail, BookItem, BookSourceMeta, CachedChapter, ChapterItem,
     EpisodeProgress, EpisodeProgressMap, FrontendStorageEntry, FrontendStorageNamespaceSummary,
@@ -66,7 +66,14 @@ impl ReaderCore {
             crate::storage::db::repo::BookSourceRepo::new(pool.clone()),
             &storage_dir,
         );
-        let http = HttpClient::new(options.request_timeout_secs.max(1), None)?;
+        let app_config = load_app_config(&pool).await;
+        let http_cfg = HttpClientConfig::from_app_config(&app_config, options.request_timeout_secs);
+        let http = HttpClient::from_config(&http_cfg)?;
+        crate::parser::js::set_js_http_min_delay_ms(config_u64_value(
+            &app_config,
+            "request_min_delay_ms",
+            300,
+        ));
         let book_service = BookService::new(
             http,
             RuleEngine::new()?,
@@ -1615,19 +1622,21 @@ impl ReaderCore {
     }
 
     pub async fn app_config_get_all(&self) -> Result<Value, ReaderCoreError> {
-        let raw = self.config_read_all(APP_CONFIG_SCOPE).await?;
-        let stored = serde_json::from_str::<Value>(&raw).unwrap_or_else(|_| json!({}));
-        let mut merged = default_app_config();
-        if let (Some(base), Some(extra)) = (merged.as_object_mut(), stored.as_object()) {
-            for (key, value) in extra {
-                base.insert(key.clone(), value.clone());
-            }
-        }
-        Ok(merged)
+        Ok(load_app_config(&self.pool).await)
     }
 
     pub async fn app_config_set(&self, key: &str, value: &Value) -> Result<(), ReaderCoreError> {
-        self.config_write_json(APP_CONFIG_SCOPE, key, value).await
+        self.config_write_json(APP_CONFIG_SCOPE, key, value).await?;
+        // The JS HTTP per-host rate floor applies live (no restart prompt in UI);
+        // proxy / TLS / UA changes still take effect on next launch per the panel note.
+        if key == "request_min_delay_ms" {
+            let ms = value
+                .as_u64()
+                .or_else(|| value.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+                .unwrap_or(300);
+            crate::parser::js::set_js_http_min_delay_ms(ms);
+        }
+        Ok(())
     }
 
     pub async fn config_list_scopes(&self) -> Result<Vec<String>, ReaderCoreError> {
@@ -2693,6 +2702,40 @@ fn config_namespace(scope: &str) -> String {
 
 fn frontend_namespace(namespace: &str) -> String {
     format!("{FRONTEND_STORAGE_PREFIX}{namespace}")
+}
+
+/// Load the merged app config (defaults overlaid with persisted values) using
+/// only the pool, so it can run before the full `ReaderCore` is assembled (the
+/// HTTP client is built from it at startup).
+async fn load_app_config(pool: &SqlitePool) -> Value {
+    let mut merged = default_app_config();
+    let namespace = config_namespace(APP_CONFIG_SCOPE);
+    let rows = sqlx::query("SELECT name, json FROM json_documents WHERE namespace=?1")
+        .bind(namespace)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+    if let Some(base) = merged.as_object_mut() {
+        for row in rows {
+            let key: String = row.get("name");
+            let raw: String = row.get("json");
+            let value = serde_json::from_str(&raw).unwrap_or(Value::String(raw));
+            base.insert(key, value);
+        }
+    }
+    merged
+}
+
+/// Read a u64 config value, accepting both JSON numbers and the string-encoded
+/// form the settings UI persists. Falls back to `default` when absent/invalid.
+fn config_u64_value(value: &Value, key: &str, default: u64) -> u64 {
+    value
+        .get(key)
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+        })
+        .unwrap_or(default)
 }
 
 fn default_app_config() -> Value {
