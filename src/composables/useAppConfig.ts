@@ -52,8 +52,6 @@ export interface AppConfig {
   ui_theme: string;
   /** 自定义主题颜色（hex 如 #6366f1，空字符串 = 使用默认品牌色） */
   ui_theme_color: string;
-  /** 是否启用 Aplus 数据追踪 */
-  ui_enable_aplus_tracking: boolean;
   /** 朗读播放期间保持屏幕唤醒（Android） */
   power_keep_awake_on_tts: boolean;
   /** 阅读页保持唤醒策略："off" | "always" | "timeout" */
@@ -172,7 +170,6 @@ const config = ref<AppConfig>({
   ui_layout_mode: "auto",
   ui_theme: "auto",
   ui_theme_color: "",
-  ui_enable_aplus_tracking: true,
   power_keep_awake_on_tts: false,
   power_reader_awake_mode: "off",
   power_reader_awake_timeout_secs: 600,
@@ -309,7 +306,6 @@ export function useAppConfig() {
   const comicCacheEnabled = computed(() => config.value.comic_cache_enabled);
   const uiLayoutMode = computed(() => config.value.ui_layout_mode);
   const uiTheme = computed(() => config.value.ui_theme);
-  const uiEnableAplusTracking = computed(() => config.value.ui_enable_aplus_tracking);
   const videoPlayerType = computed(() => config.value.video_player_type);
   const videoDefaultRate = computed(() => config.value.video_default_rate);
   const videoAutoNext = computed(() => config.value.video_auto_next);
@@ -349,7 +345,6 @@ export function useAppConfig() {
     comicCacheEnabled,
     uiLayoutMode,
     uiTheme,
-    uiEnableAplusTracking,
     videoPlayerType,
     videoDefaultRate,
     videoAutoNext,

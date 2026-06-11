@@ -37,15 +37,15 @@ frontend.lint = passed_zero_warnings
 
 ## NET 任务（网络设置配置接入，审计第二类）
 
-| ID | 状态 | 证据 / 说明 |
-| --- | --- | --- |
-| NET-001 | closed | 主 reqwest 客户端接入 `http_user_agent`/`http_follow_redirects`/`http_connect_timeout_secs`/`http_ignore_tls_errors`/`proxy_*`；`HttpClientConfig`+`from_config`，启动时构建；reqwest 加 `socks` feature；测试 `tests/http_client_config.rs` 7/7。见 `reports/gates/2026-06-11-NET-001-002-network-config/summary.md` |
-| NET-002 | closed | `request_min_delay_ms` 接入 JS 桥（`AtomicU64`+`set_js_http_min_delay_ms`），启动下发 + `app_config_set` 实时更新 |
-| NET-003 | open | `engine_timeout_secs` 未接入（JS 引擎执行超时，需 rquickjs interrupt handler）。实现路径与风险见 gate 报告 |
-| NET-004 | open | `http_doh_server` 未接入（DoH，需自定义 resolver 或新依赖，按 §42/§59.5 评估）。实现前可给 UI 控件加「尚未实现」标注 |
-| CLEAN-001 | open | 移除死键 `ui_enable_aplus_tracking`（审计第四类，无任何消费者，低风险） |
-| CLEAN-002 | open | `SectionDeveloper` 在 unlock capability 不支持时隐藏「解除限制」按钮（审计第三类） |
-| CLEAN-003 | open | `SectionSync` provider 下拉对 stub provider（FTP/百度网盘后端）置灰或隐藏（审计第三类） |
+| ID        | 状态   | 证据 / 说明                                                                                                                                                                                                                                                                                                           |
+| --------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| NET-001   | closed | 主 reqwest 客户端接入 `http_user_agent`/`http_follow_redirects`/`http_connect_timeout_secs`/`http_ignore_tls_errors`/`proxy_*`；`HttpClientConfig`+`from_config`，启动时构建；reqwest 加 `socks` feature；测试 `tests/http_client_config.rs` 7/7。见 `reports/gates/2026-06-11-NET-001-002-network-config/summary.md` |
+| NET-002   | closed | `request_min_delay_ms` 接入 JS 桥（`AtomicU64`+`set_js_http_min_delay_ms`），启动下发 + `app_config_set` 实时更新                                                                                                                                                                                                     |
+| NET-003   | open   | `engine_timeout_secs` 未接入（JS 引擎执行超时，需 rquickjs interrupt handler）。实现路径与风险见 gate 报告                                                                                                                                                                                                            |
+| NET-004   | open   | `http_doh_server` 未接入（DoH，需自定义 resolver 或新依赖，按 §42/§59.5 评估）。实现前可给 UI 控件加「尚未实现」标注                                                                                                                                                                                                  |
+| CLEAN-001 | closed | 已移除死键 `ui_enable_aplus_tracking`（审计第四类）：`useAppConfig.ts`/`appConfig.ts` 类型+默认+computed+return、`facade.rs:default_app_config` 默认全部删除；lint 0/0、build PASS、契约不变                                                                                                                          |
+| CLEAN-002 | open   | `SectionDeveloper` 在 unlock capability 不支持时隐藏「解除限制」按钮（审计第三类）                                                                                                                                                                                                                                    |
+| CLEAN-003 | open   | `SectionSync` provider 下拉对 stub provider（FTP/百度网盘后端）置灰或隐藏（审计第三类）                                                                                                                                                                                                                               |
 
 ⚠️ NET-001 行为变化：`http_ignore_tls_errors` 默认 `true`，接入后默认接受无效 TLS 证书（旧行为为始终校验）。属用户决策项，详见 gate 报告。
 

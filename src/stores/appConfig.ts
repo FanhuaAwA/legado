@@ -31,7 +31,6 @@ const DEFAULT_CONFIG: AppConfig = {
   ui_layout_mode: "auto",
   ui_theme: "auto",
   ui_theme_color: "",
-  ui_enable_aplus_tracking: true,
   power_keep_awake_on_tts: false,
   power_reader_awake_mode: "off",
   power_reader_awake_timeout_secs: 600,
@@ -171,7 +170,6 @@ export const useAppConfigStore = defineStore("appConfig", () => {
   const uiLayoutMode = computed(() => config.value.ui_layout_mode);
   const uiTheme = computed(() => config.value.ui_theme);
   const uiThemeColor = computed(() => config.value.ui_theme_color);
-  const uiEnableAplusTracking = computed(() => config.value.ui_enable_aplus_tracking);
   const videoPlayerType = computed(() => config.value.video_player_type);
   const videoDefaultRate = computed(() => config.value.video_default_rate);
   const videoAutoNext = computed(() => config.value.video_auto_next);
@@ -210,7 +208,6 @@ export const useAppConfigStore = defineStore("appConfig", () => {
     uiLayoutMode,
     uiTheme,
     uiThemeColor,
-    uiEnableAplusTracking,
     videoPlayerType,
     videoDefaultRate,
     videoAutoNext,
