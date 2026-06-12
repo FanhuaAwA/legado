@@ -18,9 +18,9 @@
 
 Gate：fmt PASS、check reader-core+legado-tauri 0w、`cargo test -p reader-core` 全绿（45 lib + repository 集成）、`cargo test -p legado-tauri` ws_router 9/9、lint 0/0、build PASS、契约 162/161/161 onlyBackend=0，**stub 58→52、implemented 103→109**。
 
-注意（留给 FORMB-ACCEPT）：6 命令尚未加入 `commands/router.rs` 的形态 B WS 白名单——form-A（Tauri 直连）已可用，form-B 需在 FORMB-ACCEPT 轮逐个评估加入并补 `ws_router.rs` 测试。
+形态 B 路由（同轮补齐）：6 命令已加入 `commands/router.rs` 的 WS 白名单（纯 HTTP + 文件读写，远端无头服务下语义成立），`tests/ws_router.rs` 加 `repository_commands_are_routed`（check_update 命中 facade 非 NOT_ROUTED、repository_fetch 缺参 INVALID_ARGS），ws_router 10/10。form-A（Tauri）与 form-B（WS）双通道均可用。
 
-后续第一件事：B 段剩 CAP-SYNC WebDAV（独立，不在待用户决策之列）或 C 段 FORMB-ACCEPT。
+后续第一件事：B 段剩 CAP-SYNC WebDAV（独立，不在待用户决策之列，设计见 `docs/ai-task-status.md` 的「CAP-SYNC WebDAV 交接设计」）或 C 段 FORMB-ACCEPT。
 
 ## 记录标题：2026-06-12 番茄 bookInfo 字段验收 + 引擎字段管线两处修复（SRC-FANQIE-LIVE）
 

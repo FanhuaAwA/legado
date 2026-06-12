@@ -101,6 +101,27 @@ async fn capabilities_get_returns_map() {
     assert!(value.get("sync").is_some());
 }
 
+#[tokio::test]
+async fn repository_commands_are_routed() {
+    let (app, _dir) = test_app().await;
+    // booksource_check_update reaches the facade (missing source -> command
+    // error), proving it is on the form-B whitelist rather than NOT_ROUTED.
+    let err = router::dispatch(
+        app.handle(),
+        "booksource_check_update",
+        &json!({"fileName": "does-not-exist.js"}),
+    )
+    .await
+    .expect_err("缺失书源应报命令错误");
+    assert!(!err.starts_with("NOT_ROUTED"), "应已路由，实际: {err}");
+
+    // repository_fetch missing its required `url` -> INVALID_ARGS (routed+parsed).
+    let err = router::dispatch(app.handle(), "repository_fetch", &json!({}))
+        .await
+        .expect_err("缺少 url 应报错");
+    assert!(err.starts_with("INVALID_ARGS"), "实际: {err}");
+}
+
 // ── ws_server::handle_invoke 协议层 ────────────────────────────────────────
 
 #[tokio::test]

@@ -18,6 +18,7 @@ use super::bookshelf::{self, ExportBookDataRequest, PrefetchPayload};
 use super::config;
 use super::source::{self, DeleteItem, HttpProxyRequest};
 use super::system;
+use super::{source_update, sync_misc};
 use crate::state::AppState;
 
 /// 解析 invoke 参数对象到命令参数结构（camelCase 键，缺失必填项即报错，与 Tauri IPC 行为一致）
@@ -281,6 +282,44 @@ pub async fn dispatch<R: tauri::Runtime>(
         "booksource_http_proxy" => {
             let request = parsed!(raw, { request: HttpProxyRequest });
             reply(source::booksource_http_proxy(state, request).await)
+        }
+
+        // ── 书源仓库 / 在线更新（CAP-REPO；远端无头服务下语义成立：纯 HTTP + 文件） ──
+        "booksource_check_update" => {
+            let (file_name, source_dir) = parsed!(raw, { file_name: String, source_dir: Option<String> });
+            reply(source_update::booksource_check_update(state, file_name, source_dir).await)
+        }
+        "booksource_apply_update" => {
+            let (file_name, source_dir) = parsed!(raw, { file_name: String, source_dir: Option<String> });
+            reply(source_update::booksource_apply_update(state, file_name, source_dir).await)
+        }
+        "repository_fetch" => {
+            let url = parsed!(raw, { url: String });
+            reply(sync_misc::repository_fetch(state, url).await)
+        }
+        "repository_preview_source" => {
+            let (download_url, expected_uuid) =
+                parsed!(raw, { download_url: String, expected_uuid: Option<String> });
+            reply(sync_misc::repository_preview_source(state, download_url, expected_uuid).await)
+        }
+        "repository_install" => {
+            let (download_url, file_name, expected_uuid) = parsed!(raw, {
+                download_url: String,
+                file_name: String,
+                expected_uuid: Option<String>,
+            });
+            reply(sync_misc::repository_install(state, download_url, file_name, expected_uuid).await)
+        }
+        "repository_check_source_sync" => {
+            let (file_name, download_url, expected_uuid) = parsed!(raw, {
+                file_name: String,
+                download_url: String,
+                expected_uuid: Option<String>,
+            });
+            reply(
+                sync_misc::repository_check_source_sync(state, file_name, download_url, expected_uuid)
+                    .await,
+            )
         }
 
         // ── bookshelf ──────────────────────────────────────────────────────
