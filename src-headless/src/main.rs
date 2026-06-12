@@ -18,7 +18,9 @@ use axum::extract::WebSocketUpgrade;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use futures::{SinkExt, StreamExt};
-use reader_core::{AddBookPayload, ReaderCore, ReaderCoreOptions};
+use reader_core::{
+    AddBookPayload, CachedChapter, ReaderCore, ReaderCoreOptions, UpdateShelfBookPayload,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -151,17 +153,56 @@ async fn dispatch(state: &AppState, raw: &str) -> Option<String> {
     let args = msg.args.unwrap_or_else(|| json!({}));
     let core = &state.core;
 
+    macro_rules! parse_or_response {
+        ($ty:ty) => {{
+            match serde_json::from_value::<$ty>(args.clone()) {
+                Ok(value) => value,
+                Err(e) => {
+                    let response = json!({
+                        "type": "response",
+                        "id": id,
+                        "error": format!("INVALID_ARGS: {e}"),
+                    });
+                    return Some(response.to_string());
+                }
+            }
+        }};
+    }
+
     let result: Result<Value, String> = match cmd.as_str() {
+        // ── system ──
+        "frontend_log" => Ok(Value::Null),
+        "get_platform" => Ok(Value::String("headless".to_string())),
+
         // ── book source ──
         "booksource_list" => core
             .list_sources()
             .await
             .map(|v| serde_json::to_value(v).unwrap_or_default())
             .map_err(|e| e.to_string()),
+        "booksource_read" => {
+            let file_name = arg_str(&args, "fileName").unwrap_or("");
+            let source_dir = arg_str(&args, "sourceDir");
+            core.read_source(file_name, source_dir)
+                .await
+                .map(Value::String)
+                .map_err(|e| e.to_string())
+        }
+        "booksource_save" => {
+            let file_name = arg_str(&args, "fileName").unwrap_or("");
+            let content = arg_str(&args, "content").unwrap_or("");
+            let source_dir = arg_str(&args, "sourceDir");
+            core.save_js_source(file_name, content, source_dir)
+                .await
+                .map(|()| Value::Null)
+                .map_err(|e| e.to_string())
+        }
         "booksource_search" => {
             let keyword = arg_str(&args, "keyword").unwrap_or("");
             let file_name = arg_str(&args, "fileName").unwrap_or("");
-            core.search(file_name, keyword, 1, None)
+            let page = arg_i32(&args, "page").unwrap_or(1);
+            let source_dir = arg_str(&args, "sourceDir");
+            core.search(file_name, keyword, page, source_dir)
                 .await
                 .map(|v| serde_json::to_value(v).unwrap_or_default())
                 .map_err(|e| e.to_string())
@@ -169,7 +210,8 @@ async fn dispatch(state: &AppState, raw: &str) -> Option<String> {
         "booksource_book_info" => {
             let file_name = arg_str(&args, "fileName").unwrap_or("");
             let book_url = arg_str(&args, "bookUrl").unwrap_or("");
-            core.book_info(file_name, book_url, None)
+            let source_dir = arg_str(&args, "sourceDir");
+            core.book_info(file_name, book_url, source_dir)
                 .await
                 .map(|v| serde_json::to_value(v).unwrap_or_default())
                 .map_err(|e| e.to_string())
@@ -177,7 +219,8 @@ async fn dispatch(state: &AppState, raw: &str) -> Option<String> {
         "booksource_chapter_list" => {
             let file_name = arg_str(&args, "fileName").unwrap_or("");
             let book_url = arg_str(&args, "bookUrl").unwrap_or("");
-            core.chapter_list(file_name, book_url, None)
+            let source_dir = arg_str(&args, "sourceDir");
+            core.chapter_list(file_name, book_url, source_dir)
                 .await
                 .map(|v| serde_json::to_value(v).unwrap_or_default())
                 .map_err(|e| e.to_string())
@@ -185,14 +228,17 @@ async fn dispatch(state: &AppState, raw: &str) -> Option<String> {
         "booksource_chapter_content" => {
             let file_name = arg_str(&args, "fileName").unwrap_or("");
             let chapter_url = arg_str(&args, "chapterUrl").unwrap_or("");
-            core.chapter_content(file_name, chapter_url, None)
+            let source_dir = arg_str(&args, "sourceDir");
+            core.chapter_content(file_name, chapter_url, source_dir)
                 .await
                 .map(|v| serde_json::to_value(v).unwrap_or_default())
                 .map_err(|e| e.to_string())
         }
         "booksource_import_legacy_json_text" => {
             let content = arg_str(&args, "content").unwrap_or("");
-            core.import_legacy_json_text(content, false)
+            let smart_explore_sub_categories =
+                arg_bool(&args, "smartExploreSubCategories").unwrap_or(false);
+            core.import_legacy_json_text(content, smart_explore_sub_categories)
                 .await
                 .map(|v| serde_json::to_value(v).unwrap_or_default())
                 .map_err(|e| e.to_string())
@@ -207,7 +253,8 @@ async fn dispatch(state: &AppState, raw: &str) -> Option<String> {
         "booksource_toggle" => {
             let file_name = arg_str(&args, "fileName").unwrap_or("");
             let enabled = arg_bool(&args, "enabled").unwrap_or(true);
-            core.toggle_source(file_name, enabled, None)
+            let source_dir = arg_str(&args, "sourceDir");
+            core.toggle_source(file_name, enabled, source_dir)
                 .await
                 .map(|()| Value::Null)
                 .map_err(|e| e.to_string())
@@ -215,7 +262,9 @@ async fn dispatch(state: &AppState, raw: &str) -> Option<String> {
         "booksource_explore" => {
             let file_name = arg_str(&args, "fileName").unwrap_or("");
             let category = arg_str(&args, "category").unwrap_or("");
-            core.explore(file_name, 1, category, None)
+            let page = arg_i32(&args, "page").unwrap_or(1);
+            let source_dir = arg_str(&args, "sourceDir");
+            core.explore(file_name, page, category, source_dir)
                 .await
                 .map(|v| serde_json::to_value(v).unwrap_or_default())
                 .map_err(|e| e.to_string())
@@ -235,28 +284,11 @@ async fn dispatch(state: &AppState, raw: &str) -> Option<String> {
             .map(|v| serde_json::to_value(v).unwrap_or_default())
             .map_err(|e| e.to_string()),
         "bookshelf_add" => {
-            let payload: AddPayload = serde_json::from_value(args)
+            let payload = parse_or_response!(BookshelfAddArgs);
+            core.shelf_add(payload.book, &payload.file_name, &payload.source_name)
+                .await
+                .map(|v| serde_json::to_value(v).unwrap_or_default())
                 .map_err(|e| e.to_string())
-                .ok()?;
-            core.shelf_add(
-                AddBookPayload {
-                    name: String::new(),
-                    author: None,
-                    cover_url: None,
-                    intro: None,
-                    kind: None,
-                    group_id: None,
-                    book_url: payload.book_url.clone(),
-                    source_dir: payload.source_dir.clone(),
-                    last_chapter: None,
-                    source_type: None,
-                },
-                &payload.file_name,
-                &payload.book_url,
-            )
-            .await
-            .map(|v| serde_json::to_value(v).unwrap_or_default())
-            .map_err(|e| e.to_string())
         }
         "bookshelf_remove" => {
             let id = arg_str(&args, "id").unwrap_or("");
@@ -280,13 +312,93 @@ async fn dispatch(state: &AppState, raw: &str) -> Option<String> {
                 .map_err(|e| e.to_string())
         }
         "bookshelf_update_progress" => {
-            let id = arg_str(&args, "id").unwrap_or("");
-            let chapter_url = arg_str(&args, "chapterUrl").unwrap_or("");
-            let time = arg_f64(&args, "time").unwrap_or(0.0);
-            let duration = arg_f64(&args, "duration").unwrap_or(0.0);
-            core.shelf_save_episode_progress(&id, &chapter_url, time, duration)
+            let payload = parse_or_response!(UpdateProgressArgs);
+            core.shelf_update_progress(
+                &payload.id,
+                payload.chapter_index,
+                &payload.chapter_url,
+                payload.page_index,
+                payload.scroll_ratio,
+                payload.playback_time,
+                payload.reader_settings,
+            )
+            .await
+            .map(|()| Value::Null)
+            .map_err(|e| e.to_string())
+        }
+        "bookshelf_set_private" => {
+            let payload = parse_or_response!(SetPrivateArgs);
+            core.shelf_set_private(&payload.id, payload.is_private)
                 .await
                 .map(|()| Value::Null)
+                .map_err(|e| e.to_string())
+        }
+        "bookshelf_save_chapters" => {
+            let payload = parse_or_response!(SaveChaptersArgs);
+            core.shelf_save_chapters(&payload.id, payload.chapters)
+                .await
+                .map(|()| Value::Null)
+                .map_err(|e| e.to_string())
+        }
+        "bookshelf_update_book" => {
+            let payload = parse_or_response!(UpdateBookArgs);
+            core.shelf_update_book(payload.book, payload.chapters)
+                .await
+                .map(|v| serde_json::to_value(v).unwrap_or_default())
+                .map_err(|e| e.to_string())
+        }
+        "bookshelf_save_content" => {
+            let payload = parse_or_response!(ContentArgs);
+            core.shelf_save_content(&payload.id, payload.chapter_index, &payload.content)
+                .await
+                .map(|()| Value::Null)
+                .map_err(|e| e.to_string())
+        }
+        "bookshelf_get_content" => {
+            let payload = parse_or_response!(ContentKeyArgs);
+            core.shelf_get_content(&payload.id, payload.chapter_index)
+                .await
+                .map(|v| serde_json::to_value(v).unwrap_or_default())
+                .map_err(|e| e.to_string())
+        }
+        "bookshelf_delete_content" => {
+            let payload = parse_or_response!(ContentKeyArgs);
+            core.shelf_delete_content(&payload.id, payload.chapter_index)
+                .await
+                .map(|()| Value::Null)
+                .map_err(|e| e.to_string())
+        }
+        "bookshelf_get_cached_indices" => {
+            let id = arg_str(&args, "id").unwrap_or("");
+            core.shelf_cached_indices(&id)
+                .await
+                .map(|v| serde_json::to_value(v).unwrap_or_default())
+                .map_err(|e| e.to_string())
+        }
+        "bookshelf_get_episode_progress" => {
+            let id = arg_str(&args, "id").unwrap_or("");
+            core.shelf_get_episode_progress(&id)
+                .await
+                .map(|v| serde_json::to_value(v).unwrap_or_default())
+                .map_err(|e| e.to_string())
+        }
+        "bookshelf_save_episode_progress" => {
+            let payload = parse_or_response!(EpisodeProgressArgs);
+            core.shelf_save_episode_progress(
+                &payload.id,
+                &payload.chapter_url,
+                payload.time,
+                payload.duration,
+            )
+            .await
+            .map(|()| Value::Null)
+            .map_err(|e| e.to_string())
+        }
+        "bookshelf_restore_source_switch" => {
+            let id = arg_str(&args, "id").unwrap_or("");
+            core.shelf_restore_source_switch(&id)
+                .await
+                .map(|v| serde_json::to_value(v).unwrap_or_default())
                 .map_err(|e| e.to_string())
         }
 
@@ -308,26 +420,182 @@ async fn dispatch(state: &AppState, raw: &str) -> Option<String> {
                 .map(|()| Value::Null)
                 .map_err(|e| e.to_string())
         }
+        "config_read_json" => {
+            let scope = arg_str(&args, "scope").unwrap_or("");
+            let key = arg_str(&args, "key").unwrap_or("");
+            core.config_read_json(&scope, &key)
+                .await
+                .map(|value| value.unwrap_or(Value::Null))
+                .map_err(|e| e.to_string())
+        }
+        "config_write_json" => {
+            let scope = arg_str(&args, "scope").unwrap_or("");
+            let key = arg_str(&args, "key").unwrap_or("");
+            let value = args.get("value").cloned().unwrap_or(Value::Null);
+            core.config_write_json(&scope, &key, &value)
+                .await
+                .map(|()| Value::Null)
+                .map_err(|e| e.to_string())
+        }
+        "config_delete_key" => {
+            let scope = arg_str(&args, "scope").unwrap_or("");
+            let key = arg_str(&args, "key").unwrap_or("");
+            core.config_delete_key(&scope, &key)
+                .await
+                .map(|()| Value::Null)
+                .map_err(|e| e.to_string())
+        }
+        "config_read_all" => {
+            let scope = arg_str(&args, "scope").unwrap_or("");
+            core.config_read_all(&scope)
+                .await
+                .map(Value::String)
+                .map_err(|e| e.to_string())
+        }
+        "config_clear" => {
+            let scope = arg_str(&args, "scope").unwrap_or("");
+            core.config_clear(&scope)
+                .await
+                .map(|()| Value::Null)
+                .map_err(|e| e.to_string())
+        }
+        "config_list_scopes" => core
+            .config_list_scopes()
+            .await
+            .map(|v| serde_json::to_value(v).unwrap_or_default())
+            .map_err(|e| e.to_string()),
+        "frontend_storage_list" => {
+            let namespace = arg_str(&args, "namespace").unwrap_or("");
+            core.frontend_storage_list(&namespace)
+                .await
+                .map(|v| serde_json::to_value(v).unwrap_or_default())
+                .map_err(|e| e.to_string())
+        }
+        "frontend_storage_set" => {
+            let namespace = arg_str(&args, "namespace").unwrap_or("");
+            let key = arg_str(&args, "key").unwrap_or("");
+            let value = arg_str(&args, "value").unwrap_or("");
+            core.frontend_storage_set(&namespace, &key, &value)
+                .await
+                .map(|()| Value::Null)
+                .map_err(|e| e.to_string())
+        }
+        "frontend_storage_remove" => {
+            let namespace = arg_str(&args, "namespace").unwrap_or("");
+            let key = arg_str(&args, "key").unwrap_or("");
+            core.frontend_storage_remove(&namespace, &key)
+                .await
+                .map(|()| Value::Null)
+                .map_err(|e| e.to_string())
+        }
+        "frontend_storage_list_namespaces" => core
+            .frontend_storage_list_namespaces()
+            .await
+            .map(|v| serde_json::to_value(v).unwrap_or_default())
+            .map_err(|e| e.to_string()),
+        "app_config_get_all" => core.app_config_get_all().await.map_err(|e| e.to_string()),
+        "app_config_set" => {
+            let key = arg_str(&args, "key").unwrap_or("");
+            let value = args.get("value").cloned().unwrap_or(Value::Null);
+            core.app_config_set(&key, &value)
+                .await
+                .map(|()| Value::Null)
+                .map_err(|e| e.to_string())
+        }
+        "app_config_reset" => {
+            let key = arg_str(&args, "key").unwrap_or("");
+            core.app_config_reset(&key)
+                .await
+                .map(|()| Value::Null)
+                .map_err(|e| e.to_string())
+        }
+        "storage_debug_dump" => core.debug_dump().await.map_err(|e| e.to_string()),
 
         // ── capabilities (transport-agnostic) ──
         "capabilities_get" => Ok(json!({
-            "booksource": {"supported": true},
-            "bookshelf": {"supported": true},
-            "config": {"supported": true},
-            "backup": {"supported": true},
-            "reader": {"supported": true},
-            "explore": {"supported": true},
-            "sync": {"supported": false, "reason": "unsupported_in_headless"},
-            "tts": {"supported": false, "reason": "unsupported_in_headless"},
-            "video": {"supported": false, "reason": "unsupported_in_headless"},
-            "comic": {"supported": false, "reason": "unsupported_in_headless"},
-            "cover": {"supported": false, "reason": "unsupported_in_headless"},
-            "update": {"supported": false, "reason": "unsupported_in_headless"},
-            "browser_probe": {"supported": false, "reason": "unsupported_in_headless"},
-            "plugin_http": {"supported": false, "reason": "unsupported_in_headless"},
+            "syncWebdav": unsupported_capability("WebDAV sync is not exposed by legado-headless yet.", [
+                "sync_set_credentials",
+                "sync_get_credentials",
+                "sync_clear_credentials",
+                "sync_get_status",
+                "sync_now",
+                "sync_test_connection",
+                "sync_list_conflicts",
+                "sync_resolve_conflict",
+                "sync_notify_lifecycle",
+                "sync_client_state_set",
+                "sync_report_reader_session",
+                "sync_v2_sync_reading_progress",
+            ]),
+            "sync": unsupported_capability("Baidu Netdisk and FTP sync providers are not implemented in this build.", [
+                "sync_baidu_start_auth",
+                "sync_baidu_poll_token",
+                "sync_baidu_token_status",
+                "sync_baidu_revoke_auth",
+            ]),
+            "tts": unsupported_capability("Native TTS backend is not available in headless mode.", [
+                "tts_get_voices",
+                "tts_is_initialized",
+                "tts_is_speaking",
+                "tts_speak",
+                "tts_stop",
+                "tts_preview_voice",
+            ]),
+            "videoProxy": unsupported_capability("Local video proxy is not available in headless mode.", [
+                "start_video_proxy",
+                "stop_video_proxy",
+            ]),
+            "browserProbe": unsupported_capability("Headless browser probe is not implemented in this build.", [
+                "browser_probe_create",
+                "browser_probe_close",
+                "browser_probe_close_all",
+                "browser_probe_hide",
+                "browser_probe_show",
+                "browser_probe_navigate",
+                "browser_probe_eval",
+                "browser_probe_run",
+                "browser_probe_get_cookies",
+                "browser_probe_set_cookie",
+                "browser_probe_clear_data",
+                "browser_probe_set_user_agent",
+            ]),
+            "comicCache": unsupported_capability("Comic page cache is not implemented in this build.", [
+                "comic_cache_clear",
+                "comic_cache_clear_chapter",
+                "comic_cache_size",
+                "comic_download_images",
+                "comic_get_cached_page",
+                "comic_get_page_sizes",
+            ]),
+            "coverCache": unsupported_capability("Cover disk cache is not implemented in this build.", [
+                "cover_cache_clear",
+                "cover_cache_size",
+                "cover_resolve_cache",
+            ]),
+            "repository": unsupported_capability("Source repository commands are not exposed by legado-headless yet.", [
+                "repository_fetch",
+                "repository_install",
+                "repository_preview_source",
+                "repository_check_source_sync",
+                "booksource_check_update",
+                "booksource_apply_update",
+            ]),
+            "unlock": unsupported_capability("Secure-mode unlock challenges are not implemented in this build.", [
+                "issue_full_mode_challenge",
+                "verify_full_mode_challenge",
+                "issue_scoped_unlock_challenge",
+                "verify_scoped_unlock_challenge",
+            ]),
+            "aiProxy": unsupported_capability("AI HTTP proxy is not implemented in this build.", [
+                "ai_http_proxy_url",
+            ]),
+            "pluginHttp": unsupported_capability("Frontend plugin HTTP bridge is not implemented in this build.", [
+                "frontend_plugin_http_request",
+            ]),
+            "exploreCache": unsupported_capability("Explore result cache is not implemented in this build.", [
+                "explore_clear_cache",
+            ]),
         })),
-
-        "get_platform" => Ok(Value::String("headless".to_string())),
 
         // ── explicitly blocked ──
         "js_eval" => Err("security_blocked: js_eval is not available via WebSocket".to_string()),
@@ -346,20 +614,87 @@ fn arg_str<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
     args.get(key).and_then(|v| v.as_str())
 }
 
-fn arg_f64(args: &Value, key: &str) -> Option<f64> {
-    args.get(key).and_then(|v| v.as_f64())
+fn arg_i32(args: &Value, key: &str) -> Option<i32> {
+    args.get(key)
+        .and_then(|v| v.as_i64())
+        .and_then(|v| i32::try_from(v).ok())
 }
 
 fn arg_bool(args: &Value, key: &str) -> Option<bool> {
     args.get(key).and_then(|v| v.as_bool())
 }
 
+fn unsupported_capability<const N: usize>(reason: &str, commands: [&str; N]) -> Value {
+    json!({
+        "supported": false,
+        "reason": reason,
+        "commands": commands.as_slice(),
+    })
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct AddPayload {
-    book_url: String,
+struct BookshelfAddArgs {
+    book: AddBookPayload,
     file_name: String,
-    source_dir: Option<String>,
+    source_name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateProgressArgs {
+    id: String,
+    chapter_index: i32,
+    chapter_url: String,
+    page_index: Option<i32>,
+    scroll_ratio: Option<f64>,
+    playback_time: Option<f64>,
+    reader_settings: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetPrivateArgs {
+    id: String,
+    is_private: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveChaptersArgs {
+    id: String,
+    chapters: Vec<CachedChapter>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateBookArgs {
+    book: UpdateShelfBookPayload,
+    chapters: Option<Vec<CachedChapter>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ContentArgs {
+    id: String,
+    chapter_index: i32,
+    content: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ContentKeyArgs {
+    id: String,
+    chapter_index: i32,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EpisodeProgressArgs {
+    id: String,
+    chapter_url: String,
+    time: f64,
+    duration: f64,
 }
 
 fn parse_env_or_arg(env_name: &str, arg_name: &str, default: u16) -> u16 {
@@ -374,4 +709,218 @@ fn parse_env_or_arg(env_name: &str, arg_name: &str, default: u16) -> u16 {
                 .and_then(|w| w[1].parse().ok())
         })
         .unwrap_or(default)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    async fn test_state() -> (AppState, PathBuf) {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "legado-headless-formb-test-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let core = ReaderCore::new(ReaderCoreOptions::new(&dir)).await.unwrap();
+        (
+            AppState {
+                core: Arc::new(core),
+                token: None,
+            },
+            dir,
+        )
+    }
+
+    async fn invoke(state: &AppState, cmd: &str, args: Value) -> Value {
+        let raw = json!({
+            "type": "invoke",
+            "id": format!("test-{cmd}"),
+            "cmd": cmd,
+            "args": args,
+        })
+        .to_string();
+        let response = dispatch(state, &raw).await.expect("response");
+        let value: Value = serde_json::from_str(&response).expect("response json");
+        if let Some(error) = value.get("error") {
+            panic!("{cmd} failed: {error}");
+        }
+        value.get("data").cloned().unwrap_or(Value::Null)
+    }
+
+    #[tokio::test]
+    async fn formb_accept_headless_dispatch_chain() {
+        let (state, dir) = test_state().await;
+        let source = r#"// @name        FORMB Fixture
+// @url         fixture://formb
+// @enabled     true
+
+async function search(key, page) {
+  return [{
+    name: '形态B验收书',
+    author: 'Codex',
+    bookUrl: 'fixture://formb/book/1',
+    intro: '用于浏览器形态B闭环验收',
+    kind: '验收',
+    coverUrl: '',
+    tocUrl: 'fixture://formb/book/1/toc'
+  }];
+}
+
+async function bookInfo(bookUrl) {
+  return {
+    name: '形态B验收书',
+    author: 'Codex',
+    bookUrl,
+    intro: '用于浏览器形态B闭环验收',
+    kind: '验收',
+    coverUrl: '',
+    tocUrl: 'fixture://formb/book/1/toc',
+    lastChapter: '第二章 继续前进'
+  };
+}
+
+async function chapterList(tocUrl) {
+  return [
+    { name: '第一章 浏览器闭环', url: 'fixture://formb/chapter/1' },
+    { name: '第二章 继续前进', url: 'fixture://formb/chapter/2' }
+  ];
+}
+
+async function chapterContent(chapterUrl) {
+  if (chapterUrl.endsWith('/2')) return '第二章正文：进度保存后仍可读取。';
+  return '第一章正文：纯浏览器前端通过 WebSocket 调用 headless 后端读取。';
+}
+"#;
+        let file_name = "formb-fixture.js";
+
+        invoke(
+            &state,
+            "booksource_save",
+            json!({"fileName": file_name, "content": source, "sourceDir": null}),
+        )
+        .await;
+        let sources = invoke(&state, "booksource_list", json!({})).await;
+        assert_eq!(sources.as_array().unwrap().len(), 1);
+
+        let search = invoke(
+            &state,
+            "booksource_search",
+            json!({"fileName": file_name, "keyword": "形态B", "page": 1, "sourceDir": null}),
+        )
+        .await;
+        let book = search.as_array().unwrap().first().unwrap();
+        assert_eq!(book["name"], "形态B验收书");
+
+        let detail = invoke(
+            &state,
+            "booksource_book_info",
+            json!({"fileName": file_name, "bookUrl": book["bookUrl"], "sourceDir": null}),
+        )
+        .await;
+        assert_eq!(detail["tocUrl"], "fixture://formb/book/1/toc");
+
+        let shelf = invoke(
+            &state,
+            "bookshelf_add",
+            json!({
+                "book": {
+                    "name": detail["name"],
+                    "author": detail["author"],
+                    "coverUrl": detail["coverUrl"],
+                    "intro": detail["intro"],
+                    "kind": detail["kind"],
+                    "groupId": null,
+                    "bookUrl": detail["bookUrl"],
+                    "sourceDir": null,
+                    "lastChapter": detail["lastChapter"],
+                    "sourceType": "novel"
+                },
+                "fileName": file_name,
+                "sourceName": "FORMB Fixture"
+            }),
+        )
+        .await;
+        let shelf_id = shelf["id"].as_str().unwrap();
+
+        let raw_chapters = invoke(
+            &state,
+            "booksource_chapter_list",
+            json!({"fileName": file_name, "bookUrl": detail["tocUrl"], "taskId": null, "sourceDir": null}),
+        )
+        .await;
+        let cached_chapters: Vec<Value> = raw_chapters
+            .as_array()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .map(|(index, ch)| {
+                json!({
+                    "index": index,
+                    "name": ch["name"],
+                    "url": ch["url"],
+                    "group": ch.get("group").cloned().unwrap_or(Value::Null),
+                    "vip": ch.get("vip").or_else(|| ch.get("isVip")).cloned().unwrap_or(Value::Null),
+                    "price": ch.get("price").cloned().unwrap_or(Value::Null),
+                    "currency": ch.get("currency").cloned().unwrap_or(Value::Null),
+                })
+            })
+            .collect();
+        invoke(
+            &state,
+            "bookshelf_save_chapters",
+            json!({"id": shelf_id, "chapters": cached_chapters}),
+        )
+        .await;
+        let saved = invoke(&state, "bookshelf_get_chapters", json!({"id": shelf_id})).await;
+        assert_eq!(saved.as_array().unwrap().len(), 2);
+
+        let content = invoke(
+            &state,
+            "booksource_chapter_content",
+            json!({"fileName": file_name, "chapterUrl": "fixture://formb/chapter/1", "sourceDir": null}),
+        )
+        .await;
+        assert!(content.as_str().unwrap().contains("第一章正文"));
+        invoke(
+            &state,
+            "bookshelf_save_content",
+            json!({"id": shelf_id, "chapterIndex": 0, "content": content}),
+        )
+        .await;
+        let cached = invoke(
+            &state,
+            "bookshelf_get_content",
+            json!({"id": shelf_id, "chapterIndex": 0}),
+        )
+        .await;
+        assert!(cached.as_str().unwrap().contains("WebSocket"));
+
+        invoke(
+            &state,
+            "bookshelf_update_progress",
+            json!({
+                "id": shelf_id,
+                "chapterIndex": 1,
+                "chapterUrl": "fixture://formb/chapter/2",
+                "pageIndex": 3,
+                "scrollRatio": 0.42,
+                "playbackTime": null,
+                "readerSettings": "{\"mode\":\"formb-test\"}"
+            }),
+        )
+        .await;
+        let after = invoke(&state, "bookshelf_get", json!({"id": shelf_id})).await;
+        assert_eq!(after["readChapterIndex"], 1);
+        assert_eq!(after["readChapterUrl"], "fixture://formb/chapter/2");
+        assert_eq!(after["readPageIndex"], 3);
+        assert_eq!(after["readScrollRatio"], 0.42);
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

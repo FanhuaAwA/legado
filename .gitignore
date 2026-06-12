@@ -11,6 +11,7 @@ lerna-debug.log*
 /tmp/*
 !/tmp/.gitkeep
 /repository/
+/reader-data/
 
 # 编辑器目录和文件
 .DS_Store

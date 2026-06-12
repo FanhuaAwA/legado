@@ -1,5 +1,54 @@
 # AI Iteration Log
 
+## 记录标题：2026-06-12 FORMB-ACCEPT headless loopback 闭环验收
+
+任务 ID：FORMB-ACCEPT（路线图 C 段；纯浏览器前端连接独立 Rust 后端）
+
+本轮目标：按 `docs/frontend-backend-separation.md` 第 7 节推进形态 B 验收，先在本机用独立 `legado-headless` 托管 `dist` 和 `/ws`，验证纯浏览器前端能走完整「书源列表 → 搜索 → 加书架 → 目录 → 正文 → 进度保存」闭环。
+
+实测发现并修复：
+
+- `src-headless/src/main.rs` 的 headless WS 分发层长期落后于 Tauri `router.rs`：浏览器启动即撞 `NOT_ROUTED: app_config_get_all`，`frontend_storage_list_namespaces` 和 `frontend_log` 也缺路由。
+- `bookshelf_add` 在 headless 中解析的是旧的 `{bookUrl,fileName,sourceDir}`，与前端真实 `{book,fileName,sourceName}` 不一致。
+- `bookshelf_update_progress` 被误接到 `shelf_save_episode_progress`，无法保存小说阅读进度。
+- 章节缓存/正文缓存/书架更新等阅读闭环常用命令在 headless 中缺失。
+
+实现：
+
+- `src-headless/src/main.rs`：补齐 `app_config_get_all/app_config_set/app_config_reset`、`frontend_storage_*`、`frontend_log`、`booksource_save/read`、`bookshelf_add/update_progress/save_chapters/get_chapters/update_book/save_content/get_content/delete_content/get_cached_indices/episode_progress/restore_source_switch` 等命令转发，全部走 `ReaderCore` 真实方法。
+- headless `capabilities_get` 改为返回前端真实使用的 capability key（`syncWebdav`、`videoProxy`、`browserProbe`、`comicCache` 等），避免浏览器模式 fallback 误判能力。
+- 新增 `formb_accept_headless_dispatch_chain` 单测：通过同一 WS message dispatch 语义保存离线 JS fixture 书源，跑通列表、搜索、详情、加书架、目录保存、正文读取/缓存、进度保存和回读。
+- `docs/frontend-backend-separation.md`、`docs/ai-task-status.md`：登记 FORMB 本机 headless loopback 已通过，同时明确严格「另一台机器/LAN」实测仍需外部环境。
+
+Playwright 实测：
+
+- 启动：`legado-headless --port 7788 --bind 127.0.0.1 --dist dist --data <temp>`。
+- 浏览器打开：`http://127.0.0.1:7788/?ws=ws://127.0.0.1:7788/ws`。
+- 页面启动：0 errors / 0 warnings。
+- 浏览器环境内通过 WS 协议跑通离线 fixture 链路，关键结果：`sourceName=FORMB Fixture`，`searchName=形态B验收书`，目录 2 章，正文缓存命中 `cachedMatches=true`，进度回读 `readChapterIndex=1`、`readChapterUrl=fixture://formb/chapter/2`、`readPageIndex=3`、`readScrollRatio=0.42`。
+
+Gate：
+
+- `cargo fmt --all`：PASS。
+- `pnpm exec oxfmt --check .`：PASS。
+- `pnpm lint`：PASS（0 warnings / 0 errors）。
+- `pnpm build`：PASS（仅既有 Vite/Rolldown 警告：vconsole eval、chunk size、动态导入提示）。
+- `cargo check -p reader-core`：PASS。
+- `cargo check -p legado-tauri`：PASS。
+- `cargo check -p legado-headless`：PASS。
+- `cargo test -p reader-core`：PASS。
+- `cargo test -p legado-tauri`：PASS（1 unit + ws_router 11/11；仅 MSVC linker stdout warning）。
+- `cargo test -p legado-headless formb_accept_headless_dispatch_chain -- --nocapture`：PASS（1/1）。
+- `node scripts/ci/check-command-contract.mjs --json`：PASS，162/161/161，onlyFrontend=`js_eval`，onlyBackend=0，`frontend_unsupported_stub_count=40`，`frontend_implemented_count=121`。
+- Playwright browser startup：PASS（0 warnings / 0 errors）。
+- Playwright browser WS business chain：PASS。
+
+Gate 报告：`reports/gates/2026-06-12-FORMB-ACCEPT-headless-loopback/summary.md`。
+
+边界：本轮证明的是本机纯浏览器 + 独立 headless 后端 + WebSocket 闭环；严格跨物理机器/LAN 验证仍未跑，不能把它写成「另一台机器实测已完成」。
+
+后续第一件事：若有第二台设备或可访问 LAN，做 `FORMB-LAN-VERIFY`（headless `--bind 0.0.0.0 --token <token>` + 浏览器 `?ws=ws://<host>:<port>/ws?token=<token>` 复跑同一闭环）；若当前环境无外部设备，则转 B 段剩余能力本体 `CAP-BROWSER`（真实 session/导航/JS/cookie/UA）。
+
 ## 记录标题：2026-06-12 CAP-SYNC WebDAV 同步真实化
 
 任务 ID：CAP-SYNC（路线图 B 段；按用户指令优先推进 WebDAV，百度网盘/FTP 按已确认决策继续保留隐藏）

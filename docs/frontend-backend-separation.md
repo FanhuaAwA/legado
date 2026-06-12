@@ -30,11 +30,13 @@
 - 统一调用入口已完成：`useInvoke.ts`（invokeWithTimeout）、`useEventBus.ts`（listen/emit）、`useFileSrc.ts`（本地文件 URL 转换）、`useEnv.ts`（环境检测）。
 - `crates/reader-core` 不依赖 Tauri，可被任意服务端二进制直接链接。
 - 能力声明命令 `capabilities_get` 已注册，可作为按传输方式声明能力的载体。
+- **2026-06-12 注记：FORMB-ACCEPT 本机 headless loopback 已通过。**`src-headless` 独立后端托管 `dist` + `/ws`，浏览器打开 `http://127.0.0.1:7788/?ws=ws://127.0.0.1:7788/ws` 后启动控制台 0 error / 0 warning，并用同一 WS 协议跑通「书源保存/列表 → 搜索 → 详情 → 加书架 → 目录 → 正文 → 进度保存」。证据见 `reports/gates/2026-06-12-FORMB-ACCEPT-headless-loopback/summary.md`；自动回归见 `src-headless/src/main.rs::tests::formb_accept_headless_dispatch_chain`。
 
 缺失（详见审计文档 R-P2-008）：
 
 - ~~`src-tauri` 没有任何 WebSocket 命令服务端~~ **2026-06-10 注记：阶段 1+2 试点已落地**——`src-tauri/src/commands/router.rs`（单一分发入口 `cmd + args(JSON) → result(JSON)`，复用原 `#[tauri::command]` 函数零复制，match 即白名单，62 命令入围）+ `src-tauri/src/ws_server.rs`（应用内 WS 服务端，127.0.0.1:7688 `/ws`，事件转发）。集成测试与真实 exe 实连冒烟证据：`reports/gates/2026-06-10-2051-R-P2-008-ws-pilot/summary.md`。
-- 仍缺失：浏览器端业务闭环验收（第 7 节标准）、LAN 暴露开关与鉴权 token（阶段 3）、`capabilities_get` 按 transport 维度声明、独立无头二进制（阶段 4）。`web_server_start`（静态文件服务）与 WS 服务端目前是两个独立端口路径，未来无头形态应合并为一个服务。
+- 仍缺失：严格跨物理机器/LAN 的形态 B 实测（第 7 节「另一台机器」字面要求）。本机 loopback 已验证业务闭环；如需完成跨机实证，使用 `src-headless` 的 `--bind 0.0.0.0 --token <token>` 启动并从第二台设备以 `?ws=ws://<host>:<port>/ws?token=<token>` 连接复跑同一闭环。
+- `src-tauri` 应用内 WS 服务端仍默认只绑定 `127.0.0.1:7688`；LAN 暴露应优先走 `src-headless`，桌面壳内对外暴露仍需单独立项。
 
 ## 3. WS 协议契约
 
@@ -76,11 +78,13 @@
 1. **命令路由收口**：把 `#[tauri::command]` 函数的业务体收口为可复用的命令分发入口（`cmd + args(JSON) → result(JSON)`），Tauri IPC 与 WS 共用同一函数体，禁止复制两套命令体。——**2026-06-10 试点完成**（`commands/router.rs`，扩白名单时在 match 中追加并补集成测试）。
 2. **应用内 WS 服务端**：在既有 tokio 运行时上实现 `/ws`，按第 3 节协议分发命令与事件推送（事件复用现有事件名）。——**2026-06-10 试点完成**（`ws_server.rs`；注意：后端新增事件名必须同步追加到 `FORWARDED_EVENTS`，Tauri v2 无全量事件监听 API）。
 3. **安全边界**：鉴权 token、绑定地址控制（默认 127.0.0.1，LAN 暴露需显式开启）、命令白名单、按 transport 的能力声明。——白名单已就位（router match）、默认仅绑定 127.0.0.1；token 与 LAN 开关未做。
-4. **独立无头服务端二进制**（单独立项）：axum + 静态 dist 托管 + WS 命令服务，直接链接 `reader-core`，部署到服务器即形态 B。——未开始；当前 router 经 AppHandle 取 state，无头形态需改为直接持有 `AppState`（收口第二步）。
+4. **独立无头服务端二进制**：`src-headless` 已存在，提供 axum 静态 dist 托管 + `/ws` 命令服务，直接链接 `reader-core`。2026-06-12 已补齐浏览器启动、前端存储、书源、书架、章节、正文、进度保存所需命令并完成本机 headless loopback 闭环。剩余为跨物理机器/LAN 实测与更大命令域持续补齐。
 
 ## 7. 验收标准
 
 形态 B 视为达成，当且仅当：纯浏览器前端（非 Tauri 壳）通过 `?ws=` 连接部署在另一台机器上的后端，能完成「书源列表 → 搜索 → 加入书架 → 章节目录 → 正文阅读 → 进度保存」闭环，且桌面独占功能的入口被能力门禁正确隐藏，全程无未捕获报错。
+
+2026-06-12 本机 headless loopback 验收已通过：纯浏览器连接独立 `legado-headless` 后端，业务闭环和页面启动均通过；严格「另一台机器」实测仍需外部设备或 LAN 环境补跑。
 
 ## 8. 相关文件索引
 
