@@ -10,10 +10,12 @@ const emit = defineEmits<{
 
 <template>
   <n-modal
-    :show="show"
+    v-if="show"
+    :show="true"
     :mask-closable="false"
     :auto-focus="false"
     :trap-focus="false"
+    display-directive="if"
     transform-origin="center"
     @update:show="emit('update:show', $event)"
   >

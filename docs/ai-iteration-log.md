@@ -1801,21 +1801,25 @@ UI 验证：
 本轮目标：修复桌面浏览器/窄视口下仍按桌面 shell 渲染的问题，避免 390px 宽度时左侧栏继续占用 200px，导致书源管理等页面内容被挤压、排版错乱。
 
 范围声明：
+
 - 允许修改：前端环境/布局模式判定、状态文档、门禁报告。
 - 不触碰：书源业务逻辑、后端命令、用户数据、第三方书源、构建产物。
 
 关键修改：
+
 - `src/composables/useEnv.ts` 新增 `(max-width: 640px)` 媒体查询，将窄视口纳入自动移动布局判定。
 - 保持用户显式 `layoutMode === "desktop"` / `layoutMode === "mobile"` 覆盖优先级不变，避免破坏设置页里的布局模式选择。
 - 媒体查询监听使用 `addEventListener("change")`，并保留 `addListener` fallback，覆盖旧 WebView。
 
 UI 实测：
+
 - `legado-headless --port 7788 --bind 127.0.0.1 --dist dist` + in-app Browser。
 - 390x800 首页：`app-layout app-layout--mobile`，主内容 `390x744`，侧栏不存在，底部导航可见，横向溢出 `0`。
 - 1000x800 首页：`app-layout`，侧栏可见，主内容 `800x716`，底部导航不存在，横向溢出 `0`。
 - 390x800 书源管理：底部导航 `tab "书源管理"` 可点击；可见 `h1` 为 `书源管理`，`80x32`，`writing-mode: horizontal-tb`，`white-space: nowrap`；顶部按钮无重叠，横向溢出 `0`。
 
 验证命令：
+
 ```powershell
 cmd /c node_modules\.bin\vue-tsc.cmd -p tsconfig.app.json --noEmit
 cmd /c node_modules\.bin\oxfmt.cmd --check src\composables\useEnv.ts
@@ -1829,14 +1833,61 @@ git diff --check
 ```
 
 验证结果：
+
 - 全部通过。
 - `pnpm build` 保留既有 Vite warning：`vconsole` direct eval、大 chunk、`useTransport` ineffective dynamic import。
 - `git diff --check` 仅提示 Windows 工作区 LF/CRLF 转换，不存在 trailing whitespace 错误。
 
 清理：
+
 - 浏览器 viewport 已 reset，临时 tab 已关闭。
 - 7788 headless 服务已停止。
 
 下一轮候选：
+
 - 继续 UI 体系化回归：设置页颜色/阅读器设置/书源管理按钮行在 390px、768px、1000px 的布局一致性。
 - 前端性能候选：拆分 `vendor-vue-naive` / `useOverlay` / `BookSourceView` 大 chunk，收敛 `useTransport` 无效动态导入。
+
+## 2026-06-13 UI-READER-SETTINGS-LAYOUT
+
+任务 ID：`UI-2026-06-13-READER-SETTINGS-LAYOUT`
+
+本轮目标：继续收口用户反馈的 UI 排版错乱问题，重点验证主设置页、阅读器菜单和阅读器设置面板在 390px 窄屏下的布局稳定性，并修复由透明阅读器层和菜单过渡残留导致的按钮不可点击问题。
+
+范围声明：
+
+- 允许修改：阅读器全屏 modal 生命周期、阅读器菜单层挂载策略、阅读器顶部/底部菜单基准定位、阅读器设置面板和子设置页 CSS、主设置页移动端入口圆角、状态文档和门禁报告。
+- 不触碰：书源解析业务逻辑、后端命令契约、用户数据目录、第三方书源内容、Windows/Android 产物。
+
+关键修复：
+
+- `ReaderModal.vue` 在 `show=false` 时直接卸载 `n-modal`，打开时用 `:show="true"` 和 `display-directive="if"`，避免透明但仍拦截点击的阅读器层残留。
+- `ReaderMenuLayer.vue` 移除顶部栏、底部栏、遮罩和加入书架按钮外层 `Transition`，避免后台/自动化环境里 CSS transition 停在初始位移，导致阅读器菜单按钮停在视口外。
+- `ReaderTopBar.vue` / `ReaderBottomBar.vue` 增加稳定态 `transform: translateY(0)`，保证菜单挂载后基准位置明确。
+- `ReaderSettingsPanel.vue` 收紧窄屏布局：设置行允许换行，字体/更多按钮不挤压，颜色/背景/皮肤列表在窄屏下独占行，选中色块不再 scale，翻页按钮组给出可读最小宽度。
+- `ReaderSettingsSpacingPage.vue`、`ReaderSettingsPagePaddingPage.vue`、`ReaderSettingsTypographyPage.vue`、`ReaderSettingsMorePage.vue` 补齐窄屏滑块、药丸组和标签布局约束。
+- `SettingsView.vue` 将移动端设置入口圆角从 18px 收敛到 `--radius-1`（8px）。
+
+UI 验证：
+
+- 390x800 主设置页：`app-layout--mobile`，`.sv-mobile-list__item` 计算圆角 `8px`，横向溢出 `0`。
+- 390x800 阅读器打开链路：刷新后 `readerModalCount=0`；点击测试书后 `readerModalCount=1`，`.reader-modal` `opacity=1`、`pointer-events=auto`，横向溢出 `0`。
+- 390x800 阅读器菜单：顶部栏 `y=0`，底栏 `y=682`、`bottom=800`，设置按钮中心 `x=329,y=761`，横向溢出 `0`。
+- 390x800 阅读器设置面板：面板宽 `358px`，横向溢出 `0`；翻页按钮无文本裁切；活动色块/背景块 `transform=none`；`textOverflow=[]`。
+- headless 测试环境仍有既有 `NOT_ROUTED: extension_get_dir` 警告，这是 headless 白名单未路由扩展目录命令导致，不影响本轮 UI 链路验证。
+
+门禁结果：
+
+- `cmd /c node_modules\.bin\oxfmt.cmd --check .`：PASS（首次发现 `docs/ai-iteration-log.md` 格式问题，已用项目格式器修正后复跑通过）。
+- `cmd /c pnpm.cmd lint`：PASS。
+- `cmd /c pnpm.cmd build`：PASS；保留既有 Vite warning：`vconsole` direct eval、大 chunk、`useTransport` ineffective dynamic import、plugin timing 提示。
+- `cargo check -p reader-core`：PASS。
+- `cargo check -p legado-tauri`：PASS。
+- `cargo test -p reader-core`：PASS（49 passed / 3 ignored 等全部 reader-core 测试组通过）。
+- `node scripts\ci\check-command-contract.mjs --json`：PASS，frontendTotal=162，registeredTotal=161，bothCount=161，onlyBackend=0，frontend unsupported stub=39。
+- `git diff --check`：PASS。
+
+下一轮候选：
+
+- 继续 UI 体系化回归：书源管理批量导入弹窗、AI 写书源、段评抽屉、设置子页在 390px/768px/1000px 下的布局一致性。
+- 前端性能：拆分 `vendor-vue-naive` / `useOverlay` / `BookSourceView` 大 chunk，处理 `useTransport` 无效动态导入。

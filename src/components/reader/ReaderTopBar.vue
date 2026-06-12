@@ -338,6 +338,7 @@ useOverlay(() => menuOpen.value, closeMenu);
   background: var(--reader-top-bar-bg, rgba(0, 0, 0, 0.65));
   backdrop-filter: var(--reader-top-bar-backdrop-filter, blur(12px));
   color: var(--reader-top-bar-color, #e0e0e0);
+  transform: translateY(0);
 }
 
 .reader-top-bar::before {

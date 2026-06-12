@@ -176,6 +176,7 @@ const emit = defineEmits<{
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
 }
 
 .reader-settings__label {
@@ -192,6 +193,11 @@ const emit = defineEmits<{
   color: rgba(255, 255, 255, 0.5);
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.reader-settings__row :deep(.n-slider) {
+  flex: 1;
+  min-width: 84px;
 }
 
 .reader-settings__pill-group {
@@ -218,6 +224,8 @@ const emit = defineEmits<{
     background 0.15s,
     color 0.15s;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .reader-settings__pill:hover {
@@ -258,5 +266,19 @@ const emit = defineEmits<{
 
 .reader-settings__color-swatch:hover span {
   border-color: rgba(255, 255, 255, 0.5);
+}
+
+@media (max-width: 420px) {
+  .reader-settings__row {
+    gap: 8px;
+  }
+
+  .reader-settings__label {
+    width: 40px;
+  }
+
+  .reader-settings__pill {
+    padding: 6px 8px;
+  }
 }
 </style>

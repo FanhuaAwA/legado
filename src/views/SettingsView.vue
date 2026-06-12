@@ -294,7 +294,7 @@ watch(activeView, (view) => {
   min-height: 56px;
   padding: 0 var(--space-4);
   border: 1px solid color-mix(in srgb, var(--color-border) 82%, transparent);
-  border-radius: 18px;
+  border-radius: var(--radius-1);
   background: color-mix(in srgb, var(--color-surface) 92%, transparent);
   color: var(--color-text);
   font-size: var(--fs-15);

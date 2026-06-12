@@ -170,6 +170,7 @@ function toggleDayNight() {
   display: flex;
   flex-direction: var(--reader-bottom-direction, column);
   gap: var(--reader-bottom-gap, 12px);
+  transform: translateY(0);
 }
 
 .reader-bottom-bar__progress {

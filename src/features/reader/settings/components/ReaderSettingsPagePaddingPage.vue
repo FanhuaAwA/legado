@@ -66,3 +66,45 @@ const emit = defineEmits<{
     <span class="reader-settings__val" style="width: 40px">{{ settings.pagePadding.left }}px</span>
   </div>
 </template>
+
+<style scoped>
+.reader-settings__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.reader-settings__label {
+  flex-shrink: 0;
+  width: 52px;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 13px;
+  line-height: 1.35;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.reader-settings__row :deep(.n-slider) {
+  flex: 1;
+  min-width: 84px;
+}
+
+.reader-settings__val {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.5);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 420px) {
+  .reader-settings__row {
+    gap: 8px;
+  }
+
+  .reader-settings__label {
+    width: 48px;
+  }
+}
+</style>

@@ -507,6 +507,8 @@ defineExpose({ isNight, toggleDayNight, hideTapZoneDebugPreview });
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .reader-settings__switch-row {
@@ -519,6 +521,7 @@ defineExpose({ isNight, toggleDayNight, hideTapZoneDebugPreview });
 
 .reader-settings__flip-mode-block {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -582,6 +585,8 @@ defineExpose({ isNight, toggleDayNight, hideTapZoneDebugPreview });
   width: 36px;
   font-size: 0.8125rem;
   opacity: 0.7;
+  line-height: 1.35;
+  white-space: nowrap;
 }
 
 .reader-settings__val {
@@ -595,6 +600,7 @@ defineExpose({ isNight, toggleDayNight, hideTapZoneDebugPreview });
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
 }
 
 /* ---- 小号药丸（字号 A-/A+） ---- */
@@ -615,6 +621,7 @@ defineExpose({ isNight, toggleDayNight, hideTapZoneDebugPreview });
 .reader-settings__pill {
   height: 36px;
   min-width: 52px;
+  max-width: 100%;
   padding: 0 14px;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.15);
@@ -630,6 +637,8 @@ defineExpose({ isNight, toggleDayNight, hideTapZoneDebugPreview });
     background 0.15s,
     border-color 0.15s;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .reader-settings__pill:hover {
@@ -643,7 +652,8 @@ defineExpose({ isNight, toggleDayNight, hideTapZoneDebugPreview });
 }
 
 .reader-settings__pill--nav {
-  margin-left: auto;
+  flex: 1 1 120px;
+  min-width: 0;
 }
 
 /* ---- 药丸组（翻页等） ---- */
@@ -655,8 +665,8 @@ defineExpose({ isNight, toggleDayNight, hideTapZoneDebugPreview });
 }
 
 .reader-settings__pill-group .reader-settings__pill {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 56px;
+  min-width: 56px;
   padding: 0 6px;
 }
 
@@ -665,7 +675,7 @@ defineExpose({ isNight, toggleDayNight, hideTapZoneDebugPreview });
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
-  flex: 1;
+  flex: 1 1 180px;
   min-width: 0;
   max-height: 98px;
   overflow-y: auto;
@@ -676,25 +686,25 @@ defineExpose({ isNight, toggleDayNight, hideTapZoneDebugPreview });
 .reader-settings__swatch {
   width: 52px;
   height: 40px;
-  border-radius: 10px;
+  border-radius: 8px;
   border: 2.5px solid transparent;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   transition:
-    transform 0.15s,
     border-color 0.15s,
+    background 0.15s,
     box-shadow 0.15s;
   padding: 0;
 }
 
 .reader-settings__swatch:hover {
-  transform: scale(1.06);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
 }
 
 .reader-settings__swatch--active {
-  transform: scale(1.08);
+  border-color: #63e2b7;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15);
 }
 
@@ -718,7 +728,7 @@ defineExpose({ isNight, toggleDayNight, hideTapZoneDebugPreview });
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  flex: 1;
+  flex: 1 1 180px;
   min-width: 0;
   max-height: 104px;
   overflow-y: auto;
@@ -736,26 +746,25 @@ defineExpose({ isNight, toggleDayNight, hideTapZoneDebugPreview });
 .reader-settings__bg-thumb {
   width: 52px;
   height: 40px;
-  border-radius: 10px;
+  border-radius: 8px;
   border: 2.5px solid transparent;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   transition:
-    transform 0.15s,
     border-color 0.15s,
+    background 0.15s,
     box-shadow 0.15s;
   padding: 0;
 }
 
 .reader-settings__bg-thumb:hover {
-  transform: scale(1.06);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
 }
 
 .reader-settings__bg-thumb--active {
   border-color: #63e2b7;
-  transform: scale(1.08);
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15);
 }
 
@@ -778,7 +787,7 @@ defineExpose({ isNight, toggleDayNight, hideTapZoneDebugPreview });
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  flex: 1;
+  flex: 1 1 180px;
   min-width: 0;
   max-height: 168px;
   overflow-y: auto;
@@ -790,7 +799,7 @@ defineExpose({ isNight, toggleDayNight, hideTapZoneDebugPreview });
   width: 72px;
   padding: 0;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 12px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.04);
   color: inherit;
   cursor: pointer;
@@ -821,7 +830,7 @@ defineExpose({ isNight, toggleDayNight, hideTapZoneDebugPreview });
 .reader-settings__skin-preview-bar {
   display: block;
   height: 8px;
-  border-radius: 999px;
+  border-radius: 4px;
   margin-bottom: 6px;
 }
 
@@ -915,7 +924,7 @@ defineExpose({ isNight, toggleDayNight, hideTapZoneDebugPreview });
   display: flex;
   align-items: stretch;
   height: 44px;
-  border-radius: 10px;
+  border-radius: 8px;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.12);
   user-select: none;
@@ -1009,5 +1018,40 @@ defineExpose({ isNight, toggleDayNight, hideTapZoneDebugPreview });
   border-radius: 4px;
   background: rgba(99, 226, 183, 0.2);
   color: #63e2b7;
+}
+
+@media (max-width: 420px) {
+  .reader-settings {
+    gap: 14px;
+  }
+
+  .reader-settings__row {
+    gap: 8px;
+  }
+
+  .reader-settings__label {
+    width: 34px;
+  }
+
+  .reader-settings__pill {
+    min-width: 44px;
+    padding: 0 10px;
+  }
+
+  .reader-settings__pill--sm {
+    min-width: 32px;
+    padding: 0 4px;
+  }
+
+  .reader-settings__pill--nav {
+    flex-basis: 112px;
+  }
+
+  .reader-settings__themes,
+  .reader-settings__bg-list,
+  .reader-settings__skin-list {
+    flex-basis: 100%;
+    max-height: none;
+  }
 }
 </style>

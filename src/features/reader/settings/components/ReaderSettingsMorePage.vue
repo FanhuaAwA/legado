@@ -162,6 +162,8 @@ const emit = defineEmits<{
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .reader-settings__label {
@@ -218,6 +220,8 @@ const emit = defineEmits<{
   display: flex;
   gap: 6px;
   flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .reader-settings__pill-group .reader-settings__pill {

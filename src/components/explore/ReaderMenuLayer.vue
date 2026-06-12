@@ -86,65 +86,57 @@ defineExpose({ closeSettings });
 
 <template>
   <!-- 菜单遮罩 -->
-  <Transition name="reader-fade">
-    <div v-if="showMenu" class="reader-modal__overlay" @click="onOverlayClick" />
-  </Transition>
+  <div v-if="showMenu" class="reader-modal__overlay" @click="onOverlayClick" />
 
   <!-- 顶部工具栏 -->
-  <Transition name="reader-slide-top">
-    <ReaderTopBar
-      v-if="showTopBar"
-      :book-name="readerBookName"
-      :chapter-name="currentChapterName"
-      :source-name="readerSourceName"
-      :current-index="readingChapterIndex"
-      :total-chapters="chapters.length"
-      :chapter-url="currentChapterUrl"
-      :source-type="sourceType"
-      :can-whole-book-switch="!!currentShelfId && !isVideoMode"
-      :can-temporary-switch="!isVideoMode"
-      :has-temporary-override="!!currentChapterOverride"
-      @close="readerActionsStore.close"
-      @refresh-chapter="readerActionsStore.forceRefreshChapter"
-      @cache-chapters="readerActionsStore.prefetchChapters"
-      @whole-book-switch="readerActionsStore.openWholeBookSourceSwitch"
-      @temporary-switch="readerActionsStore.openTemporaryChapterSwitch"
-      @clear-temporary-switch="readerActionsStore.clearTemporaryChapterSwitch"
-    />
-  </Transition>
+  <ReaderTopBar
+    v-if="showTopBar"
+    :book-name="readerBookName"
+    :chapter-name="currentChapterName"
+    :source-name="readerSourceName"
+    :current-index="readingChapterIndex"
+    :total-chapters="chapters.length"
+    :chapter-url="currentChapterUrl"
+    :source-type="sourceType"
+    :can-whole-book-switch="!!currentShelfId && !isVideoMode"
+    :can-temporary-switch="!isVideoMode"
+    :has-temporary-override="!!currentChapterOverride"
+    @close="readerActionsStore.close"
+    @refresh-chapter="readerActionsStore.forceRefreshChapter"
+    @cache-chapters="readerActionsStore.prefetchChapters"
+    @whole-book-switch="readerActionsStore.openWholeBookSourceSwitch"
+    @temporary-switch="readerActionsStore.openTemporaryChapterSwitch"
+    @clear-temporary-switch="readerActionsStore.clearTemporaryChapterSwitch"
+  />
 
   <!-- 加入书架按钮 -->
-  <Transition name="reader-fade">
-    <button
-      v-if="showMenu && !settingsVisible && !isOnShelf && bookInfo"
-      class="reader-modal__shelf-btn"
-      :disabled="addingToShelf"
-      @click="readerActionsStore.handleAddToShelf"
-    >
-      <Bookmark :size="16" aria-hidden="true" />
-      {{ addingToShelf ? "加入中…" : "加入书架" }}
-    </button>
-  </Transition>
+  <button
+    v-if="showMenu && !settingsVisible && !isOnShelf && bookInfo"
+    class="reader-modal__shelf-btn"
+    :disabled="addingToShelf"
+    @click="readerActionsStore.handleAddToShelf"
+  >
+    <Bookmark :size="16" aria-hidden="true" />
+    {{ addingToShelf ? "加入中…" : "加入书架" }}
+  </button>
 
   <!-- 底部工具栏 -->
-  <Transition name="reader-slide-bottom">
-    <ReaderBottomBar
-      v-if="showMenu"
-      ref="bottomBarRef"
-      :chapters="chapters"
-      :current-index="readingChapterIndex"
-      :has-prev="hasPrev"
-      :has-next="hasNext"
-      :source-type="sourceType"
-      @prev="readerActionsStore.gotoPrevChapter"
-      @next="readerActionsStore.gotoNextChapter"
-      @goto="readerActionsStore.gotoChapter"
-      @open-toc="onOpenToc"
-      @settings-visible="onSettingsVisibleChange($event)"
-      @dump-pagination-layout="readerActionsStore.dumpPaginationLayoutDebug"
-      @tts-toggle="readerActionsStore.onTtsToggle"
-    />
-  </Transition>
+  <ReaderBottomBar
+    v-if="showMenu"
+    ref="bottomBarRef"
+    :chapters="chapters"
+    :current-index="readingChapterIndex"
+    :has-prev="hasPrev"
+    :has-next="hasNext"
+    :source-type="sourceType"
+    @prev="readerActionsStore.gotoPrevChapter"
+    @next="readerActionsStore.gotoNextChapter"
+    @goto="readerActionsStore.gotoChapter"
+    @open-toc="onOpenToc"
+    @settings-visible="onSettingsVisibleChange($event)"
+    @dump-pagination-layout="readerActionsStore.dumpPaginationLayoutDebug"
+    @tts-toggle="readerActionsStore.onTtsToggle"
+  />
 
   <!-- TTS 浮动控制条 -->
   <TtsControlBar
@@ -191,37 +183,8 @@ defineExpose({ closeSettings });
   position: absolute;
   inset: 0;
   background: var(--reader-menu-overlay-bg);
+  opacity: 1;
   z-index: 10;
-}
-
-.reader-fade-enter-active,
-.reader-fade-leave-active {
-  transition: opacity 0.25s ease;
-}
-
-.reader-fade-enter-from,
-.reader-fade-leave-to {
-  opacity: 0;
-}
-
-.reader-slide-top-enter-active,
-.reader-slide-top-leave-active {
-  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.reader-slide-top-enter-from,
-.reader-slide-top-leave-to {
-  transform: translateY(-100%);
-}
-
-.reader-slide-bottom-enter-active,
-.reader-slide-bottom-leave-active {
-  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.reader-slide-bottom-enter-from,
-.reader-slide-bottom-leave-to {
-  transform: translateY(100%);
 }
 
 .reader-modal__shelf-btn {
