@@ -18,12 +18,12 @@ import {
   readBookSource,
   saveBookSource,
   importLegacyJsonText,
-  importLegacyJsonUrl,
   type LegacyJsonImportResult,
   deleteBookSource,
   deleteBookSources,
   toggleBookSource,
   toSafeFileName,
+  formatBookSourceError,
   formatValidationIssues,
   newBookSourceTemplate,
   newVideoSourceTemplate,
@@ -337,6 +337,14 @@ const showLegacyUrlInputModal = ref(false);
 const legacyUrlInputValue = ref("");
 const legacySmartSubCategories = ref(false);
 const legacyImporting = ref(false);
+const MIAOGONGZI_SUBSCRIPTION_URL =
+  "yuedu://rsssource/importonline?src=http://yuedu.miaogongzi.net/shuyuan/miaogongziDY.json";
+const LEGACY_IMPORT_RESOLVE_CONCURRENCY = 4;
+
+interface ResolvedLegacyImport {
+  url: string;
+  content: string;
+}
 
 const { triggerClose: closeUrlInputModal } = useOverlay(
   () => showUrlInputModal.value,
@@ -430,6 +438,230 @@ function normalizeImportHttpUrl(url: string) {
   }
 }
 
+async function fetchImportText(url: string): Promise<string> {
+  return invokeWithTimeout<string>(
+    "booksource_http_proxy",
+    {
+      request: {
+        url,
+        method: "GET",
+        body: null,
+        headers: [
+          "User-Agent: Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36",
+          "Accept: text/html,application/json,text/plain,*/*",
+        ],
+      },
+    },
+    45000,
+  );
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  task: (item: T) => Promise<R[]>,
+): Promise<R[]> {
+  if (!items.length) {
+    return [];
+  }
+
+  const results: R[] = [];
+  let cursor = 0;
+  const workerCount = Math.min(Math.max(1, limit), items.length);
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      for (;;) {
+        const index = cursor;
+        cursor += 1;
+        if (index >= items.length) {
+          break;
+        }
+        results.push(...(await task(items[index])));
+      }
+    }),
+  );
+
+  return results;
+}
+
+function dedupeResolvedLegacyImports(imports: ResolvedLegacyImport[]): ResolvedLegacyImport[] {
+  const seen = new Set<string>();
+  const deduped: ResolvedLegacyImport[] = [];
+  for (const item of imports) {
+    if (seen.has(item.url)) {
+      continue;
+    }
+    seen.add(item.url);
+    deduped.push(item);
+  }
+  return deduped;
+}
+
+function readImportPageUrl(value: unknown): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+  const segments = value
+    .split(/\r?\n|&&|,/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  for (const segment of segments) {
+    const url = normalizeImportHttpUrl(
+      segment.includes("::") ? (segment.split("::").pop() ?? "") : segment,
+    );
+    if (url) {
+      return url;
+    }
+  }
+  return "";
+}
+
+function extractBookSourceUrlsFromHtml(html: string): string[] {
+  const urls = new Set<string>();
+  const collect = (value: string | null | undefined) => {
+    if (!value) {
+      return;
+    }
+    const target = classifyLegadoInstallTarget(value.replace(/&amp;/g, "&"));
+    if (target.type === "booksource") {
+      urls.add(target.url);
+    }
+  };
+
+  if (typeof DOMParser !== "undefined") {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    for (const anchor of doc.querySelectorAll("a[href]")) {
+      collect(anchor.getAttribute("href"));
+    }
+  }
+
+  const linkPattern = /yuedu:\/\/booksource\/importonline\?src=[^"'\s<>]+/gi;
+  for (const match of html.matchAll(linkPattern)) {
+    collect(match[0]);
+  }
+  return [...urls];
+}
+
+function isRssSourceCollection(value: unknown): value is Array<Record<string, unknown>> {
+  const items = Array.isArray(value) ? value : [value];
+  return items.some(
+    (item) =>
+      !!item &&
+      typeof item === "object" &&
+      ("sourceUrl" in item || "sortUrl" in item) &&
+      !("bookSourceName" in item),
+  );
+}
+
+function isLegacyBookSourceCollection(value: unknown): boolean {
+  const items = Array.isArray(value) ? value : [value];
+  return items.some(
+    (item) =>
+      !!item &&
+      typeof item === "object" &&
+      ("bookSourceName" in item ||
+        "bookSourceUrl" in item ||
+        "ruleSearch" in item ||
+        "searchUrl" in item ||
+        "ruleBookInfo" in item ||
+        "ruleToc" in item),
+  );
+}
+
+async function resolveBookSourceImportCandidate(
+  url: string,
+  visited = new Set<string>(),
+  depth = 0,
+): Promise<ResolvedLegacyImport[]> {
+  const normalizedUrl = normalizeImportHttpUrl(url);
+  if (!normalizedUrl || visited.has(normalizedUrl) || depth > 4) {
+    return [];
+  }
+  visited.add(normalizedUrl);
+
+  let text = "";
+  try {
+    text = await fetchImportText(normalizedUrl);
+  } catch {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (isRssSourceCollection(parsed)) {
+      return await resolveRssSourceImportUrls(parsed, visited, depth + 1);
+    }
+    if (isLegacyBookSourceCollection(parsed)) {
+      return [{ url: normalizedUrl, content: text }];
+    }
+    return [];
+  } catch {
+    // Not JSON. Treat it as a landing page and only follow explicit yuedu import links.
+  }
+
+  const imports = await mapWithConcurrency(
+    extractBookSourceUrlsFromHtml(text),
+    LEGACY_IMPORT_RESOLVE_CONCURRENCY,
+    (nextUrl) => resolveBookSourceImportCandidate(nextUrl, visited, depth + 1),
+  );
+  return dedupeResolvedLegacyImports(imports);
+}
+
+async function resolveLegacyImports(rawValue: string): Promise<ResolvedLegacyImport[]> {
+  const raw = rawValue.trim();
+  const target = classifyLegadoInstallTarget(raw);
+  if (target.type === "booksource") {
+    const imports = await resolveBookSourceImportCandidate(target.url);
+    if (!imports.length) {
+      throw new Error("未解析到可导入的开源阅读书源 JSON");
+    }
+    return imports;
+  }
+  if (target.type === "booksourceSubscription") {
+    const text = await fetchImportText(target.url);
+    const parsed = JSON.parse(text) as unknown;
+    if (!isRssSourceCollection(parsed)) {
+      throw new Error("阅读订阅源格式不正确");
+    }
+    return await resolveRssSourceImportUrls(parsed);
+  }
+  if (target.type === "repo") {
+    navigationStore.navigateToOnlineRepo(target.url, target.name);
+    return [];
+  }
+  if (target.type === "plugin") {
+    navigationStore.navigateToPluginInstall(target.url);
+    return [];
+  }
+  throw new Error("请输入 http(s)、legado:// 或 yuedu:// 书源链接");
+}
+
+async function resolveRssSourceImportUrls(
+  value: Array<Record<string, unknown>>,
+  visited = new Set<string>(),
+  depth = 0,
+): Promise<ResolvedLegacyImport[]> {
+  const pageUrls = new Set<string>();
+  for (const item of value) {
+    const sourceUrl = normalizeImportHttpUrl(String(item.sourceUrl ?? ""));
+    if (sourceUrl) {
+      pageUrls.add(sourceUrl);
+    }
+    const sortUrl = readImportPageUrl(item.sortUrl);
+    if (sortUrl) {
+      pageUrls.add(sortUrl);
+    }
+  }
+
+  const imports = await mapWithConcurrency(
+    [...pageUrls],
+    LEGACY_IMPORT_RESOLVE_CONCURRENCY,
+    (pageUrl) => resolveBookSourceImportCandidate(pageUrl, visited, depth + 1),
+  );
+  return dedupeResolvedLegacyImports(imports);
+}
+
 function mergeLegacyImportResult(target: LegacyJsonImportResult, next: LegacyJsonImportResult) {
   target.imported += next.imported;
   target.skipped += next.skipped;
@@ -451,6 +683,43 @@ function showLegacyImportResult(result: LegacyJsonImportResult) {
   }
   if (!result.imported && !result.errors.length) {
     message.warning("未找到可导入的开源阅读书源");
+  }
+}
+
+async function runLegacyUrlImport(rawUrl: string) {
+  if (legacyImporting.value) {
+    return;
+  }
+  legacyImporting.value = true;
+  message.info("正在解析并导入开源阅读书源...");
+  try {
+    const imports = await resolveLegacyImports(rawUrl);
+    if (!imports.length) {
+      return;
+    }
+    const merged: LegacyJsonImportResult = {
+      imported: 0,
+      skipped: 0,
+      files: [],
+      errors: [],
+    };
+    if (imports.length > 1) {
+      message.info(`已从订阅源解析出 ${imports.length} 个书源包，开始逐个导入`);
+    }
+    for (const item of imports) {
+      try {
+        const result = await importLegacyJsonText(item.content, legacySmartSubCategories.value);
+        mergeLegacyImportResult(merged, result);
+      } catch (e: unknown) {
+        merged.skipped += 1;
+        merged.errors.push(`${item.url}: ${formatBookSourceError(e)}`);
+      }
+    }
+    showLegacyImportResult(merged);
+  } catch (e: unknown) {
+    message.error(`导入失败: ${formatBookSourceError(e)}`);
+  } finally {
+    legacyImporting.value = false;
   }
 }
 
@@ -510,26 +779,29 @@ function importLegacyJsonFromUrl() {
   showLegacyUrlInputModal.value = true;
 }
 
+function importMiaoGongziSubscription() {
+  if (legacyImporting.value) {
+    return;
+  }
+  legacyUrlInputValue.value = MIAOGONGZI_SUBSCRIPTION_URL;
+  showLegacyUrlInputModal.value = true;
+}
+
 async function confirmLegacyUrlInput() {
   if (legacyImporting.value) {
     return;
   }
-  const url = normalizeImportHttpUrl(legacyUrlInputValue.value);
+  const url = legacyUrlInputValue.value.trim();
   if (!url) {
-    message.warning("请输入 http:// 或 https:// 开头的 JSON 地址");
+    message.warning("请输入 JSON 地址或 yuedu:// 导入链接");
     return;
   }
   closeLegacyUrlInputModal();
-  legacyImporting.value = true;
-  message.info("正在下载并转换开源阅读书源...");
-  try {
-    const result = await importLegacyJsonUrl(url, legacySmartSubCategories.value);
-    showLegacyImportResult(result);
-  } catch (e: unknown) {
-    message.error(`导入失败: ${e instanceof Error ? e.message : String(e)}`);
-  } finally {
-    legacyImporting.value = false;
-  }
+  await runLegacyUrlImport(url);
+}
+
+async function importLegacyJsonFromDeepLink(url: string) {
+  await runLegacyUrlImport(url);
 }
 
 async function addExternalDir() {
@@ -948,6 +1220,8 @@ defineExpose({
   importFromUrl,
   importLegacyJsonFromFile,
   importLegacyJsonFromUrl,
+  importMiaoGongziSubscription,
+  importLegacyJsonFromDeepLink,
   exportSources,
   openEditor,
   reloadAllSources,
@@ -1171,7 +1445,7 @@ defineExpose({
   >
     <n-input
       v-model:value="legacyUrlInputValue"
-      placeholder="输入开源阅读 JSON 地址（https://...）"
+      placeholder="输入开源阅读 JSON 地址，或 yuedu://booksource/rsssource 链接"
       clearable
       autofocus
       :disabled="legacyImporting"

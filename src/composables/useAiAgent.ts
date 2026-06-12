@@ -579,19 +579,11 @@ type NativeFetch = typeof fetch;
 
 const LEGADO_REASONING_PROVIDER = "legadoReasoning";
 const capabilities = useCapabilities();
-let backendHttpProxyUrlPromise: Promise<string | null> | null = null;
 
-function getBackendHttpProxyUrl(): Promise<string | null> {
-  backendHttpProxyUrlPromise ??= capabilities
-    .loadCapabilities()
-    .then((state) =>
-      state.aiProxy.supported ? invokeWithTimeout<string>("ai_http_proxy_url", {}, 5_000) : null,
-    )
-    .catch((error) => {
-      backendHttpProxyUrlPromise = null;
-      throw error;
-    });
-  return backendHttpProxyUrlPromise;
+interface AiHttpProxyResponse {
+  status: number;
+  headers: string[];
+  body: string;
 }
 
 function abortError(): Error {
@@ -687,19 +679,37 @@ async function requestBody(
   return null;
 }
 
+function buildProxyResponseHeaders(rawHeaders: string[]): Headers {
+  const headers = new Headers();
+  for (const header of rawHeaders) {
+    const sep = header.indexOf(":");
+    if (sep <= 0) {
+      continue;
+    }
+    headers.append(header.slice(0, sep).trim(), header.slice(sep + 1).trim());
+  }
+  if (!headers.has("content-type")) {
+    headers.set("content-type", "text/event-stream; charset=utf-8");
+  }
+  return headers;
+}
+
 function createBackendHttpFetch(signal: AbortSignal): NativeFetch {
   return async (input, init) => {
     if (isAborted(signal, init)) {
       throw abortError();
     }
 
-    const proxyUrl = await Promise.race([getBackendHttpProxyUrl(), waitForAbort(signal, init)]);
+    const capabilityState = await Promise.race([
+      capabilities.loadCapabilities(),
+      waitForAbort(signal, init),
+    ]);
 
     if (isAborted(signal, init)) {
       throw abortError();
     }
 
-    if (!proxyUrl) {
+    if (!capabilityState.aiProxy.supported) {
       return fetch(input, {
         ...init,
         signal: isAbortSignal(init?.signal) ? init.signal : signal,
@@ -711,11 +721,25 @@ function createBackendHttpFetch(signal: AbortSignal): NativeFetch {
     const body = await requestBody(input, init);
     const headers = requestHeaders(input, init);
 
-    return fetch(`${proxyUrl}?url=${encodeURIComponent(url)}`, {
-      method,
-      headers,
-      body,
-      signal: isAbortSignal(init?.signal) ? init.signal : signal,
+    const response = await Promise.race([
+      invokeWithTimeout<AiHttpProxyResponse>(
+        "ai_http_proxy_request",
+        {
+          request: {
+            url,
+            method,
+            body,
+            headers: headers.map(([key, value]) => `${key}: ${value}`),
+          },
+        },
+        310_000,
+      ),
+      waitForAbort(signal, init),
+    ]);
+
+    return new Response(response.body, {
+      status: response.status,
+      headers: buildProxyResponseHeaders(response.headers),
     });
   };
 }

@@ -4,11 +4,13 @@ import { eventListen } from "./useEventBus";
 import { log } from "@/utils/logger";
 
 const LEGADO_SCHEME = "legado:";
+const YUEDU_SCHEME = "yuedu:";
 const DEEP_LINK_DEDUPE_MS = 1000;
 
 // ── 深链接类型定义 ────────────────────────────────────────────────────────────
 export type LegadoDeepLinkPayload =
   | { type: "booksource"; url: string }
+  | { type: "booksourceSubscription"; url: string }
   | { type: "repo"; url: string; name?: string }
   | { type: "plugin"; url: string };
 
@@ -48,6 +50,8 @@ function normalizeHttpUrl(payload: string): string {
  *
  * 支持格式：
  *  - 书源（向下兼容）：`https://...`  /  `legado://?url=...`
+ *  - 阅读书源：`yuedu://booksource/importonline?src=...`
+ *  - 阅读订阅：`yuedu://rsssource/importonline?src=...`
  *  - 仓库：`legado://repo?url=...&name=<默认名称>`
  *  - 插件：`legado://plugin?url=...`
  */
@@ -62,7 +66,8 @@ export function parseLegadoDeepLink(rawUrl: string): LegadoDeepLinkPayload {
     return { type: "booksource", url: normalizeHttpUrl(input) };
   }
 
-  if (!input.toLowerCase().startsWith(LEGADO_SCHEME)) {
+  const lowerInput = input.toLowerCase();
+  if (!lowerInput.startsWith(LEGADO_SCHEME) && !lowerInput.startsWith(YUEDU_SCHEME)) {
     throw new Error("不是 legado 深链接");
   }
 
@@ -76,6 +81,24 @@ export function parseLegadoDeepLink(rawUrl: string): LegadoDeepLinkPayload {
 
   const host = parsed?.hostname ?? ""; // e.g. "repo" / "plugin" / ""
   const params = parsed?.searchParams;
+
+  // ── 开源阅读 yuedu:// 链接 ────────────────────────────────────────────────
+  if (lowerInput.startsWith(YUEDU_SCHEME)) {
+    const rawSrc = params?.get("src") ?? params?.get("url") ?? "";
+    if (host === "booksource") {
+      if (!rawSrc) {
+        throw new Error("阅读书源链接缺少 src 参数");
+      }
+      return { type: "booksource", url: normalizeHttpUrl(rawSrc) };
+    }
+    if (host === "rsssource") {
+      if (!rawSrc) {
+        throw new Error("阅读订阅链接缺少 src 参数");
+      }
+      return { type: "booksourceSubscription", url: normalizeHttpUrl(rawSrc) };
+    }
+    throw new Error("不支持的 yuedu 链接类型");
+  }
 
   // ── 仓库 ────────────────────────────────────────────────────────────────────
   if (host === "repo") {
@@ -143,7 +166,10 @@ export function classifyLegadoInstallTarget(rawUrl: string): LegadoInstallTarget
 
   try {
     const parsed = parseLegadoDeepLink(input);
-    if (input.toLowerCase().startsWith(LEGADO_SCHEME)) {
+    if (
+      input.toLowerCase().startsWith(LEGADO_SCHEME) ||
+      input.toLowerCase().startsWith(YUEDU_SCHEME)
+    ) {
       if (parsed.type === "booksource" && looksLikeRepositoryUrl(parsed.url)) {
         return { type: "repo", url: parsed.url };
       }

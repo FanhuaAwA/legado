@@ -138,6 +138,27 @@ async fn webdav_sync_commands_are_routed() {
     assert!(err.starts_with("INVALID_ARGS"), "实际: {err}");
 }
 
+#[tokio::test]
+async fn ai_http_proxy_command_is_routed_and_blocks_local_targets() {
+    let (app, _dir) = test_app().await;
+    let err = router::dispatch(
+        app.handle(),
+        "ai_http_proxy_request",
+        &json!({
+            "request": {
+                "url": "http://127.0.0.1/v1/chat/completions",
+                "method": "POST",
+                "body": "{}",
+                "headers": ["content-type: application/json"]
+            }
+        }),
+    )
+    .await
+    .expect_err("内网目标应被 AI 代理拒绝");
+    assert!(!err.starts_with("NOT_ROUTED"), "应已路由，实际: {err}");
+    assert!(err.contains("blocked"), "实际: {err}");
+}
+
 // ── ws_server::handle_invoke 协议层 ────────────────────────────────────────
 
 #[tokio::test]

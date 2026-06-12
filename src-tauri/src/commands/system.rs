@@ -178,9 +178,9 @@ pub const CAPABILITY_SPECS: &[CapabilitySpec] = &[
     },
     CapabilitySpec {
         key: "aiProxy",
-        supported: false,
-        reason: "AI HTTP proxy is not implemented in this build; AI features use direct connections.",
-        commands: &["ai_http_proxy_url"],
+        supported: true,
+        reason: "AI HTTP proxy is available for whitelisted OpenAI-compatible model endpoints.",
+        commands: &["ai_http_proxy_request"],
     },
     CapabilitySpec {
         key: "pluginHttp",

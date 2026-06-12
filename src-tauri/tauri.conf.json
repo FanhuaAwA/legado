@@ -19,6 +19,9 @@
         "minHeight": 600,
         "visible": true,
         "devtools": false,
+        "resizable": true,
+        "maximizable": true,
+        "minimizable": true,
         "decorations": false,
         "transparent": false
       }
@@ -46,11 +49,11 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["legado"]
+        "schemes": ["legado", "yuedu"]
       },
       "mobile": [
         {
-          "scheme": ["legado"],
+          "scheme": ["legado", "yuedu"],
           "appLink": false
         }
       ]

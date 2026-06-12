@@ -25,6 +25,7 @@ export interface ParagraphCommentClickPayload extends ParagraphCommentSummary {
 
 export interface ParagraphCommentTarget extends ParagraphCommentClickPayload {
   fileName: string;
+  sourceDir?: string;
   chapterIndex: number;
   chapterName: string;
   chapterUrl: string;

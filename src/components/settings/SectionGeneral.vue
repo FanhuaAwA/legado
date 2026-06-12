@@ -104,68 +104,43 @@ const INTERVAL_OPTIONS = [
       </n-radio-group>
     </SettingItem>
 
-    <SettingItem label="主题颜色" desc="自定义应用主题色，留空则使用默认颜色">
-      <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center">
-        <!-- 原生取色器 -->
-        <div
-          :style="{
-            width: '36px',
-            height: '36px',
-            borderRadius: '6px',
-            border: '2px solid var(--color-border-strong)',
-            background: themeColorInput || '#6366f1',
-            cursor: 'pointer',
-            position: 'relative',
-            flexShrink: 0,
-          }"
-        >
-          <input
-            type="color"
-            :value="themeColorInput || '#6366f1'"
-            style="
-              position: absolute;
-              inset: 0;
-              width: 100%;
-              height: 100%;
-              opacity: 0;
-              cursor: pointer;
-            "
-            @input="(e: Event) => applyThemeColor((e.target as HTMLInputElement).value)"
+    <SettingItem label="主题颜色" desc="自定义应用主题色，留空则使用默认颜色" :vertical="true">
+      <div class="theme-color-control">
+        <div class="theme-color-field">
+          <label class="theme-color-picker" :style="{ background: themeColorInput || '#6366f1' }">
+            <span class="theme-color-picker__sr">选择主题颜色</span>
+            <input
+              type="color"
+              :value="themeColorInput || '#6366f1'"
+              @input="(e: Event) => applyThemeColor((e.target as HTMLInputElement).value)"
+            />
+          </label>
+          <n-input
+            :value="themeColorInput"
+            class="theme-color-input"
+            size="small"
+            placeholder="#6366f1"
+            maxlength="7"
+            @update:value="(v: string) => (themeColorInput = v.slice(0, 7))"
+            @blur="onColorInputBlur"
+          />
+          <n-button v-if="themeColorInput" size="small" quaternary @click="resetThemeColor">
+            重置
+          </n-button>
+        </div>
+        <div class="theme-color-presets" aria-label="主题颜色预设">
+          <button
+            v-for="preset in THEME_COLOR_PRESETS"
+            :key="preset"
+            type="button"
+            class="theme-color-swatch"
+            :class="{ 'theme-color-swatch--active': themeColorInput === preset }"
+            :style="{ background: preset }"
+            :aria-label="`使用颜色 ${preset}`"
+            :title="preset"
+            @click="applyThemeColor(preset)"
           />
         </div>
-        <!-- Hex 输入框 -->
-        <n-input
-          :value="themeColorInput"
-          size="small"
-          placeholder="#6366f1"
-          style="width: 96px"
-          maxlength="7"
-          @update:value="(v: string) => (themeColorInput = v.slice(0, 7))"
-          @blur="onColorInputBlur"
-        />
-        <n-button v-if="themeColorInput" size="small" quaternary @click="resetThemeColor">
-          重置
-        </n-button>
-      </div>
-      <!-- 预设色块 -->
-      <div style="display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px">
-        <div
-          v-for="preset in THEME_COLOR_PRESETS"
-          :key="preset"
-          :style="{
-            width: '22px',
-            height: '22px',
-            borderRadius: '4px',
-            background: preset,
-            cursor: 'pointer',
-            border:
-              themeColorInput === preset ? '2px solid var(--color-text)' : '2px solid transparent',
-            outline: themeColorInput === preset ? '1px solid var(--color-bg)' : 'none',
-            flexShrink: 0,
-          }"
-          :title="preset"
-          @click="applyThemeColor(preset)"
-        />
       </div>
     </SettingItem>
 
@@ -329,3 +304,101 @@ const INTERVAL_OPTIONS = [
     </SettingItem>
   </SettingSection>
 </template>
+
+<style scoped>
+.theme-color-control {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(100%, 390px);
+}
+
+.theme-color-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.theme-color-picker {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  overflow: hidden;
+  border: 2px solid var(--color-border-strong, var(--color-border));
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.theme-color-picker input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.theme-color-picker__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.theme-color-input {
+  width: 104px;
+  flex: 0 0 104px;
+}
+
+.theme-color-presets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(24px, 24px));
+  gap: 6px;
+  align-items: center;
+}
+
+.theme-color-swatch {
+  width: 24px;
+  height: 24px;
+  border: 2px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+.theme-color-swatch--active {
+  border-color: var(--color-text);
+  box-shadow:
+    0 0 0 1px var(--color-bg, var(--color-surface)),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.28);
+}
+
+.theme-color-swatch:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+@media (max-width: 520px) {
+  .theme-color-control {
+    width: 100%;
+  }
+
+  .theme-color-field {
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+    width: 100%;
+  }
+
+  .theme-color-input {
+    width: 100%;
+    flex-basis: auto;
+  }
+}
+</style>

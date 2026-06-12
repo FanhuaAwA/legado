@@ -1,5 +1,97 @@
 # AI Iteration Log
 
+## 记录标题：2026-06-12 DeepSeek AI 写书源与喵公子订阅源接入（AI-DEEPSEEK-MGZ）
+
+任务 ID：`AI-DEEPSEEK-MGZ-001`
+
+本轮目标：按用户要求给“AI 写书源”接入 DeepSeek 供应商选项，避免浏览器/WebView CORS 阻断；同时直接解析 `https://dy.miaogongzi.cc/#` 的喵公子订阅源，让项目可导入其 `yuedu://rsssource` 订阅链路。
+
+关键边界：
+
+- 用户在对话中提供了 DeepSeek API key。为避免密钥进入命令历史、仓库文件或工具日志，本轮没有把该 key 写入代码、报告或命令行；项目内实际使用时由 AI 设置页录入，前端配置按既有本地配置流程保存。
+- 支持公开页面/API、公开响应的编码/签名/解密适配；不实现绕过登录、付费墙、验证码、设备绑定或访问控制的规避手段。
+
+实现：
+
+- `src/components/booksource/AiSourceTab.vue`：AI 设置新增供应商预设，包含 `DeepSeek V3`（`deepseek-chat`）与 `DeepSeek R1`（`deepseek-reasoner`），默认使用后端通道；保留 OpenAI GPT-4o / Responses 预设。
+- `src/composables/useAiAgent.ts`：移除旧的 `ai_http_proxy_url` 伪入口，后端传输改为调用 `ai_http_proxy_request`，把 AI SDK 的 POST 请求转交 Rust 后端，返回标准 `Response` 给 AI SDK。
+- `crates/reader-core/src/model/ai_proxy.rs`、`crates/reader-core/src/facade.rs`、`src-tauri/src/commands/source.rs`：新增 `AiHttpProxyResponse` 与 `ReaderCore::ai_proxy_request`；仅允许 POST；限制目标为公开 HTTP(S)、DeepSeek/OpenAI 域名白名单、OpenAI-compatible 白名单路径（`/v1/chat/completions`、`/v1/responses`、`/v1/images/generations`、`/v1/audio/speech`）；过滤 `host`/`content-length`/`connection` 请求头与 `set-cookie` 响应头。
+- `src-tauri/src/commands/mod.rs`、`src-tauri/src/commands/router.rs`、`src-tauri/src/commands/system.rs`、`src/composables/useCapabilities.ts`：注册 Tauri 命令、WS 形态 B 路由与 `aiProxy` capability；删除旧 `sync_misc::ai_http_proxy_url` stub。契约从 40 stub 降到 39。
+- `src/composables/useLegadoDeepLink.ts`、`src-tauri/tauri.conf.json`：新增 `yuedu:` scheme 支持，解析 `yuedu://booksource/importonline?src=...` 与 `yuedu://rsssource/importonline?src=...`。
+- `src/components/LegadoDeepLinkDialog.vue`、`src/stores/navigation.ts`、`src/views/BookSourceView.vue`、`src/components/booksource/InstalledSourcesTab.vue`：订阅源深链接直接切到书源页导入；URL 导入弹窗可接收普通 JSON URL、`yuedu://booksource`、`yuedu://rsssource`。`rsssource` 导入会先拉订阅 JSON，再读取 `sourceUrl/sortUrl` 指向页面，抽取页面中的 `yuedu://booksource/importonline?src=...` 书源包链接并逐个导入。
+
+喵公子订阅源实测：
+
+- `https://dy.miaogongzi.cc/` 页面提供“喵公子订阅源”入口。
+- 订阅源解析为 `http://yuedu.miaogongzi.net/shuyuan/miaogongziDY.json`，该 JSON 指向 `https://yuedu.miaogongzi.net/gx.html`。
+- `gx.html` 当前解析出 10 个“一键导入”书源包：源仓库书源、一程的书源合集、漫画源·小寒、明月照大江书源合集、楠枫书源合集、XIU2精品书源、关耳女频、破冰书源、黄凡凡书源、不世玄奇搜索引擎书源。
+
+验证：
+
+- `cargo fmt`
+- `cargo test -p reader-core ai_proxy -- --nocapture`：PASS，4/4。
+- `cargo check -p reader-core`：PASS。
+- `cargo check -p legado-tauri`：PASS。
+- `cargo test -p legado-tauri ai_http_proxy_command_is_routed_and_blocks_local_targets -- --nocapture`：PASS，1/1；仅 MSVC linker stdout warning。
+- `cmd /c node_modules\.bin\oxfmt.cmd --check src\composables\useAiAgent.ts src\composables\useCapabilities.ts src\composables\useLegadoDeepLink.ts src\components\booksource\AiSourceTab.vue src\components\booksource\InstalledSourcesTab.vue src\components\LegadoDeepLinkDialog.vue src\stores\navigation.ts src\views\BookSourceView.vue src-tauri\tauri.conf.json`：PASS。
+- `cmd /c node_modules\.bin\vue-tsc.cmd -p tsconfig.app.json --noEmit`：PASS。
+- `node scripts/ci/check-command-contract.mjs --json`：PASS，162/161/161，onlyFrontend=`js_eval`，onlyBackend=0，`frontend_unsupported_stub_count=39`，`frontend_implemented_count=122`。
+- `cmd /c pnpm.cmd lint`：PASS，0 warnings / 0 errors。
+- `cmd /c pnpm.cmd build`：PASS，仅既有 Vite/Rolldown warning（vconsole direct eval、chunk size、动态导入提示、plugin timing）。
+- `cargo test -p reader-core`：PASS，全部非 ignored 测试通过。
+- `git diff --check`：PASS，仅 Git CRLF normalization warning。
+
+Gate 报告：`reports/gates/2026-06-12-AI-DEEPSEEK-MGZ/summary.md`。
+
+后续边界：若需要实测 DeepSeek 真实生成某个站点书源，应在应用内 AI 设置输入密钥后运行，或提供不会进入命令/日志的密钥注入通道；不要把 API key 写入仓库文件、shell 命令或报告。
+
+## 记录标题：2026-06-12 段评功能链路检查与修复（PARA-COMMENT-VERIFY）
+
+任务 ID：`PARA-COMMENT-VERIFY-001`
+
+本轮目标：按用户要求检查段评功能是否可正常工作，修复发现的链路断点，并补充离线回归，覆盖新式 JS 段评函数与旧 Legado 正文内嵌段评入口两条路径。
+
+关键发现：
+
+- 新式 JS 书源即使实现 `chapterParagraphCommentCounts` / `chapterParagraphComments` / `likeParagraphComment` / `replyParagraphComment`，后端 `js_capabilities()` 也没有把这些函数计入能力表；前端因此不会请求段评数量，段评按钮不会出现。
+- 外部书源目录场景下，正文加载已携带 `sourceDir`，但段评数量、详情、点赞、回复调用没有完整透传 `sourceDir`，会导致外部目录书源的段评详情链路找不到正确书源文件。
+- 旧 Legado 段评入口（如七猫 `showCmt(...)`、番茄/书旗 `getDP/getSP/getZP` 形态）已存在解析和点击桥接，但缺少离线回归覆盖；本轮补充 `__legado_browser_action` facade 测试，确认可捕获 `java.startBrowser` 生成的评论页 URL。
+
+修改文件：
+
+- `crates/reader-core/src/facade.rs`：`js_capabilities()` 新增四个段评标准函数能力识别。
+- `crates/reader-core/tests/js_compat.rs`：JS fixture 新增段评数量/详情/点赞/回复函数，并通过 `source_call_fn` 断言数量和详情可调用。
+- `crates/reader-core/tests/route_b_facade.rs`：新增旧 Legado `showCmt(...)` 段评入口离线回归，断言 `__legado_browser_action` 能捕获评论 URL 与标题。
+- `src/features/reader/services/readerParagraphComments.ts`：`ParagraphCommentTarget` 增加可选 `sourceDir`。
+- `src/components/reader/composables/useReaderContentState.ts`：段评数量请求透传 `sourceDir`。
+- `src/components/reader/ReaderContentArea.vue`：打开段评抽屉时把当前书源目录写入 target。
+- `src/components/reader/ReaderParagraphCommentsDrawer.vue`：能力检测、详情、点赞、回复调用全部透传 `sourceDir`。
+
+已运行验证：
+
+- `cargo fmt`
+- `cargo fmt --all -- --check`
+- `cargo check -p reader-core`
+- `cargo test -p reader-core js_source_runtime_runs_main_reader_chain -- --nocapture`
+- `cargo test -p reader-core legado_browser_action_captures_legacy_paragraph_comment_url -- --nocapture`
+- `cmd /c node_modules\.bin\oxfmt.cmd --check src\features\reader\services\readerParagraphComments.ts src\components\reader\ReaderContentArea.vue src\components\reader\ReaderParagraphCommentsDrawer.vue src\components\reader\composables\useReaderContentState.ts`
+- `cmd /c node_modules\.bin\oxlint.cmd --type-aware --type-check .`
+- `cmd /c node_modules\.bin\vue-tsc.cmd -p tsconfig.app.json --noEmit`
+- `node scripts/ci/check-command-contract.mjs --json`
+- `cmd /c node_modules\.bin\oxfmt.cmd --check .`
+- `cmd /c pnpm.cmd lint`
+- `cmd /c pnpm.cmd build`
+- `cargo test -p reader-core`
+- `cargo check -p legado-tauri`
+
+补充现网验证：
+
+- `cargo test -p reader-core fanqie_source_full_chain -- --ignored --nocapture`：PASS，番茄书源搜索、详情、目录、正文链路可获取小说内容。
+- `cargo test -p reader-core shuqi_source_full_chain -- --ignored --nocapture`：FAIL，普通网络与提权网络重试均在 `https://jh.52dns.cc//shuqi/search.php?...` 搜索接口超时；判断为外部聚合代理不可达、限流或临时封禁风险，不能据此反推段评链路代码失败。
+- `cargo test -p reader-core qimao_source_full_chain -- --ignored --nocapture`：FAIL，普通网络与提权网络重试均在 `https://jh.52dns.cc//qimao/search.php?...` 搜索接口超时；七猫与书旗共用同域代理，存在连续请求过频后被限流/拉黑的可能。
+
+已知边界：本轮修复的是应用链路与离线回归。三方 JSON 书源的段评数据是否返回、外部评论站是否可达仍受书源登录配置、源站状态与中转站状态影响；旧 Legado 入口在桌面端优先打开 URL/HTML，不等同于把所有站点评论页完全改造成统一抽屉列表。
+
 ## 记录标题：2026-06-12 FORMB-ACCEPT headless loopback 闭环验收
 
 任务 ID：FORMB-ACCEPT（路线图 C 段；纯浏览器前端连接独立 Rust 后端）
@@ -1619,21 +1711,21 @@ cmd /c pnpm build:android:release
 
 **通过项**：
 
-| 命令 | 状态 |
-| --- | --- |
-| `node scripts/ci/check-command-contract.mjs --json` | PASS：162 / 161 / 161，onlyBackend=0，stub=40 |
-| `cargo fmt --all -- --check` | PASS |
-| `cmd /c pnpm lint` | PASS：0 warnings / 0 errors |
-| `cmd /c pnpm build` | PASS |
-| `cargo check -p reader-core` | PASS |
-| `cargo test -p reader-core` | PASS：新增预取测试通过 |
-| `cargo check -p legado-tauri` | PASS |
-| `cargo test -p legado-tauri` | PASS：1 lib + 11 ws_router |
-| `shuqi_source_full_chain` | PASS：toc 329 章，content 4657 字符 |
-| `qimao_source_full_chain` | PASS：toc 2551 章，content 15132 字符 |
-| `fanqie_source_full_chain` | PASS：toc 1928 章，content 3135 字符 |
-| `cmd /c pnpm build:windows:release` | PASS：`构建结果/windows/legado-tauri.exe` |
-| `cmd /c pnpm build:android:release` | PASS：提升权限后产出 `构建结果/android/app-universal-release-unsigned.apk` |
+| 命令                                                | 状态                                                                       |
+| --------------------------------------------------- | -------------------------------------------------------------------------- |
+| `node scripts/ci/check-command-contract.mjs --json` | PASS：162 / 161 / 161，onlyBackend=0，stub=40                              |
+| `cargo fmt --all -- --check`                        | PASS                                                                       |
+| `cmd /c pnpm lint`                                  | PASS：0 warnings / 0 errors                                                |
+| `cmd /c pnpm build`                                 | PASS                                                                       |
+| `cargo check -p reader-core`                        | PASS                                                                       |
+| `cargo test -p reader-core`                         | PASS：新增预取测试通过                                                     |
+| `cargo check -p legado-tauri`                       | PASS                                                                       |
+| `cargo test -p legado-tauri`                        | PASS：1 lib + 11 ws_router                                                 |
+| `shuqi_source_full_chain`                           | PASS：toc 329 章，content 4657 字符                                        |
+| `qimao_source_full_chain`                           | PASS：toc 2551 章，content 15132 字符                                      |
+| `fanqie_source_full_chain`                          | PASS：toc 1928 章，content 3135 字符                                       |
+| `cmd /c pnpm build:windows:release`                 | PASS：`构建结果/windows/legado-tauri.exe`                                  |
+| `cmd /c pnpm build:android:release`                 | PASS：提升权限后产出 `构建结果/android/app-universal-release-unsigned.apk` |
 
 **Windows 产物实测**：
 
@@ -1650,3 +1742,52 @@ cmd /c pnpm build:android:release
 **下轮第一件事**：
 
 若有第二台设备或可访问 LAN，做 `FORMB-LAN-VERIFY`；若当前环境无外部设备，则转 B 段剩余能力本体 `CAP-BROWSER`，先按审计文档第 4 节写范围声明，设计真实 session/导航/JS/cookie/UA 的最小实现与验收。
+
+---
+
+## 记录标题：2026-06-13 MAINT-IMPORT-UI-PERF
+
+任务 ID：`MAINT-2026-06-13-IMPORT-UI-PERF`
+
+本轮目标：承接用户反馈继续收口书源管理 UI、喵公子订阅导入和 AI/段评/窗口控制相关未提交改动；在不扩大重构面的前提下，提升多书源订阅解析性能，并用本地 headless 页面完成布局回归。
+
+范围声明：
+
+- 允许修改：书源导入 UI、书源管理页 header 布局、窗口控制 capability、AI HTTP 代理、段评 sourceDir 透传、相关测试和状态文档。
+- 不触碰：用户数据目录、原始第三方书源样例、许可证、git 历史、无关功能大重构。
+
+本轮关键修改：
+
+- `InstalledSourcesTab.vue` 的 `yuedu://rsssource` 解析改为先验证并缓存远端书源 JSON 内容，再调用 `importLegacyJsonText` 导入，避免“解析一次、导入再下载一次”的双重网络开销；订阅页/HTML 内书源包解析采用 4 路受控并发和 URL 去重。
+- `BookSourceLimitWarningDialog.vue` 从常驻 `n-dialog` 改为受控 `n-modal preset="dialog"`，修复“知道了/close 点击后仍遮挡页面”的问题。
+- `AppPageHeader.vue` / `BookSourceView.vue` 继续约束标题与按钮区：标题 `nowrap`、动作区可换行，防止“书源管理”被压成竖排。
+- `TitleBar.vue` 与 `src-tauri/capabilities/default.json` 保持窗口最小化/最大化/关闭能力注册，按钮使用 no-drag 区域。
+- `ai_http_proxy_request` 保持后端白名单代理：POST only、DeepSeek/OpenAI host allowlist、路径 allowlist、内网/localhost 阻断，并接入前端 AI transport。
+- 段评相关调用保留 `sourceDir` 透传，外部目录 JS 源可正确定位。
+
+验证结果：
+
+- `cargo fmt --all -- --check`：PASS
+- `cmd /c pnpm.cmd lint`：PASS，0 warnings / 0 errors
+- `cmd /c pnpm.cmd build`：PASS；保留既有 Vite warning：`vconsole` direct eval、chunk size、`useTransport` ineffective dynamic import。
+- `cargo check -p reader-core`：PASS
+- `cargo check -p legado-tauri`：PASS
+- `cargo test -p reader-core`：PASS，49+7+8+17+1+1+3+1 组离线用例通过，live/私有 fixture 用例保持 ignored
+- `cargo test -p legado-tauri`：PASS，lib 1/1、ws_router 12/12
+- `node scripts/ci/check-command-contract.mjs --json`：PASS，frontendTotal=162，registeredTotal=161，bothCount=161，onlyBackend=0，frontend unsupported stub=39
+- `git diff --check`：PASS
+
+实网验证：
+
+- 非破坏性解析 `http://yuedu.miaogongzi.net/shuyuan/miaogongziDY.json`：订阅项 1 个，解析出 10 个有效书源包；每个包均可下载并识别为阅读书源 JSON，未再把 B 站动态/主页等非 JSON 页面强行导入。
+
+UI 验证：
+
+- `legado-headless --port 7788 --bind 127.0.0.1 --dist dist` + in-app Browser 打开 `http://127.0.0.1:7788/?ws=ws://127.0.0.1:7788/ws`。
+- 1000x800：`书源管理` 标题 `writingMode=horizontal-tb`、`whiteSpace=nowrap`、实际 80x32，header 操作按钮无重叠。
+- 390x800：标题仍为横向 80x32，操作按钮折行但无重叠。浏览器模拟下左侧栏仍占 200px，作为后续 UI 收口候选，不在本轮扩大修复。
+
+后续候选：
+
+- 打包性能：拆分 `vendor-vue-naive` / `useOverlay` / `BookSourceView` 大 chunk，处理 `useTransport` 无效动态导入。
+- 窄屏框架：评估桌面浏览器 390px 下侧栏占宽问题，和 Android 真实触屏媒体条件分开验证。

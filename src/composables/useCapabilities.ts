@@ -126,9 +126,9 @@ const fallbackCapabilities: AppCapabilities = {
     "issue_scoped_unlock_challenge",
     "verify_scoped_unlock_challenge",
   ]),
-  aiProxy: unsupported(
-    "AI HTTP proxy is not implemented in this build; AI features use direct connections.",
-    ["ai_http_proxy_url"],
+  aiProxy: supported(
+    "AI HTTP proxy is available for whitelisted OpenAI-compatible model endpoints.",
+    ["ai_http_proxy_request"],
   ),
   pluginHttp: unsupported("Frontend plugin HTTP bridge is not implemented in this build.", [
     "frontend_plugin_http_request",

@@ -33,7 +33,7 @@ void capabilities.loadCapabilities();
 
 // sources / loading / streamingLoaded 直接响应式引用 store，流式批次到达时自动更新
 const { sources, loading, sourceDirs: storeDirs, streamingLoaded } = storeToRefs(bookSourceStore);
-const { onlineRepoDeepLinkRequest } = storeToRefs(navigationStore);
+const { onlineRepoDeepLinkRequest, bookSourceImportDeepLinkRequest } = storeToRefs(navigationStore);
 
 type BookSourceTab = "installed" | "online" | "debug" | "test" | "ai";
 const BOOK_SOURCE_TABS: BookSourceTab[] = ["installed", "online", "debug", "test", "ai"];
@@ -123,6 +123,25 @@ async function handleOnlineRepoDeepLinkRequest() {
   navigationStore.consumeOnlineRepoDeepLinkRequest(request.id);
 }
 
+async function handleBookSourceImportDeepLinkRequest() {
+  const request = bookSourceImportDeepLinkRequest.value;
+  if (!request) {
+    return;
+  }
+
+  activeTab.value = "installed";
+  await nextTick();
+  if (!installedRef.value) {
+    await nextTick();
+  }
+  if (!installedRef.value) {
+    return;
+  }
+
+  await installedRef.value.importLegacyJsonFromDeepLink(request.url);
+  navigationStore.consumeBookSourceImportDeepLinkRequest(request.id);
+}
+
 watch(
   () => [activeTab.value, debugRef.value, pendingDebugSource.value] as const,
   async ([tab, debugInstance, source]) => {
@@ -140,6 +159,14 @@ watch(
   () => [onlineRepoDeepLinkRequest.value?.id, onlineRef.value] as const,
   () => {
     void handleOnlineRepoDeepLinkRequest();
+  },
+  { flush: "post", immediate: true },
+);
+
+watch(
+  () => [bookSourceImportDeepLinkRequest.value?.id, installedRef.value] as const,
+  () => {
+    void handleBookSourceImportDeepLinkRequest();
   },
   { flush: "post", immediate: true },
 );
@@ -176,6 +203,7 @@ const newSourceOptions = [
 const legacyJsonImportOptions = [
   { label: "选择文件导入", key: "import-legacy-file" },
   { label: "输入 URL 导入", key: "import-legacy-url" },
+  { label: "喵公子订阅", key: "import-miaogongzi" },
 ];
 
 const mobileMenuOptions = computed(() => [
@@ -184,6 +212,7 @@ const mobileMenuOptions = computed(() => [
   { label: "导入在线", key: "import-online" },
   { label: "阅读源文件导入", key: "import-legacy-file" },
   { label: "阅读源 URL 导入", key: "import-legacy-url" },
+  { label: "喵公子订阅", key: "import-miaogongzi" },
   { label: "导出书源", key: "export-file" },
   { label: "新建书源", key: "new", children: newSourceOptions },
   { label: "全部重载", key: "reload", disabled: loading.value },
@@ -222,6 +251,9 @@ function handleMobileMenuSelect(key: string) {
       break;
     case "import-legacy-url":
       installedRef.value?.importLegacyJsonFromUrl();
+      break;
+    case "import-miaogongzi":
+      installedRef.value?.importMiaoGongziSubscription();
       break;
     case "export-file":
       void installedRef.value?.exportSources();
@@ -500,6 +532,19 @@ onUnmounted(() => {
   /* background: var(--color-bg-page); */
 }
 
+.booksource-view :deep(.app-page-header__title-group) {
+  flex: 0 0 auto;
+  min-width: max-content;
+  flex-wrap: wrap;
+}
+
+.booksource-view :deep(.app-page-header__actions) {
+  flex: 1 1 520px;
+  min-width: min(100%, 360px);
+  max-width: none;
+  margin-left: 0;
+}
+
 .bv-header__dir {
   display: flex;
   align-items: center;
@@ -640,6 +685,16 @@ onUnmounted(() => {
 
 /* ── 移动端适配 ── */
 @media (pointer: coarse), (max-width: 640px) {
+  .booksource-view :deep(.app-page-header__title-group),
+  .booksource-view :deep(.app-page-header__actions) {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+
+  .booksource-view :deep(.app-page-header__actions) {
+    justify-content: flex-start;
+  }
+
   .bv-tabs {
     min-height: 0;
     padding: 0 12px;

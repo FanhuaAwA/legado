@@ -547,10 +547,6 @@ pub async fn repository_check_source_sync(
 
 // ── 杂项 ──────────────────────────────────────────────────
 #[tauri::command]
-pub async fn ai_http_proxy_url() -> CommandResult<()> {
-    Err(u("AI HTTP 代理"))
-}
-#[tauri::command]
 pub async fn frontend_plugin_http_request() -> CommandResult<()> {
     Err(u("前端插件 HTTP"))
 }

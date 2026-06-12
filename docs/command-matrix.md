@@ -2,7 +2,7 @@
 
 本文件由 `scripts/ci/check-command-contract.mjs` 的实测结果半自动重建。旧的 2026-06-09 手工矩阵已删除，后续不得再手工沿用过期统计。
 
-最后实测：2026-06-12 CAP-SYNC WebDAV 轮
+最后实测：2026-06-13 MAINT-IMPORT-UI-PERF 轮
 
 实测命令：
 
@@ -13,17 +13,17 @@ node scripts/ci/check-command-contract.mjs
 
 ## 统计口径
 
-| 指标                              | 数值 | 说明                                                             |
-| --------------------------------- | ---: | ---------------------------------------------------------------- |
-| frontendTotal                     |  162 | 前端 invoke 调用去重后数量                                       |
-| registeredTotal                   |  161 | `generate_handler!` 注册命令数量                                 |
-| bothCount                         |  161 | 前后端同名匹配数量                                               |
-| onlyFrontend                      |    1 | `js_eval`，安全阻断，有意不注册                                  |
-| onlyBackend                       |    0 | 无                                                               |
-| registered_implemented_count      |  121 | 全部已注册命令中的实现数量                                       |
-| registered_unsupported_stub_count |   40 | 全部已注册命令中的 UNSUPPORTED stub                              |
-| frontend_implemented_count        |  121 | 前端可触达且已实现                                               |
-| frontend_unsupported_stub_count   |   40 | 前端可触达但仅返回 UNSUPPORTED（CAP-REPO 后 52，CAP-SYNC 后 40） |
+| 指标                              | 数值 | 说明                                                                                    |
+| --------------------------------- | ---: | --------------------------------------------------------------------------------------- |
+| frontendTotal                     |  162 | 前端 invoke 调用去重后数量                                                              |
+| registeredTotal                   |  161 | `generate_handler!` 注册命令数量                                                        |
+| bothCount                         |  161 | 前后端同名匹配数量                                                                      |
+| onlyFrontend                      |    1 | `js_eval`，安全阻断，有意不注册                                                         |
+| onlyBackend                       |    0 | 无                                                                                      |
+| registered_implemented_count      |  122 | 全部已注册命令中的实现数量                                                              |
+| registered_unsupported_stub_count |   39 | 全部已注册命令中的 UNSUPPORTED stub                                                     |
+| frontend_implemented_count        |  122 | 前端可触达且已实现                                                                      |
+| frontend_unsupported_stub_count   |   39 | 前端可触达但仅返回 UNSUPPORTED（CAP-REPO 后 52，CAP-SYNC 后 40，AI-DEEPSEEK-MGZ 后 39） |
 
 `classification` 数组的口径是 `frontend-facing registered commands`。需要全注册命令时使用 `registeredClassification`。
 
@@ -54,6 +54,8 @@ R-P1-004 修正前端扫描器后，当前无 backend-only 命令。旧表中的
 > 2026-06-12（CAP-REPO）：`repository/source_update` 6 命令已真实实现（`booksource_check_update`/`booksource_apply_update`/`repository_fetch`/`repository_install`/`repository_preview_source`/`repository_check_source_sync`），`repository` capability 置 `supported: true`，已从本表移出、计入「Implemented」。stub 数 58→52。
 >
 > 2026-06-12（CAP-SYNC WebDAV）：WebDAV 同步 12 命令已真实实现（凭据保存/只回是否已设置、连接测试、状态、push/pull/sync、冲突列表/解决、客户端状态推送、阅读进度同步、生命周期通知），新增 `syncWebdav` capability supported，旧 `sync` capability 仅保留百度/FTP provider 未实现命令。stub 数 52→40。
+>
+> 2026-06-12（AI-DEEPSEEK-MGZ）：`ai_http_proxy_url` 旧 stub 已移除，新增 `ai_http_proxy_request` 真实实现并注册到 Tauri/WS/capability；AI 代理按 POST + 域名白名单 + 路径白名单 + 内网地址阻断执行。stub 数 40→39。
 
 | 模块               | Command                          | 当前处置            |
 | ------------------ | -------------------------------- | ------------------- |
@@ -90,7 +92,6 @@ R-P1-004 修正前端扫描器后，当前无 backend-only 命令。旧表中的
 | comic_cover        | `cover_resolve_cache`            | blocked_by_platform |
 | comic_cover        | `cover_cache_size`               | blocked_by_platform |
 | comic_cover        | `cover_cache_clear`              | blocked_by_platform |
-| update/unlock/misc | `ai_http_proxy_url`              | blocked_by_platform |
 | update/unlock/misc | `frontend_plugin_http_request`   | unsupported_hidden  |
 | update/unlock/misc | `explore_clear_cache`            | blocked_by_platform |
 | update/unlock/misc | `issue_full_mode_challenge`      | unsupported_hidden  |
@@ -103,6 +104,7 @@ R-P1-004 修正前端扫描器后，当前无 backend-only 命令。旧表中的
 以下命令由契约脚本判定为前端可触达且非 UNSUPPORTED stub。业务深度不由本矩阵替代专项验收。
 
 ```text
+ai_http_proxy_request
 app_config_get_all
 app_config_reset
 app_config_set

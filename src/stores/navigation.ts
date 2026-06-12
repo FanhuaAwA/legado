@@ -13,6 +13,11 @@ export interface PluginDeepLinkRequest {
   url: string;
 }
 
+export interface BookSourceImportDeepLinkRequest {
+  id: number;
+  url: string;
+}
+
 export const useNavigationStore = defineStore("navigation", () => {
   /** 当前激活的视图 ID */
   const activeView = ref("bookshelf");
@@ -21,6 +26,8 @@ export const useNavigationStore = defineStore("navigation", () => {
   let onlineRepoDeepLinkSeq = 0;
   const pluginDeepLinkRequest = ref<PluginDeepLinkRequest | null>(null);
   let pluginDeepLinkSeq = 0;
+  const bookSourceImportDeepLinkRequest = ref<BookSourceImportDeepLinkRequest | null>(null);
+  let bookSourceImportDeepLinkSeq = 0;
 
   /** 搜索视图的初始限定书源（优先 sourceKey，兼容 fileName），null 表示搜索全部书源 */
   const searchInitSource = ref<string | null>(null);
@@ -52,6 +59,14 @@ export const useNavigationStore = defineStore("navigation", () => {
     activeView.value = "extensions";
   }
 
+  function navigateToBookSourceImport(url: string) {
+    bookSourceImportDeepLinkRequest.value = {
+      id: ++bookSourceImportDeepLinkSeq,
+      url,
+    };
+    activeView.value = "booksource";
+  }
+
   function consumeOnlineRepoDeepLinkRequest(id: number) {
     if (onlineRepoDeepLinkRequest.value?.id === id) {
       onlineRepoDeepLinkRequest.value = null;
@@ -64,16 +79,25 @@ export const useNavigationStore = defineStore("navigation", () => {
     }
   }
 
+  function consumeBookSourceImportDeepLinkRequest(id: number) {
+    if (bookSourceImportDeepLinkRequest.value?.id === id) {
+      bookSourceImportDeepLinkRequest.value = null;
+    }
+  }
+
   return {
     activeView,
     searchInitSource,
     onlineRepoDeepLinkRequest,
     pluginDeepLinkRequest,
+    bookSourceImportDeepLinkRequest,
     navigateToSearch,
     setActiveView,
     navigateToOnlineRepo,
     navigateToPluginInstall,
+    navigateToBookSourceImport,
     consumeOnlineRepoDeepLinkRequest,
     consumePluginDeepLinkRequest,
+    consumeBookSourceImportDeepLinkRequest,
   };
 });

@@ -18,28 +18,82 @@ withDefaults(
 );
 
 const isMaximized = ref(false);
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let appWindow: any = null;
+type AppWindowApi = {
+  isMaximized: () => Promise<boolean>;
+  minimize: () => Promise<void>;
+  toggleMaximize: () => Promise<void>;
+  close: () => Promise<void>;
+  onResized: (handler: () => void) => Promise<() => void>;
+};
+
+let appWindow: AppWindowApi | null = null;
 let unlisten: (() => void) | undefined;
 let iconSize = 15;
 
+async function ensureAppWindow(): Promise<AppWindowApi | null> {
+  if (appWindow) {
+    return appWindow;
+  }
+  if (!isTauri) {
+    return null;
+  }
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    appWindow = getCurrentWindow() as AppWindowApi;
+    return appWindow;
+  } catch (error) {
+    console.warn("[TitleBar] 获取窗口对象失败:", error);
+    return null;
+  }
+}
+
 async function refreshMaximized() {
-  if (!appWindow) {
+  const currentWindow = await ensureAppWindow();
+  if (!currentWindow) {
     return;
   }
-  isMaximized.value = await appWindow.isMaximized();
+  try {
+    isMaximized.value = await currentWindow.isMaximized();
+  } catch (error) {
+    console.warn("[TitleBar] 刷新窗口状态失败:", error);
+  }
 }
 
 async function minimize() {
-  await appWindow?.minimize();
+  const currentWindow = await ensureAppWindow();
+  if (!currentWindow) {
+    return;
+  }
+  try {
+    await currentWindow.minimize();
+  } catch (error) {
+    console.warn("[TitleBar] 最小化失败:", error);
+  }
 }
 
 async function toggleMaximize() {
-  await appWindow?.toggleMaximize();
+  const currentWindow = await ensureAppWindow();
+  if (!currentWindow) {
+    return;
+  }
+  try {
+    await currentWindow.toggleMaximize();
+    await refreshMaximized();
+  } catch (error) {
+    console.warn("[TitleBar] 最大化/还原失败:", error);
+  }
 }
 
 async function closeWindow() {
-  await appWindow?.close();
+  const currentWindow = await ensureAppWindow();
+  if (!currentWindow) {
+    return;
+  }
+  try {
+    await currentWindow.close();
+  } catch (error) {
+    console.warn("[TitleBar] 关闭窗口失败:", error);
+  }
 }
 
 onMounted(async () => {
@@ -47,12 +101,16 @@ onMounted(async () => {
     return;
   }
   try {
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    appWindow = getCurrentWindow();
+    const currentWindow = await ensureAppWindow();
+    if (!currentWindow) {
+      return;
+    }
     await refreshMaximized();
-    unlisten = await appWindow.onResized(() => refreshMaximized());
-  } catch {
-    // 非 Tauri 环境静默处理，不影响页面加载
+    unlisten = await currentWindow.onResized(() => {
+      void refreshMaximized();
+    });
+  } catch (error) {
+    console.warn("[TitleBar] 初始化窗口控制失败:", error);
   }
 });
 
@@ -69,8 +127,8 @@ onUnmounted(() => {
     aria-hidden="true"
   />
   <!-- 桌面端：完整标题栏 + 窗口控制 -->
-  <header v-else class="title-bar" data-tauri-drag-region>
-    <span v-if="isMobile" class="title-bar__title">{{ title }}</span>
+  <header v-else class="title-bar">
+    <span v-if="isMobile" class="title-bar__title" data-tauri-drag-region>{{ title }}</span>
     <div class="title-bar__spacer" data-tauri-drag-region />
     <!-- 仅 Tauri 桌面环境显示窗口控制按钮 -->
     <div v-if="showDesktopControls" class="title-bar__controls">
@@ -78,6 +136,7 @@ onUnmounted(() => {
         class="ctrl-btn ctrl-btn--minimize"
         aria-label="最小化"
         tabindex="0"
+        @pointerdown.stop
         @click="minimize"
       >
         <Minus :size="iconSize" />
@@ -86,12 +145,19 @@ onUnmounted(() => {
         class="ctrl-btn ctrl-btn--maximize"
         :aria-label="isMaximized ? '还原' : '最大化'"
         tabindex="0"
+        @pointerdown.stop
         @click="toggleMaximize"
       >
         <Copy v-if="isMaximized" :size="iconSize" />
         <Square v-else :size="iconSize" />
       </button>
-      <button class="ctrl-btn ctrl-btn--close" aria-label="关闭" tabindex="0" @click="closeWindow">
+      <button
+        class="ctrl-btn ctrl-btn--close"
+        aria-label="关闭"
+        tabindex="0"
+        @pointerdown.stop
+        @click="closeWindow"
+      >
         <X :size="iconSize" />
       </button>
     </div>
@@ -107,7 +173,7 @@ onUnmounted(() => {
   padding-left: var(--space-4);
   background: transparent;
   user-select: none;
-  -webkit-app-region: drag;
+  -webkit-app-region: no-drag;
 }
 
 .title-bar__title {
@@ -116,7 +182,7 @@ onUnmounted(() => {
   color: var(--color-text);
   letter-spacing: 0.02em;
   flex-shrink: 0;
-  -webkit-app-region: no-drag;
+  -webkit-app-region: drag;
 }
 
 .title-bar__spacer {

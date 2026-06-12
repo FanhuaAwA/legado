@@ -47,7 +47,7 @@ watch(
 </script>
 
 <template>
-  <n-dialog
+  <n-modal
     v-model:show="showDialog"
     :show-icon="true"
     type="warning"
@@ -71,7 +71,7 @@ watch(
         <p class="warning-text">可以在「书源管理」中对书源进行启用/禁用或删除操作。</p>
       </div>
     </template>
-  </n-dialog>
+  </n-modal>
 </template>
 
 <style scoped>

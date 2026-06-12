@@ -1154,8 +1154,68 @@ export function validateRepositoryManifest(
   return { ok: errors.length === 0, errors, warnings };
 }
 
+function stringifyErrorField(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value) ?? Object.prototype.toString.call(value);
+  } catch {
+    return Object.prototype.toString.call(value);
+  }
+}
+
+function clipErrorText(value: string, limit = 360): string {
+  if (value.length <= limit) {
+    return value;
+  }
+  return `${value.slice(0, limit)}...`;
+}
+
+export function formatBookSourceError(error: unknown, fallback = "操作失败"): string {
+  if (error instanceof Error) {
+    return clipErrorText(error.message || fallback);
+  }
+  if (typeof error === "string") {
+    return clipErrorText(error || fallback);
+  }
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    const message = stringifyErrorField(record.message).trim();
+    const detail = stringifyErrorField(record.detail).trim();
+    const code = stringifyErrorField(record.code).trim();
+    const nested = stringifyErrorField(record.error).trim();
+    const parts: string[] = [];
+
+    if (message) {
+      parts.push(message);
+    }
+    if (detail && detail !== message) {
+      parts.push(detail);
+    }
+    if (!message && nested) {
+      parts.push(nested);
+    }
+    if (code) {
+      parts.push(`错误码: ${code}`);
+    }
+    if (parts.length) {
+      return clipErrorText(parts.join("；"));
+    }
+  }
+
+  const raw = stringifyErrorField(error);
+  return clipErrorText(raw && raw !== "undefined" ? raw : fallback);
+}
+
 export function formatRepositoryError(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error);
+  const raw = formatBookSourceError(error, "仓库请求失败");
   if (!raw || raw === "undefined") {
     return "仓库请求失败";
   }

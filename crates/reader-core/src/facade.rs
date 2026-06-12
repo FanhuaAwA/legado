@@ -9,6 +9,7 @@ use crate::dto::{
     SyncStatus, SyncV2ProgressResult, UpdateShelfBookPayload,
 };
 use crate::error::ReaderCoreError;
+use crate::model::ai_proxy::{ai_proxy_timeout, validate_ai_proxy_url, AiHttpProxyResponse};
 use crate::model::article_source::ArticleSource;
 use crate::model::book::Book;
 use crate::model::book_chapter::BookChapter;
@@ -2957,6 +2958,67 @@ impl ReaderCore {
         Ok(fut.send().await?.text().await?)
     }
 
+    /// AI 模型代理请求（白名单路径，避免前端 CORS 问题）。
+    pub async fn ai_proxy_request(
+        &self,
+        url: &str,
+        method: &str,
+        body: Option<&str>,
+        headers: Option<&[String]>,
+    ) -> Result<AiHttpProxyResponse, ReaderCoreError> {
+        let target = validate_ai_proxy_url(url).map_err(ReaderCoreError::Message)?;
+        let m = if method.is_empty() { "POST" } else { method };
+        let method = reqwest::Method::from_bytes(m.as_bytes())
+            .map_err(|e| ReaderCoreError::Message(format!("无效 HTTP 方法: {e}")))?;
+        if method != reqwest::Method::POST {
+            return Err(ReaderCoreError::Message(
+                "AI HTTP 代理仅支持 POST 请求".to_string(),
+            ));
+        }
+
+        let client = self.book_service.http_client();
+        let mut req = client.request(method, target);
+        if let Some(hdrs) = headers {
+            for h in hdrs {
+                if let Some((raw_key, raw_value)) = h.split_once(':') {
+                    let key = raw_key.trim();
+                    if key.eq_ignore_ascii_case("host")
+                        || key.eq_ignore_ascii_case("content-length")
+                        || key.eq_ignore_ascii_case("connection")
+                    {
+                        continue;
+                    }
+                    req = req.header(key, raw_value.trim());
+                }
+            }
+        }
+        if let Some(b) = body {
+            req = req.body(b.to_string());
+        }
+
+        let response = req.timeout(ai_proxy_timeout()).send().await?;
+        let status = response.status().as_u16();
+        let headers = response
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| {
+                if name.as_str().eq_ignore_ascii_case("set-cookie") {
+                    return None;
+                }
+                value
+                    .to_str()
+                    .ok()
+                    .map(|value| format!("{}: {}", name.as_str(), value))
+            })
+            .collect();
+        let body = response.text().await?;
+        Ok(AiHttpProxyResponse {
+            status,
+            headers,
+            body,
+        })
+    }
+
     /// 删除书源草稿
     pub async fn delete_draft(&self, file_name: &str) -> Result<(), ReaderCoreError> {
         ensure_safe_file_name(file_name)?;
@@ -3379,6 +3441,18 @@ fn js_capabilities(content: &str) -> Vec<String> {
     if has_js_capability(content, "content") || has_js_capability(content, "chapterContent") {
         out.push("content".to_string());
         out.push("chapterContent".to_string());
+    }
+    if has_js_capability(content, "chapterParagraphCommentCounts") {
+        out.push("chapterParagraphCommentCounts".to_string());
+    }
+    if has_js_capability(content, "chapterParagraphComments") {
+        out.push("chapterParagraphComments".to_string());
+    }
+    if has_js_capability(content, "likeParagraphComment") {
+        out.push("likeParagraphComment".to_string());
+    }
+    if has_js_capability(content, "replyParagraphComment") {
+        out.push("replyParagraphComment".to_string());
     }
     if has_js_capability(content, "explore") {
         out.push("explore".to_string());

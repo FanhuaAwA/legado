@@ -66,6 +66,7 @@ interface UseReaderContentStateOptions {
     fileName: string,
     chapterUrl: string,
     context: ParagraphCommentContext,
+    sourceDir?: string,
   ) => Promise<unknown>;
   getContent: (shelfId: string, index: number) => Promise<string | null | undefined>;
   saveContent: (shelfId: string, index: number, content: string) => Promise<unknown>;
@@ -379,6 +380,7 @@ export function useReaderContentState(options: UseReaderContentStateOptions) {
         source.fileName,
         source.chapterUrl,
         context,
+        source.sourceDir,
       );
       const summaries = normalizeParagraphCommentSummaries(raw, paragraphs.length);
       paragraphCommentCacheKeyByIndex.set(index, cacheKey);

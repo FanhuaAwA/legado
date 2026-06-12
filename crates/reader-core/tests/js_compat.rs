@@ -256,6 +256,36 @@ async function chapterContent(chapterUrl) {{
   const resp = await legado.http.get(chapterUrl);
   return JSON.parse(resp).content;
 }}
+
+function chapterParagraphCommentCounts(chapterUrl, context) {{
+  return {{
+    "0+0": 2,
+    "1+1": {{ count: context.paragraphCount > 1 ? 1 : 0 }}
+  }};
+}}
+
+function chapterParagraphComments(chapterUrl, rangeKey, query) {{
+  return {{
+    comments: [{{
+      id: `comment-${{rangeKey}}`,
+      nickname: "Codex",
+      content: `range=${{rangeKey}}, page=${{query.page || 1}}`,
+      likeCount: 3,
+      liked: false,
+      replyCount: 0
+    }}],
+    total: 1,
+    hasMore: false
+  }};
+}}
+
+function likeParagraphComment(chapterUrl, rangeKey, commentId, liked) {{
+  return {{ ok: true, commentId, liked }};
+}}
+
+function replyParagraphComment(chapterUrl, rangeKey, commentId, content) {{
+  return {{ ok: true, commentId, content }};
+}}
 "#
     );
     core.save_js_source("js-fixture.js", &source, None)
@@ -266,7 +296,38 @@ async function chapterContent(chapterUrl) {{
         core.eval_source_capabilities("js-fixture.js", None)
             .await
             .unwrap(),
-        "search,bookInfo,toc,chapterList,content,chapterContent"
+        "search,bookInfo,toc,chapterList,content,chapterContent,chapterParagraphCommentCounts,chapterParagraphComments,likeParagraphComment,replyParagraphComment"
+    );
+
+    let comment_counts = core
+        .source_call_fn(
+            "js-fixture.js",
+            "chapterParagraphCommentCounts",
+            vec![json!("chapter://1"), json!({ "paragraphCount": 2 })],
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(comment_counts["0+0"], 2);
+    assert_eq!(comment_counts["1+1"]["count"], 1);
+
+    let comment_details = core
+        .source_call_fn(
+            "js-fixture.js",
+            "chapterParagraphComments",
+            vec![
+                json!("chapter://1"),
+                json!("0+0"),
+                json!({ "page": 2, "pageSize": 20 }),
+            ],
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(comment_details["comments"][0]["id"], "comment-0+0");
+    assert_eq!(
+        comment_details["comments"][0]["content"],
+        "range=0+0, page=2"
     );
 
     let books = core

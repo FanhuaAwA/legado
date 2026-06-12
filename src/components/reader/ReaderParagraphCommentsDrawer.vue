@@ -65,8 +65,8 @@ async function refreshCapabilities() {
   }
   await bookSourceStore.ensureCapsLoaded();
   const sourceCapabilities =
-    bookSourceStore.getCachedCapabilities(target.fileName) ??
-    (await bookSourceStore.detectCapabilities(target.fileName));
+    bookSourceStore.getCachedCapabilities(target.fileName, target.sourceDir) ??
+    (await bookSourceStore.detectCapabilities(target.fileName, target.sourceDir));
   capabilities.value = getParagraphCommentCapabilities(sourceCapabilities);
 }
 
@@ -95,6 +95,7 @@ async function loadComments(reset = true) {
       target.chapterUrl,
       target.key,
       { page: page.value, pageSize },
+      target.sourceDir,
     );
     const detailPage = normalizeParagraphCommentDetailPage(raw);
     total.value = detailPage.total || target.count;
@@ -127,6 +128,7 @@ async function toggleLike(comment: ParagraphCommentDetail) {
       target.key,
       comment.id,
       nextLiked,
+      target.sourceDir,
     );
     comment.liked = nextLiked;
     comment.likeCount = Math.max(0, comment.likeCount + (nextLiked ? 1 : -1));
@@ -150,6 +152,7 @@ async function submitReply() {
       target.key,
       rootComment.id,
       content,
+      target.sourceDir,
     );
     replyContent.value = "";
     await loadComments(true);

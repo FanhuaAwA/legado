@@ -34,6 +34,10 @@ function dispatchPluginEvent(url: string) {
   navigationStore.navigateToPluginInstall(url);
 }
 
+function dispatchBookSourceImportEvent(url: string) {
+  navigationStore.navigateToBookSourceImport(url);
+}
+
 function enqueueLinks(urls: string[]) {
   for (const raw of urls) {
     if (!raw?.trim()) {
@@ -49,6 +53,8 @@ function enqueueLinks(urls: string[]) {
       dispatchRepoEvent(payload.url, payload.name);
     } else if (payload.type === "plugin") {
       dispatchPluginEvent(payload.url);
+    } else if (payload.type === "booksourceSubscription") {
+      dispatchBookSourceImportEvent(payload.url);
     } else {
       queue.push(raw);
     }
@@ -77,6 +83,10 @@ function openNext() {
     return;
   } else if (result.type === "plugin") {
     dispatchPluginEvent(result.url);
+    void openNext();
+    return;
+  } else if (result.type === "booksourceSubscription") {
+    dispatchBookSourceImportEvent(result.url);
     void openNext();
     return;
   } else {

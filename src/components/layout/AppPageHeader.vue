@@ -59,6 +59,7 @@ withDefaults(
   align-items: center;
   gap: 10px;
   min-width: 0;
+  flex-wrap: wrap;
 }
 
 .app-page-header__leading {
@@ -81,7 +82,9 @@ withDefaults(
   font-size: var(--fs-20);
   font-weight: var(--fw-bold);
   color: var(--color-text);
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .app-page-header__subtitle {
@@ -93,11 +96,14 @@ withDefaults(
 
 .app-page-header__actions {
   margin-left: auto;
-  flex-shrink: 0;
+  flex: 0 1 auto;
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
+  min-width: 0;
+  max-width: min(100%, 620px);
+  flex-wrap: wrap;
 }
 
 @media (pointer: coarse), (max-width: 640px) {
@@ -111,6 +117,10 @@ withDefaults(
 
   .app-page-header__title-row {
     align-items: flex-start;
+  }
+
+  .app-page-header__actions {
+    max-width: 100%;
   }
 
   .app-page-header__subtitle--hide-mobile {

@@ -239,6 +239,61 @@ async fn route_b_facade_imports_reads_and_persists_main_path() {
 }
 
 #[tokio::test]
+async fn legado_browser_action_captures_legacy_paragraph_comment_url() {
+    let temp = tempfile::tempdir().unwrap();
+    let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
+        .await
+        .unwrap();
+
+    let import = core
+        .import_legacy_json_text(
+            &json!({
+                "bookSourceName": "Legacy Comment Fixture",
+                "bookSourceUrl": "https://example.invalid",
+                "enabled": true,
+                "jsLib": r#"
+function showCmt(bid, cid, para, date) {
+  java.startBrowser(
+    'https://example.invalid/comments?book_id=' + bid + '&chapter_id=' + cid + '&paragraph_id=' + para + '&date=' + date,
+    'fixture paragraph'
+  );
+}
+"#,
+                "ruleContent": {
+                    "content": "#content@text"
+                }
+            })
+            .to_string(),
+            false,
+        )
+        .await
+        .unwrap();
+    assert_eq!(import.imported, 1);
+
+    let value = core
+        .source_call_fn(
+            &import.files[0],
+            "__legado_browser_action",
+            vec![json!({
+                "expression": "showCmt('book-1', 'chapter-2', 'para-3', 'date-4')",
+                "chapterUrl": "https://example.invalid/chapter/2",
+                "chapterTitle": "Fixture Chapter",
+                "chapterIndex": 1
+            })],
+            None,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(value["ok"], true);
+    assert_eq!(
+        value["browser"]["url"],
+        "https://example.invalid/comments?book_id=book-1&chapter_id=chapter-2&paragraph_id=para-3&date=date-4"
+    );
+    assert_eq!(value["browser"]["title"], "fixture paragraph");
+}
+
+#[tokio::test]
 async fn prefetch_chapters_respects_range_and_emits_progress() {
     let app = Router::new()
         .route("/book/1", get(book))

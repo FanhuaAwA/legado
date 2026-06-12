@@ -58,6 +58,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         source::booksource_open_in_vscode,
         source::booksource_delete_draft,
         source::booksource_http_proxy,
+        source::ai_http_proxy_request,
         // source_update
         source_update::booksource_apply_update,
         source_update::booksource_check_update,
@@ -179,7 +180,6 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         sync_misc::repository_fetch,
         sync_misc::repository_install,
         sync_misc::repository_preview_source,
-        sync_misc::ai_http_proxy_url,
         sync_misc::get_local_ips,
         sync_misc::frontend_plugin_http_request,
         sync_misc::explore_clear_cache,

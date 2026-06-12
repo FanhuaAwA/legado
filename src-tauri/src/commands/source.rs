@@ -1,4 +1,5 @@
 use crate::state::AppState;
+use reader_core::model::ai_proxy::AiHttpProxyResponse;
 use reader_core::{
     BookDetail, BookItem, BookSourceMeta, ChapterItem, CommandError, LegacyJsonImportResult,
 };
@@ -487,6 +488,30 @@ pub struct HttpProxyRequest {
     pub method: String,
     pub body: Option<String>,
     pub headers: Option<Vec<String>>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiHttpProxyRequest {
+    pub url: String,
+    pub method: String,
+    pub body: Option<String>,
+    pub headers: Option<Vec<String>>,
+}
+
+#[tauri::command]
+pub async fn ai_http_proxy_request(
+    state: State<'_, AppState>,
+    request: AiHttpProxyRequest,
+) -> CommandResult<AiHttpProxyResponse> {
+    let body = request.body.as_deref();
+    let headers: Option<Vec<String>> = request.headers;
+    let headers_ref: Option<&[String]> = headers.as_deref();
+    state
+        .core
+        .ai_proxy_request(&request.url, &request.method, body, headers_ref)
+        .await
+        .map_err(map_err)
 }
 
 #[tauri::command]

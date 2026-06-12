@@ -306,6 +306,7 @@ function openParagraphComments(payload: ParagraphCommentClickPayload) {
   paragraphCommentTarget.value = {
     ...payload,
     fileName: fileName.value,
+    sourceDir: bookInfo.value?.sourceDir,
     chapterIndex: activeChapterIndex.value,
     chapterName: currentChapterName.value,
     chapterUrl: currentChapterUrl.value,

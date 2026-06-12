@@ -61,7 +61,80 @@ const { createSession, selectSession, updateSession, deleteSession } = aiSession
 // ── AI 配置 ───────────────────────────────────────────────────────────────
 const config = ref<AiConfig>(loadAiConfig());
 const settingsDialogShow = ref(false);
+
+interface AiProviderPreset {
+  key: string;
+  label: string;
+  apiUrl: string;
+  model: string;
+  apiMode: AiConfig["apiMode"];
+  requestTransport: AiConfig["requestTransport"];
+  temperature?: number;
+}
+
+const AI_PROVIDER_PRESETS: AiProviderPreset[] = [
+  {
+    key: "deepseek-chat",
+    label: "DeepSeek V3",
+    apiUrl: "https://api.deepseek.com/v1",
+    model: "deepseek-chat",
+    apiMode: "chat",
+    requestTransport: "backend",
+    temperature: 0.2,
+  },
+  {
+    key: "deepseek-reasoner",
+    label: "DeepSeek R1",
+    apiUrl: "https://api.deepseek.com/v1",
+    model: "deepseek-reasoner",
+    apiMode: "chat",
+    requestTransport: "backend",
+    temperature: 0.2,
+  },
+  {
+    key: "openai-gpt4o",
+    label: "OpenAI GPT-4o",
+    apiUrl: "https://api.openai.com/v1",
+    model: "gpt-4o",
+    apiMode: "chat",
+    requestTransport: "backend",
+  },
+  {
+    key: "openai-responses",
+    label: "OpenAI Responses",
+    apiUrl: "https://api.openai.com/v1",
+    model: "gpt-4.1",
+    apiMode: "responses",
+    requestTransport: "backend",
+  },
+];
+
+const activeProviderPresetKey = computed(() => {
+  const apiUrl = config.value.apiUrl.trim().replace(/\/$/, "");
+  const model = config.value.model.trim();
+  return (
+    AI_PROVIDER_PRESETS.find(
+      (preset) =>
+        preset.apiUrl.replace(/\/$/, "") === apiUrl &&
+        preset.model === model &&
+        preset.apiMode === config.value.apiMode,
+    )?.key ?? ""
+  );
+});
+
 function onConfigChange() {
+  saveAiConfig(config.value);
+}
+
+function applyProviderPreset(preset: AiProviderPreset) {
+  config.value = {
+    ...config.value,
+    apiUrl: preset.apiUrl,
+    model: preset.model,
+    apiMode: preset.apiMode,
+    requestTransport: preset.requestTransport,
+    temperature: preset.temperature,
+  };
   saveAiConfig(config.value);
 }
 
@@ -1076,6 +1149,21 @@ function getToolStatus(activity: AgentActivity): string {
     >
       <div class="ai-config-panel">
         <div class="cfg-grid">
+          <div class="cfg-row cfg-row--presets">
+            <span class="cfg-label">供应商预设</span>
+            <div class="provider-preset-list">
+              <n-button
+                v-for="preset in AI_PROVIDER_PRESETS"
+                :key="preset.key"
+                size="small"
+                :type="activeProviderPresetKey === preset.key ? 'primary' : 'default'"
+                secondary
+                @click="applyProviderPreset(preset)"
+              >
+                {{ preset.label }}
+              </n-button>
+            </div>
+          </div>
           <div class="cfg-row">
             <span class="cfg-label">API 地址</span>
             <n-input
@@ -1460,6 +1548,9 @@ function getToolStatus(activity: AgentActivity): string {
   align-items: center;
   gap: 8px;
 }
+.cfg-row--presets {
+  align-items: flex-start;
+}
 .cfg-label {
   flex-shrink: 0;
   width: 66px;
@@ -1468,6 +1559,13 @@ function getToolStatus(activity: AgentActivity): string {
 }
 .cfg-input {
   flex: 1;
+}
+.provider-preset-list {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
 }
 .cfg-hint {
   margin: 8px 0 0;
