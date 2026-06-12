@@ -28,8 +28,9 @@ use crate::util::time::now_ts;
 use serde::Serialize;
 use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::fs;
 
@@ -60,6 +61,9 @@ pub struct ReaderCore {
     book_service: BookService,
     document_service: JsonDocumentService,
     sync_runtime: Arc<SyncRuntime>,
+    /// 每本书在跑的缓存任务取消令牌：同书新任务自动取消旧任务，
+    /// 防止前端调用超时重发导致任务堆积、对书源高频请求。
+    prefetch_tasks: Arc<tokio::sync::Mutex<HashMap<String, Arc<AtomicBool>>>>,
 }
 
 impl ReaderCore {
@@ -115,6 +119,7 @@ impl ReaderCore {
             book_service,
             document_service,
             sync_runtime: Arc::new(SyncRuntime::new()),
+            prefetch_tasks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         })
     }
 
@@ -1574,22 +1579,81 @@ impl ReaderCore {
             .await
     }
 
-    pub async fn prefetch_chapters(
+    pub async fn prefetch_chapters<F>(
         &self,
         id: &str,
         file_name: &str,
         source_dir: Option<&str>,
-        cancel_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-    ) -> Result<i32, ReaderCoreError> {
+        start_index: Option<i32>,
+        count: Option<i32>,
+        cancel_token: Option<Arc<AtomicBool>>,
+        on_progress: Option<F>,
+    ) -> Result<i32, ReaderCoreError>
+    where
+        F: Fn(i32, i32, i32) + Send + Sync + 'static,
+    {
+        // 同一本书同时只允许一个缓存任务：新任务取消旧任务。
+        let token = cancel_token.unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+        {
+            let mut tasks = self.prefetch_tasks.lock().await;
+            if let Some(prev) = tasks.insert(id.to_string(), token.clone()) {
+                prev.store(true, Ordering::SeqCst);
+            }
+        }
+        let result = self
+            .prefetch_chapters_inner(
+                id,
+                file_name,
+                source_dir,
+                start_index,
+                count,
+                &token,
+                on_progress,
+            )
+            .await;
+        let mut tasks = self.prefetch_tasks.lock().await;
+        if let Some(current) = tasks.get(id) {
+            if Arc::ptr_eq(current, &token) {
+                tasks.remove(id);
+            }
+        }
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn prefetch_chapters_inner<F>(
+        &self,
+        id: &str,
+        file_name: &str,
+        source_dir: Option<&str>,
+        start_index: Option<i32>,
+        count: Option<i32>,
+        cancel_token: &Arc<AtomicBool>,
+        on_progress: Option<F>,
+    ) -> Result<i32, ReaderCoreError>
+    where
+        F: Fn(i32, i32, i32) + Send + Sync + 'static,
+    {
         let chapters = self.shelf_get_chapters(id).await?;
-        let mut count = 0;
-        let mut errors = 0usize;
+        let start = start_index.unwrap_or(0).max(0);
+        // count：None 或负数表示缓存到书末，0 表示关闭，正数为向后缓存的章节数。
+        let end = match count {
+            Some(0) => return Ok(0),
+            Some(n) if n > 0 => start.saturating_add(n),
+            _ => i32::MAX,
+        };
+        // 总目标章节数（用于进度上报）
+        let total = (end.min(chapters.len() as i32) - start).max(0) as i32;
+        let mut fetched = 0;
         let max_retries = 2usize;
-        for chapter in &chapters {
-            if let Some(ref token) = cancel_token {
-                if token.load(std::sync::atomic::Ordering::SeqCst) {
-                    return Err(ReaderCoreError::Message("任务已取消".to_string()));
-                }
+        // 章节间最小延迟（毫秒），避免对书源连续高频请求导致 IP 拉黑。
+        let inter_chapter_delay_ms: u64 = 1500;
+        for chapter in chapters
+            .iter()
+            .filter(|c| c.index >= start && c.index < end)
+        {
+            if cancel_token.load(Ordering::SeqCst) {
+                return Err(ReaderCoreError::Message("任务已取消".to_string()));
             }
             if chapter.url.is_empty() {
                 continue;
@@ -1599,7 +1663,7 @@ impl ReaderCore {
                 continue;
             }
             let mut content = Err(ReaderCoreError::Message("未尝试".into()));
-            for _ in 0..=max_retries {
+            for attempt in 0..=max_retries {
                 match self
                     .chapter_content(file_name, &chapter.url, source_dir)
                     .await
@@ -1611,19 +1675,31 @@ impl ReaderCore {
                     Err(e) => {
                         tracing::warn!(
                             "prefetch retry {}/{} for chapter {}: {e}",
-                            errors,
+                            attempt + 1,
                             max_retries,
                             chapter_idx
                         );
-                        errors += 1;
+                        // 失败退避，避免对书源连续高频重试。
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            1000 * (attempt as u64 + 1),
+                        ))
+                        .await;
                     }
                 }
             }
             let content = content?;
             self.shelf_save_content(id, chapter_idx, &content).await?;
-            count += 1;
+            fetched += 1;
+            // 每章成功后上报进度
+            if let Some(ref cb) = on_progress {
+                cb(fetched, total, chapter_idx);
+            }
+            // 每章间等待，避免请求过于密集
+            if fetched < total && total > 1 {
+                tokio::time::sleep(std::time::Duration::from_millis(inter_chapter_delay_ms)).await;
+            }
         }
-        Ok(count)
+        Ok(fetched)
     }
 
     /// 创建本地备份：导出所有书架数据 + 书源列表到 JSON 文件

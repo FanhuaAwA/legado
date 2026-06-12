@@ -53,6 +53,43 @@ async fn content() -> Html<&'static str> {
     )
 }
 
+async fn prefetch_toc() -> Html<&'static str> {
+    Html(
+        r#"
+        <html><body>
+          <ul id="chapters">
+            <li><a href="/prefetch/chapter/1">第一章 已缓存</a></li>
+            <li><a href="/prefetch/chapter/2">第二章 待缓存</a></li>
+          </ul>
+        </body></html>
+        "#,
+    )
+}
+
+async fn prefetch_content_one() -> Html<&'static str> {
+    Html(
+        r#"
+        <html><body>
+          <article id="content">
+            <p>第一章预取测试正文。</p>
+          </article>
+        </body></html>
+        "#,
+    )
+}
+
+async fn prefetch_content_two() -> Html<&'static str> {
+    Html(
+        r#"
+        <html><body>
+          <article id="content">
+            <p>第二章预取测试正文。</p>
+          </article>
+        </body></html>
+        "#,
+    )
+}
+
 #[tokio::test]
 async fn route_b_facade_imports_reads_and_persists_main_path() {
     let app = Router::new()
@@ -197,6 +234,132 @@ async fn route_b_facade_imports_reads_and_persists_main_path() {
         Some(text)
     );
     assert_eq!(core.shelf_cached_indices(&shelf.id).await.unwrap(), vec![0]);
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn prefetch_chapters_respects_range_and_emits_progress() {
+    let app = Router::new()
+        .route("/book/1", get(book))
+        .route("/book/1/toc", get(prefetch_toc))
+        .route("/prefetch/chapter/1", get(prefetch_content_one))
+        .route("/prefetch/chapter/2", get(prefetch_content_two));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let base = format!("http://{}", addr);
+
+    let temp = tempfile::tempdir().unwrap();
+    let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
+        .await
+        .unwrap();
+
+    let import = core
+        .import_legacy_json_text(
+            &json!({
+                "bookSourceName": "Prefetch Fixture",
+                "bookSourceUrl": base,
+                "enabled": true,
+                "searchUrl": "/search?key={{key}}",
+                "ruleBookInfo": {
+                    "name": "h1@text",
+                    "author": ".author@text",
+                    "intro": "#intro@text",
+                    "tocUrl": "#toc@href"
+                },
+                "ruleToc": {
+                    "chapterList": "#chapters a",
+                    "chapterName": "text",
+                    "chapterUrl": "href"
+                },
+                "ruleContent": {
+                    "content": "#content@text"
+                }
+            })
+            .to_string(),
+            false,
+        )
+        .await
+        .unwrap();
+
+    let file_name = import.files[0].clone();
+    let detail = core
+        .book_info(&file_name, &format!("{base}/book/1"), None)
+        .await
+        .unwrap();
+    let chapters = core
+        .chapter_list(&file_name, detail.toc_url.as_deref().unwrap(), None)
+        .await
+        .unwrap();
+    assert_eq!(chapters.len(), 2);
+
+    let shelf = core
+        .shelf_add(
+            AddBookPayload {
+                name: detail.name,
+                author: Some(detail.author),
+                cover_url: detail.cover_url,
+                intro: detail.intro,
+                kind: detail.kind,
+                group_id: None,
+                book_url: format!("{base}/book/1"),
+                source_dir: None,
+                last_chapter: chapters.last().map(|chapter| chapter.name.clone()),
+                source_type: Some("novel".to_string()),
+            },
+            &file_name,
+            "Prefetch Fixture",
+        )
+        .await
+        .unwrap();
+
+    core.shelf_save_chapters(
+        &shelf.id,
+        chapters
+            .iter()
+            .enumerate()
+            .map(|(index, chapter)| CachedChapter {
+                index: index as i32,
+                name: chapter.name.clone(),
+                url: chapter.url.clone(),
+                group: chapter.group.clone(),
+                vip: chapter.vip,
+                price: None,
+                currency: None,
+            })
+            .collect(),
+    )
+    .await
+    .unwrap();
+
+    let progress = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let progress_for_callback = progress.clone();
+    let fetched = core
+        .prefetch_chapters(
+            &shelf.id,
+            &file_name,
+            None,
+            Some(1),
+            Some(1),
+            None,
+            Some(move |done, total, chapter_index| {
+                progress_for_callback
+                    .lock()
+                    .unwrap()
+                    .push((done, total, chapter_index));
+            }),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(fetched, 1);
+    assert_eq!(core.shelf_get_content(&shelf.id, 0).await.unwrap(), None);
+    let cached = core.shelf_get_content(&shelf.id, 1).await.unwrap().unwrap();
+    assert!(cached.contains("第二章预取测试正文"));
+    assert_eq!(*progress.lock().unwrap(), vec![(1, 1, 1)]);
 
     server.abort();
 }

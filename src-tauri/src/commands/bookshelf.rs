@@ -220,6 +220,10 @@ pub struct PrefetchPayload {
     pub file_name: String,
     pub source_dir: Option<String>,
     pub task_id: String,
+    /// 起始章节下标；None 时从头开始（兼容旧调用方）。
+    pub start_index: Option<i32>,
+    /// 向后缓存章节数；None 或负数表示缓存到书末。
+    pub count: Option<i32>,
 }
 
 #[tauri::command]
@@ -228,8 +232,21 @@ pub async fn bookshelf_prefetch_chapters(
     state: State<'_, AppState>,
     payload: PrefetchPayload,
 ) -> CommandResult<i32> {
-    let result = bookshelf_prefetch_chapters_impl(&state, &payload).await;
-    // Emit done event (per-chapter progress requires reader-core callback, deferred)
+    let tid = payload.task_id.clone();
+    let app_for_progress = app.clone();
+    let on_progress = move |done: i32, total: i32, chapter_index: i32| {
+        let _ = app_for_progress.emit(
+            "shelf:prefetch-progress",
+            serde_json::json!({
+                "taskId": tid,
+                "done": done,
+                "total": total,
+                "chapterIndex": chapter_index,
+            }),
+        );
+    };
+    let result = bookshelf_prefetch_chapters_impl(&state, &payload, Some(on_progress)).await;
+    // Emit done event.
     let _ = app.emit(
         "shelf:prefetch-done",
         serde_json::json!({
@@ -240,11 +257,15 @@ pub async fn bookshelf_prefetch_chapters(
     result
 }
 
-/// Shared implementation (WS router calls this — no AppHandle needed).
-pub async fn bookshelf_prefetch_chapters_impl(
+/// Shared implementation (WS router calls this — no AppHandle, no progress).
+pub async fn bookshelf_prefetch_chapters_impl<F>(
     state: &State<'_, AppState>,
     payload: &PrefetchPayload,
-) -> CommandResult<i32> {
+    on_progress: Option<F>,
+) -> CommandResult<i32>
+where
+    F: Fn(i32, i32, i32) + Send + Sync + 'static,
+{
     let cancelled = state.tasks.register(&payload.task_id);
     let result = state
         .core
@@ -252,7 +273,10 @@ pub async fn bookshelf_prefetch_chapters_impl(
             &payload.id,
             &payload.file_name,
             payload.source_dir.as_deref(),
+            payload.start_index,
+            payload.count,
             Some(cancelled),
+            on_progress,
         )
         .await
         .map_err(map_err);

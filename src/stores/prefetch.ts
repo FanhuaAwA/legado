@@ -227,7 +227,7 @@ export const usePrefetchStore = defineStore("prefetch", () => {
       await invokeWithTimeout(
         "bookshelf_prefetch_chapters",
         { payload: { ...payload, taskId: tid } },
-        10_000,
+        300_000,
       );
     } catch (e) {
       manualRunning.value = false;
@@ -277,7 +277,7 @@ export const usePrefetchStore = defineStore("prefetch", () => {
       await invokeWithTimeout(
         "bookshelf_prefetch_chapters",
         { payload: { ...payload, taskId: tid } },
-        10_000,
+        300_000,
       );
     } catch {
       silentRunning.value = false;

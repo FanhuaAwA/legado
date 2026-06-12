@@ -31,7 +31,13 @@ const BIND_ADDR: &str = "127.0.0.1:7688";
 /// 向 WS 客户端转发的后端事件清单。
 /// Tauri v2 没有「监听全部事件」的 API，新增后端事件名时必须同步追加，
 /// 否则 WS 客户端收不到（事件名是跨进程契约，见纪律文档第 4 节第 5 条）。
-const FORWARDED_EVENTS: &[&str] = &["rust:log", "app_config:changed", "script:dialog:result"];
+const FORWARDED_EVENTS: &[&str] = &[
+    "rust:log",
+    "app_config:changed",
+    "script:dialog:result",
+    "shelf:prefetch-progress",
+    "shelf:prefetch-done",
+];
 
 #[derive(Deserialize)]
 struct InboundMessage {

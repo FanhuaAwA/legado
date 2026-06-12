@@ -1565,3 +1565,88 @@ node scripts/ci/check-command-contract.mjs
 ```
 
 若脚本尚不存在，先实现该脚本并接入 `scripts/ci/quality-gate.mjs`，再更新 `docs/command-matrix.md`。不得先做 UI polish。
+
+---
+
+## 记录标题：2026-06-12 PREFETCH-LIVE-BUILD
+
+**本轮目标**：收口 `R-P2-012/PREFETCH-PROGRESS`，并按用户要求完成番茄、七猫、书旗三书源实网验证、Windows/Android 构建、Windows 产物 smoke 与构建缓存清理。
+
+**任务声明**：
+
+- 任务 ID：`R-P2-012/PREFETCH-PROGRESS`
+- 任务目标：`bookshelf_prefetch_chapters` 支持起始章节、数量限制、同书任务取消、进度/完成事件，并保持 Tauri IPC 与 WS 形态一致。
+- 允许修改文件：
+  - `crates/reader-core/src/facade.rs`
+  - `crates/reader-core/tests/route_b_facade.rs`
+  - `src-tauri/src/commands/bookshelf.rs`
+  - `src-tauri/src/commands/router.rs`
+  - `src-tauri/src/ws_server.rs`
+  - `src/stores/prefetch.ts`
+  - `docs/ai-task-status.md`
+  - `docs/ai-iteration-log.md`
+  - `reports/gates/2026-06-12-PREFETCH-LIVE-BUILD/*`
+
+**修改文件**：
+
+- `crates/reader-core/src/facade.rs`：预取新增 `start_index` / `count`，同一本书新任务取消旧任务；支持进度回调。
+- `crates/reader-core/tests/route_b_facade.rs`：新增 `prefetch_chapters_respects_range_and_emits_progress`。
+- `src-tauri/src/commands/bookshelf.rs`：`PrefetchPayload` 新增 `startIndex` / `count`，IPC 路径 emit `shelf:prefetch-progress` / `shelf:prefetch-done`。
+- `src-tauri/src/commands/router.rs`：WS 路由复用预取实现。
+- `src-tauri/src/ws_server.rs`：转发预取 progress/done 事件。
+- `src/stores/prefetch.ts`：预取 invoke timeout 提高到 300s。
+- `docs/ai-task-status.md`：本轮基线与 `R-P2-012` 状态更新。
+- `reports/gates/2026-06-12-PREFETCH-LIVE-BUILD/summary.md`：本轮 gate 报告。
+
+**验证命令**：
+
+```powershell
+git status --short
+node scripts/ci/check-command-contract.mjs --json
+cargo fmt --all -- --check
+cmd /c pnpm lint
+cmd /c pnpm build
+cargo check -p reader-core
+cargo test -p reader-core
+cargo check -p legado-tauri
+cargo test -p legado-tauri
+cargo test -p reader-core shuqi_source_full_chain -- --ignored --nocapture
+cargo test -p reader-core qimao_source_full_chain -- --ignored --nocapture
+cargo test -p reader-core fanqie_source_full_chain -- --ignored --nocapture
+cmd /c pnpm build:windows:release
+cmd /c pnpm build:android:release
+```
+
+**通过项**：
+
+| 命令 | 状态 |
+| --- | --- |
+| `node scripts/ci/check-command-contract.mjs --json` | PASS：162 / 161 / 161，onlyBackend=0，stub=40 |
+| `cargo fmt --all -- --check` | PASS |
+| `cmd /c pnpm lint` | PASS：0 warnings / 0 errors |
+| `cmd /c pnpm build` | PASS |
+| `cargo check -p reader-core` | PASS |
+| `cargo test -p reader-core` | PASS：新增预取测试通过 |
+| `cargo check -p legado-tauri` | PASS |
+| `cargo test -p legado-tauri` | PASS：1 lib + 11 ws_router |
+| `shuqi_source_full_chain` | PASS：toc 329 章，content 4657 字符 |
+| `qimao_source_full_chain` | PASS：toc 2551 章，content 15132 字符 |
+| `fanqie_source_full_chain` | PASS：toc 1928 章，content 3135 字符 |
+| `cmd /c pnpm build:windows:release` | PASS：`构建结果/windows/legado-tauri.exe` |
+| `cmd /c pnpm build:android:release` | PASS：提升权限后产出 `构建结果/android/app-universal-release-unsigned.apk` |
+
+**Windows 产物实测**：
+
+- 启动 `构建结果/windows/legado-tauri.exe` 后，进程未退出，主窗口标题为 `开源阅读`。
+- 本地 WS `ws://127.0.0.1:7688/ws` 调用 `capabilities_get` 返回真实 response。
+- Computer Use 插件初始化失败，无法进行截图级点击测试；错误见 gate summary。
+
+**清理**：
+
+- 已删除项目内 `target`、`dist`、`src-tauri/gen/android/app/build`。
+- 已保留 `构建结果/windows/legado-tauri.exe` 与 `构建结果/android/app-universal-release-unsigned.apk`。
+- 未删除 `node_modules`、pnpm store、Cargo registry、用户数据目录。
+
+**下轮第一件事**：
+
+若有第二台设备或可访问 LAN，做 `FORMB-LAN-VERIFY`；若当前环境无外部设备，则转 B 段剩余能力本体 `CAP-BROWSER`，先按审计文档第 4 节写范围声明，设计真实 session/导航/JS/cookie/UA 的最小实现与验收。

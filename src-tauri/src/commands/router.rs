@@ -475,7 +475,14 @@ pub async fn dispatch<R: tauri::Runtime>(
         }
         "bookshelf_prefetch_chapters" => {
             let payload = parsed!(raw, { payload: PrefetchPayload });
-            reply(bookshelf::bookshelf_prefetch_chapters_impl(&state, &payload).await)
+            reply(
+                bookshelf::bookshelf_prefetch_chapters_impl(
+                    &state,
+                    &payload,
+                    None::<fn(i32, i32, i32)>,
+                )
+                .await,
+            )
         }
         "bookshelf_export_book_data" => {
             let request = parsed!(raw, { request: ExportBookDataRequest });
