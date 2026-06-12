@@ -1939,8 +1939,13 @@ fn eval_field_json_with_ctx(
     let (_, _original_js, original_tail) = extract_js(rule);
 
     let interpolated_rule = interpolate_json_templates(rule, v, base_url, ctx);
-    let (pure_rule, regex_part) = split_legado_regex(&interpolated_rule);
-    let (pure, js, _tail) = extract_js(&pure_rule);
+    // Separate the @js:/<js> stage BEFORE splitting the `##` regex. Legado's
+    // field pipeline is: extract selector -> apply `##` regex -> run JS. Splitting
+    // the regex first would swallow a trailing `@js:` into the regex replacement
+    // (e.g. `selector##regex\n@js:...`), so neither the regex nor the JS would run.
+    let (pre_js_rule, js, _tail) = extract_js(&interpolated_rule);
+    let (pure_owned, regex_part) = split_legado_regex(pre_js_rule);
+    let pure = pure_owned.as_str();
     // Use tail from original rule (with {{result}} preserved), not from interpolated rule
     let tail = original_tail;
 
@@ -1971,6 +1976,12 @@ fn eval_field_json_with_ctx(
         pick_json_field(v, Some(pure)).unwrap_or_default()
     };
 
+    // Apply the `##` regex to the selector result BEFORE running JS, matching
+    // Legado's stage order so the JS sees the regex-cleaned `result`.
+    if let Some(reg) = regex_part {
+        text = apply_legado_regex(&text, reg);
+    }
+
     if let Some(script) = js {
         if let Ok(res) = eval_js(script, &text, base_url) {
             text = res;
@@ -1982,10 +1993,6 @@ fn eval_field_json_with_ctx(
                 text = re.replace_all(tail, &text).into_owned();
             }
         }
-    }
-
-    if let Some(reg) = regex_part {
-        text = apply_legado_regex(&text, reg);
     }
 
     if text.is_empty() {
@@ -2150,14 +2157,16 @@ fn apply_legado_regex(text: &str, regex_part: &str) -> String {
 
     let mut out = text.to_string();
     let mut i = start_idx;
-    while i + 1 < parts.len() {
+    while i < parts.len() {
         let regex = parts[i];
         if regex.is_empty() {
             i += 1;
             continue;
         }
 
-        let replace = parts[i + 1];
+        // A trailing `##pattern` with no `##replacement` means delete (Legado
+        // treats `##regex` without a replacement as replace-with-empty).
+        let replace = parts.get(i + 1).copied().unwrap_or("");
 
         if first_only && i + 2 >= parts.len() {
             // Last replacement with ### suffix - first match only
@@ -2808,6 +2817,26 @@ mod tests {
         );
         assert_eq!(book.name, "Book-Alias");
         assert_eq!(book.author, "Tester");
+    }
+
+    #[test]
+    fn test_json_field_applies_regex_before_trailing_js() {
+        // Mirrors 番茄 ruleBookInfo.kind: `selector##regex\n@js:...`. The `##`
+        // regex must clean the selector result first, then the JS runs on the
+        // cleaned `result`. Previously the regex split swallowed the @js: tail so
+        // neither stage ran. The pure part keeps a ',' so it is treated as a
+        // literal (not a JSON field path).
+        let v = json!({ "s": "a,b DROP" });
+        let out = eval_field_json("{{$.s}}##DROP##@js:result + \"!\"", &v, "https://x");
+        assert_eq!(out.as_deref(), Some("a,b !"));
+    }
+
+    #[test]
+    fn test_json_field_single_hash_regex_deletes() {
+        // `##pattern` with no `##replacement` means delete (Legado semantics).
+        let v = json!({ "s": "a,DROP,b" });
+        let out = eval_field_json("{{$.s}}##DROP", &v, "https://x");
+        assert_eq!(out.as_deref(), Some("a,,b"));
     }
 
     #[test]

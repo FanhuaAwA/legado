@@ -1,5 +1,27 @@
 # AI Iteration Log
 
+## 记录标题：2026-06-12 番茄 bookInfo 字段验收 + 引擎字段管线两处修复（SRC-FANQIE-LIVE）
+
+任务 ID：SRC-FANQIE-LIVE（路线图 A 段末项）
+
+本轮目标：实网验收番茄 `bookInfo` 字段完整性（此前 `partial`，只验了 name/tocUrl）。
+
+实测发现：`fanqie_source_full_chain` 实网跑通后，`kind` 字段输出为未处理的原始模板 `男生1女生\n连载0完结\n9.9分\n...`，其 `##正则` 清洗与尾部 `@js:` 后处理都没生效。定位为 `parser/rule_engine.rs` 字段提取管线的两处**通用**缺陷（非番茄特例）：
+
+1. 字段管线顺序错误：`eval_field_json_with_ctx` 先 `split_legado_regex` 再 `extract_js`。对 `选择器##正则\n@js:...` 规则，`##` 切分把尾部 `@js:` 吞进正则替换串，正则与 JS 两段都不执行。Legado 顺序是「取值 → `##`正则 → JS」。修复：先 `extract_js` 分离 JS，再对纯选择器 `split_legado_regex`，正则在 JS 之前应用。
+2. 单 `##` 删除被忽略：`apply_legado_regex` 的 `while i + 1 < parts.len()` 对「只有 `##pattern` 无 `##replacement`」的删除型规则不处理。Legado 中 `##正则` = 替换为空（删除）。修复：循环改 `while i < parts.len()`，缺失替换串按空串处理。
+
+修改文件：
+
+- `crates/reader-core/src/parser/rule_engine.rs`：`eval_field_json_with_ctx` 重排（extract_js 先于 regex split，regex 应用早于 js）；`apply_legado_regex` 支持单 `##` 删除。新增 strict 单测 `test_json_field_applies_regex_before_trailing_js`、`test_json_field_single_hash_regex_deletes`。
+- `crates/reader-core/tests/source_compat_import.rs`：`fanqie_source_full_chain` 补 bookInfo 字段日志与 author/intro/kind/coverUrl 断言。
+
+验证：番茄 `kind` 修复后 `\n完结\n9.9分\n都市高武,都市,穿越`（连载0 删除、男生女生经 @js 处理）。bookInfo 全字段填充真实数据：author=三九音域、intro=431 字、wordCount=4003607、coverUrl=真实 https。书旗（329 章/4657 字）、七猫（2551 章/15132 字）live 全链路无回归。Gate：fmt PASS、check reader-core 0w、全量 `cargo test -p reader-core` 非 ignored 全绿（41 lib + 集成）、js_compat 17/17 1.23s、lint 0/0、契约 162/161/161 onlyBackend=0 stub=58 不变。该修复是通用引擎保真，无书源特例硬编码（符合总纲 §39.1）。
+
+意义：路线图 A 段（环境/网络阻塞项）全部结清——NET-004-LIVE、NET-005、SRC-FANQIE-LIVE 三项均 closed。
+
+后续第一件事：A 段已清，转 B 段（隐藏后端能力真实化）或 C 段（FORMB-ACCEPT），但 B 段含「待用户决策」三项（百度网盘/FTP 同步、browser_probe、unlock 取舍），动手前需用户确认。
+
 ## 记录标题：2026-06-12 DoH 实网验证与缺陷修复（NET-004-LIVE）
 
 任务 ID：NET-004-LIVE（路线图 A 段，用户要求「实网环境跑通后完成后续任务」）

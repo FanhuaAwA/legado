@@ -19,6 +19,17 @@ cargo test -p reader-core --test source_compat_import fanqie_source_search_and_b
 
 状态枚举：`strict_pass`（mock/fixture）/ `live_network_pass`（实网通过）/ `live_network_ignored`（默认跳过）/ `partial` / `blocked_by_source_rule` / `blocked_by_platform` / `blocked_by_js_api` / `not_verified`。
 
+## 2026-06-12 番茄 bookInfo 字段完整性 + 引擎字段管线两处修复（SRC-FANQIE-LIVE）
+
+实网验收番茄 `bookInfo` 字段完整性时，发现 `kind` 字段输出为未处理的原始模板 `男生1女生\n连载0完结\n9.9分\n...`，其 `##正则` 清洗与尾部 `@js:` 后处理均未生效。定位为 `rule_engine.rs` 字段提取管线的两处通用缺陷（非番茄特例）：
+
+1. **字段管线顺序错误**：`eval_field_json_with_ctx` 先 `split_legado_regex` 再 `extract_js`。对 `选择器##正则\n@js:...` 形式的规则，`##` 切分会把尾部 `@js:` 吞进正则替换串，导致正则与 JS 两段都不执行。Legado 的字段管线顺序是「取值 → `##`正则 → JS」。修复：先 `extract_js` 分离 JS 段，再对纯选择器部分 `split_legado_regex`，且正则在 JS **之前**应用（JS 看到的是已清洗的 `result`）。
+2. **单 `##` 删除模式被忽略**：`apply_legado_regex` 的循环 `while i + 1 < parts.len()` 对「只有 `##pattern` 无 `##replacement`」的删除型规则不处理（Legado 中 `##正则` 即「替换为空 = 删除」）。修复：循环改为 `while i < parts.len()`，缺失的替换串按空串处理。
+
+回归保护（strict，无网）：`rule_engine` 新增 `test_json_field_applies_regex_before_trailing_js`、`test_json_field_single_hash_regex_deletes`。
+
+实网验证：番茄 `kind` 修复后输出 `\n完结\n9.9分\n都市高武,都市,穿越`（连载0 删除、男生女生经 @js 处理），与上游规则意图一致。书旗（329 章 / 4657 字）、七猫（2551 章 / 15132 字）全链路无回归。该修复是通用引擎保真，不含任何书源特例硬编码（符合总纲 §39.1）。
+
 ## 2026-06-11 七猫正文编码回归修复
 
 用户反馈：书籍打开后正文出现 `äº...` 乱码。实测确认乱码已在后端 `chapter_content` 返回值中出现，非前端渲染问题。
@@ -121,13 +132,13 @@ cargo test -p reader-core --test source_compat_import fanqie_source_search_and_b
 
 ### 番茄小说（live_network_pass，2026-06-11）
 
-| 能力     | 状态              | 备注                                                                             |
-| -------- | ----------------- | -------------------------------------------------------------------------------- |
-| 导入     | strict_pass       | source_compat_import 通过                                                        |
-| search   | live_network_pass | 2026-06-11 实网复测，搜索「我不是戏神」返回书籍结果                              |
-| bookInfo | partial           | 详情 API 已请求成功；tocUrl 为 `data:book_id;base64,...`，字段完整性仍待专项补齐 |
-| toc      | live_network_pass | 1928 章；无 URL 卷标题已过滤，第一条为真实章节 `第1章 戏鬼回家`                  |
-| content  | live_network_pass | 第一章正文 3135 字符；正文阶段可从 chapter data URI `info` 恢复 `book.tocUrl`    |
+| 能力     | 状态              | 备注                                                                                                                                                                                                                                                                                                                                                              |
+| -------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 导入     | strict_pass       | source_compat_import 通过                                                                                                                                                                                                                                                                                                                                         |
+| search   | live_network_pass | 2026-06-11 实网复测，搜索「我不是戏神」返回书籍结果                                                                                                                                                                                                                                                                                                               |
+| bookInfo | live_network_pass | **2026-06-12 字段完整性已验收**：name=我不是戏神、author=三九音域、intro=431 字、kind=`完结/9.9分/都市高武,都市,穿越`（修复后正确清洗）、wordCount=4003607、coverUrl=真实 https、tocUrl=`data:book_id;base64,...`。`fanqie_source_full_chain` 已对 author/intro/kind/coverUrl 加断言。剩 `lastChapter` 为 None（详情 JSON 未含 `last_chapter_title`，非引擎缺陷） |
+| toc      | live_network_pass | 1928 章；无 URL 卷标题已过滤，第一条为真实章节 `第1章 戏鬼回家`                                                                                                                                                                                                                                                                                                   |
+| content  | live_network_pass | 第一章正文 3135 字符；正文阶段可从 chapter data URI `info` 恢复 `book.tocUrl`                                                                                                                                                                                                                                                                                     |
 
 #### 番茄书源 JS API 清单（共 49 个唯一 API）
 

@@ -269,6 +269,32 @@ async fn fanqie_source_full_chain() {
         "番茄 tocUrl 应为 data URI，实际: {toc_url}"
     );
     eprintln!("番茄 bookInfo: name='{}' tocUrl={}", detail.name, toc_url);
+    eprintln!(
+        "番茄 bookInfo 字段: author={:?} kind={:?} word_count={:?} cover_url={:?} intro_len={:?} last_chapter={:?}",
+        detail.author,
+        detail.kind,
+        detail.word_count,
+        detail.cover_url,
+        detail.intro.as_ref().map(|s| s.chars().count()),
+        detail.last_chapter,
+    );
+    // bookInfo 字段完整性（SRC-FANQIE-LIVE）：详情 API 返回的展示字段必须真正
+    // 提取出来，不能只拿到 name/tocUrl。author / intro / kind / coverUrl 任一缺失
+    // 都说明 ruleBookInfo 字段规则未被引擎正确消费。
+    assert!(!detail.author.trim().is_empty(), "番茄 author 不应为空");
+    assert!(
+        detail.intro.as_deref().map(|s| !s.trim().is_empty()) == Some(true),
+        "番茄 intro 不应为空"
+    );
+    assert!(
+        detail.kind.as_deref().map(|s| !s.trim().is_empty()) == Some(true),
+        "番茄 kind 不应为空"
+    );
+    assert!(
+        detail.cover_url.as_deref().map(|s| s.starts_with("http")) == Some(true),
+        "番茄 coverUrl 应为 http(s) URL，实际: {:?}",
+        detail.cover_url
+    );
 
     // Step 3: chapterList — 使用 tocUrl（data URI），strict
     let chapters = core
