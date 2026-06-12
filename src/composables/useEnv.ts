@@ -17,6 +17,8 @@
 import { ref, computed, type ComputedRef } from "vue";
 import { log } from "@/utils/logger";
 
+const COMPACT_VIEWPORT_QUERY = "(max-width: 640px)";
+
 /** 是否运行在 Tauri 原生壳中 */
 export const isTauri: boolean = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -31,6 +33,23 @@ export const autoIsMobile: boolean =
   typeof window !== "undefined" &&
   (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
     window.matchMedia("(pointer: coarse)").matches);
+
+const compactViewport = ref(
+  typeof window !== "undefined" && window.matchMedia(COMPACT_VIEWPORT_QUERY).matches,
+);
+
+if (typeof window !== "undefined") {
+  const media = window.matchMedia(COMPACT_VIEWPORT_QUERY);
+  const updateCompactViewport = (event: MediaQueryList | MediaQueryListEvent) => {
+    compactViewport.value = event.matches;
+  };
+  updateCompactViewport(media);
+  if (typeof media.addEventListener === "function") {
+    media.addEventListener("change", updateCompactViewport);
+  } else {
+    media.addListener(updateCompactViewport);
+  }
+}
 
 /**
  * UA-based 平台检测（作为初始值 / 非 Tauri 环境回退）。
@@ -142,7 +161,7 @@ export const isMobile: ComputedRef<boolean> = computed(() => {
     case "desktop":
       return false;
     default:
-      return autoIsMobile;
+      return autoIsMobile || compactViewport.value;
   }
 });
 
