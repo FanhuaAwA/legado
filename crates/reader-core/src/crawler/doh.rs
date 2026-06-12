@@ -48,15 +48,12 @@ fn provider_for(key: &str) -> Option<DohProvider> {
             ip: "1.12.12.12",
             path: "/dns-query",
         },
+        // 360 serves the JSON DoH API at /resolve; its /dns-query path only
+        // accepts RFC 8484 wire-format (verified live 2026-06-12).
         "360dns" => DohProvider {
             host: "doh.360.cn",
             ip: "101.226.4.6",
-            path: "/dns-query",
-        },
-        "onedns" => DohProvider {
-            host: "doh.onedns.net",
-            ip: "117.50.10.10",
-            path: "/dns-query",
+            path: "/resolve",
         },
         "cloudflare" => DohProvider {
             host: "cloudflare-dns.com",
@@ -177,16 +174,11 @@ mod tests {
         assert!(provider_for("none").is_none());
         assert!(provider_for("").is_none());
         assert!(provider_for("bogus").is_none());
-        for key in [
-            "alidns",
-            "dnspod",
-            "360dns",
-            "onedns",
-            "cloudflare",
-            "google",
-        ] {
+        for key in ["alidns", "dnspod", "360dns", "cloudflare", "google"] {
             assert!(provider_for(key).is_some(), "missing provider for {key}");
         }
+        // onedns has no public JSON DoH endpoint (live check 2026-06-12); removed.
+        assert!(provider_for("onedns").is_none());
     }
 
     #[test]
@@ -221,5 +213,23 @@ mod tests {
             assert!(DohResolver::from_config(key, false).is_some());
         }
         assert!(DohResolver::from_config("none", false).is_none());
+    }
+
+    /// Live verification (NET-004-LIVE): each provider must return a *real*
+    /// JSON-DoH answer, not silently fail open to system DNS. `doh_query`
+    /// returns `None` on any failure, so a non-empty result proves the bootstrap
+    /// client + endpoint + IP pin actually reached the provider over DoH.
+    /// Requires network; run with: `cargo test -p reader-core doh_live -- --ignored`.
+    #[tokio::test]
+    #[ignore = "live network"]
+    async fn doh_live_each_provider_returns_real_answer() {
+        for key in ["alidns", "dnspod", "360dns", "cloudflare", "google"] {
+            let resolver = DohResolver::from_config(key, false).expect("provider builds");
+            let ips = doh_query(&resolver.client, &resolver.endpoint, "www.example.com").await;
+            assert!(
+                ips.as_ref().map(|v| !v.is_empty()).unwrap_or(false),
+                "DoH provider {key} returned no real answer (would fail open to system DNS)"
+            );
+        }
     }
 }

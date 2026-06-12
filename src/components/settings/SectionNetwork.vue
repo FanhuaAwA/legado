@@ -38,7 +38,6 @@ const DOH_OPTIONS = [
       { label: "阿里云 DNS（223.5.5.5）", value: "alidns" },
       { label: "DNSPod 腾讯（119.29.29.29）", value: "dnspod" },
       { label: "360 安全 DNS（101.226.4.6）", value: "360dns" },
-      { label: "OneDNS 点一（117.50.10.10）", value: "onedns" },
     ],
   },
   {

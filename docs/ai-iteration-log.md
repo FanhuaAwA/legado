@@ -1,5 +1,29 @@
 # AI Iteration Log
 
+## 记录标题：2026-06-12 DoH 实网验证与缺陷修复（NET-004-LIVE）
+
+任务 ID：NET-004-LIVE（路线图 A 段，用户要求「实网环境跑通后完成后续任务」）
+
+本轮目标：上一轮 NET-004 在离线环境实现 DoH，6 provider 的端点正确性无法 live 验证（§6 not_run）。本轮在有网环境逐 provider 实测，确认是否真正走 DoH 还是静默 fail-open 到系统 DNS。
+
+实测方法：用 `curl --resolve host:443:ip`（完全复刻 `DohResolver` 的 IP 钉死 bootstrap）逐 provider 对 `www.example.com` 发 JSON DoH 查询。
+
+实测结论（发现并修复 2 处缺陷，均为离线 gate 无法捕获的「假功能」）：
+
+- **alidns / dnspod / cloudflare / google**：JSON DoH 正常返回 Answer，端点正确，保留。
+- **360dns 缺陷**：`doh.360.cn/dns-query` 返回 `no 'dns' query parameter found`——该路径只接受 RFC 8484 wire-format，不认 JSON `?name=` API。原实现会对每次解析静默 fail-open 到系统 DNS，用户以为开了 DoH 实则没有。**修复**：路径改为 `/resolve`（实测返回正确 JSON Answer）。
+- **onedns 缺陷**：`doh.onedns.net/dns-query` 返回 HTTP 000（无可用响应），`www.onedns.net` 根站 200——DoH 服务本身不响应公开 JSON 查询（OneDNS 为需注册的过滤型 DNS）。无法用无依赖 JSON API 落地。**修复**：从后端 `provider_for` 与前端 `DOH_OPTIONS` 一并移除。
+
+修改文件：
+
+- `crates/reader-core/src/crawler/doh.rs`：360dns `path` `/dns-query`→`/resolve`（含注释说明）；删除 onedns provider；`provider_mapping` 测试改为断言 onedns 返回 None；新增 `#[ignore]` live 测试 `doh_live_each_provider_returns_real_answer`（直接调用 `doh_query`，非空结果即证明真实走 DoH 而非 fail-open）。
+- `src/components/settings/SectionNetwork.vue`：`DOH_OPTIONS` 移除 OneDNS 项。
+- `src/composables/useAppConfig.ts`：`http_doh_server` 文档注释移除 onedns。
+
+验证：`cargo test -p reader-core doh_live -- --ignored` 实测 5 provider 全部返回真实 Answer（0.90s，5/5 通过，经真实 Rust resolver 代码而非仅 curl）。常规 `cargo test -p reader-core --lib doh` 4 passed + 1 ignored。Gate：fmt PASS、check reader-core 0w、http_client_config 8/8、lint 0/0、build PASS、契约 162/161/161 onlyBackend=0 stub=58 不变。
+
+后续第一件事：继续路线图 A 段——NET-005（评估 DoH 接入 JS 桥 blocking 客户端）与 SRC-FANQIE-LIVE（番茄书源实网链路）。
+
 ## 记录标题：2026-06-11 网络设置死配置键接入（NET-001 / NET-002）
 
 任务 ID：NET-001、NET-002
