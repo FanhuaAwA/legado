@@ -1,6 +1,8 @@
-use reader_core::CommandError;
+use crate::state::AppState;
+use reader_core::{CommandError, RemoteSourcePreview, RepoManifest, RepoSourceSync};
 use serde::Serialize;
 use std::sync::Mutex;
+use tauri::State;
 
 type CommandResult<T> = Result<T, CommandError>;
 fn u(f: &str) -> CommandError {
@@ -10,6 +12,10 @@ fn u(f: &str) -> CommandError {
         detail: None,
         retryable: false,
     }
+}
+
+fn map_err(err: reader_core::ReaderCoreError) -> CommandError {
+    err.into_command_error()
 }
 
 // ── 同步 ──────────────────────────────────────────────────
@@ -386,21 +392,57 @@ pub async fn verify_scoped_unlock_challenge() -> CommandResult<()> {
 }
 
 // ── 书源仓库 ──────────────────────────────────────────────
+/// 拉取远程仓库 JSON 清单。
 #[tauri::command]
-pub async fn repository_check_source_sync() -> CommandResult<()> {
-    Err(u("书源仓库"))
+pub async fn repository_fetch(
+    state: State<'_, AppState>,
+    url: String,
+) -> CommandResult<RepoManifest> {
+    state.core.repository_fetch(&url).await.map_err(map_err)
 }
+
+/// 下载远程书源并解析元数据，用于安装前确认。
 #[tauri::command]
-pub async fn repository_fetch() -> CommandResult<()> {
-    Err(u("书源仓库"))
+pub async fn repository_preview_source(
+    state: State<'_, AppState>,
+    download_url: String,
+    expected_uuid: Option<String>,
+) -> CommandResult<RemoteSourcePreview> {
+    state
+        .core
+        .repository_preview_source(&download_url, expected_uuid.as_deref())
+        .await
+        .map_err(map_err)
 }
+
+/// 从仓库下载书源 .js 文件并安装到本地。
 #[tauri::command]
-pub async fn repository_install() -> CommandResult<()> {
-    Err(u("书源仓库"))
+pub async fn repository_install(
+    state: State<'_, AppState>,
+    download_url: String,
+    file_name: String,
+    expected_uuid: Option<String>,
+) -> CommandResult<()> {
+    state
+        .core
+        .repository_install(&download_url, &file_name, expected_uuid.as_deref())
+        .await
+        .map_err(map_err)
 }
+
+/// 比较在线仓库书源与本地同 UUID 书源是否一致（忽略 @enabled / @uuid 行）。
 #[tauri::command]
-pub async fn repository_preview_source() -> CommandResult<()> {
-    Err(u("书源仓库"))
+pub async fn repository_check_source_sync(
+    state: State<'_, AppState>,
+    file_name: String,
+    download_url: String,
+    expected_uuid: Option<String>,
+) -> CommandResult<RepoSourceSync> {
+    state
+        .core
+        .repository_check_source_sync(&file_name, &download_url, expected_uuid.as_deref())
+        .await
+        .map_err(map_err)
 }
 
 // ── 杂项 ──────────────────────────────────────────────────

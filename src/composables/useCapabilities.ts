@@ -30,6 +30,14 @@ function unsupported(reason: string, commands: string[]): FeatureCapability {
   };
 }
 
+function supported(reason: string, commands: string[]): FeatureCapability {
+  return {
+    supported: true,
+    reason,
+    commands,
+  };
+}
+
 // 离线兜底表：capabilities_get 不可达时使用。键集合必须与后端
 // src-tauri/src/commands/system.rs 的 CAPABILITY_SPECS 保持一致。
 const fallbackCapabilities: AppCapabilities = {
@@ -98,8 +106,8 @@ const fallbackCapabilities: AppCapabilities = {
     "Cover disk cache is not implemented in this build; covers load directly from the network.",
     ["cover_cache_clear", "cover_cache_size", "cover_resolve_cache"],
   ),
-  repository: unsupported(
-    "Source repository browsing and source auto-update are not implemented in this build.",
+  repository: supported(
+    "Source repository browsing and JS-source auto-update via @updateUrl are supported.",
     [
       "repository_fetch",
       "repository_install",

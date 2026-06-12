@@ -1,5 +1,27 @@
 # AI Iteration Log
 
+## 记录标题：2026-06-12 书源仓库 + @updateUrl 在线更新真实化（CAP-REPO）
+
+任务 ID：CAP-REPO（路线图 B 段，用户指定方向；隐藏能力取舍「都先保留」）
+
+本轮目标：把 repository/source_update 的 6 个 UNSUPPORTED stub 真实实现——书源仓库浏览/安装 + JS 书源按 `@updateUrl` 在线更新。
+
+实现（全部复用既有源存储/HTTP 原语，无新依赖）：
+
+- `crates/reader-core/src/dto.rs`：新增 5 个 DTO（camelCase 与前端 `useBookSource.ts` 对齐）——`SourceUpdateCheck`、`RepoManifest`+`RepoSourceInfo`（serde default 容错）、`RemoteSourcePreview`、`RepoSourceSync`。
+- `crates/reader-core/src/facade.rs`：6 个 facade 方法 + 纯助手。`check_source_update`（读本地 `@updateUrl`/`@version`，拉远端比对版本）；`apply_source_update`（下载→校验是 JS 源→保留本地 `@enabled`→写入，校验先于写入，坏下载不破坏本地）；`repository_fetch`（解析仓库 JSON）；`repository_preview_source`（下载+解析 meta + `hasExplicitUuid`）；`repository_install`（校验 `.js` 文件名 + UUID 匹配 + 写入）；`repository_check_source_sync`（归一化忽略 `@enabled`/`@uuid` 行后比对）。纯助手 `version_has_update`（数字点分版本逐段比较，非数字回退不等判断）、`normalize_source_for_compare`、`file_name_from_url`、`looks_like_js_source`、`source_identity`。SSRF 经既有 `validate_network_url` 守卫。
+- `src-tauri/src/commands/source_update.rs`、`sync_misc.rs`：6 命令从 `Err(unsupported)` 改为接 `State<AppState>` + 真实参数转发到 facade。
+- `src-tauri/src/commands/system.rs` + `src/composables/useCapabilities.ts`：`repository` capability 置 `supported: true`（新增前端 `supported()` 助手）。
+- `docs/command-matrix.md`：repository 6 命令移出 UNSUPPORTED 表，计数刷新。
+
+测试：`tests/repository.rs` 用 axum mock server 全离线跑通往返链路——fetch→preview（含 UUID 匹配/不匹配）→install（含拒绝非 .js、拒绝非源 JSON）→check_source_sync→check_update（v1→v2 报有更新）→apply_update（版本升级 + 本地 @enabled=false 被保留）。facade 单测 4 个覆盖版本比较/归一化/文件名派生/源识别边界。
+
+Gate：fmt PASS、check reader-core+legado-tauri 0w、`cargo test -p reader-core` 全绿（45 lib + repository 集成）、`cargo test -p legado-tauri` ws_router 9/9、lint 0/0、build PASS、契约 162/161/161 onlyBackend=0，**stub 58→52、implemented 103→109**。
+
+注意（留给 FORMB-ACCEPT）：6 命令尚未加入 `commands/router.rs` 的形态 B WS 白名单——form-A（Tauri 直连）已可用，form-B 需在 FORMB-ACCEPT 轮逐个评估加入并补 `ws_router.rs` 测试。
+
+后续第一件事：B 段剩 CAP-SYNC WebDAV（独立，不在待用户决策之列）或 C 段 FORMB-ACCEPT。
+
 ## 记录标题：2026-06-12 番茄 bookInfo 字段验收 + 引擎字段管线两处修复（SRC-FANQIE-LIVE）
 
 任务 ID：SRC-FANQIE-LIVE（路线图 A 段末项）

@@ -3,8 +3,8 @@ use crate::crawler::http_client::{HttpClient, HttpClientConfig};
 use crate::dto::{
     AddBookPayload, BookDetail, BookItem, BookSourceMeta, CachedChapter, ChapterItem,
     EpisodeProgress, EpisodeProgressMap, FrontendStorageEntry, FrontendStorageNamespaceSummary,
-    LegacyJsonImportResult, ShelfBook, SourceRuntimeKind, SourceSwitchRestoreResult,
-    UpdateShelfBookPayload,
+    LegacyJsonImportResult, RemoteSourcePreview, RepoManifest, RepoSourceSync, ShelfBook,
+    SourceRuntimeKind, SourceSwitchRestoreResult, SourceUpdateCheck, UpdateShelfBookPayload,
 };
 use crate::error::ReaderCoreError;
 use crate::model::article_source::ArticleSource;
@@ -366,6 +366,191 @@ impl ReaderCore {
             .await?;
         self.import_legacy_json_text(&text, smart_explore_sub_categories)
             .await
+    }
+
+    // ── 书源仓库 / 在线更新（CAP-REPO）──────────────────────────
+
+    /// Check whether a JS source has a newer version at its `@updateUrl`.
+    pub async fn check_source_update(
+        &self,
+        file_name: &str,
+        source_dir: Option<&str>,
+    ) -> Result<SourceUpdateCheck, ReaderCoreError> {
+        if self.is_legado_file(file_name, source_dir) {
+            return Err(ReaderCoreError::Message(
+                "Legado JSON 书源不支持在线更新（仅 JS 书源支持 @updateUrl）".to_string(),
+            ));
+        }
+        let content = self.read_source(file_name, source_dir).await?;
+        let update_url = first_js_meta(&content, "@updateUrl").ok_or_else(|| {
+            ReaderCoreError::Message("书源未设置 @updateUrl，无法检测更新".to_string())
+        })?;
+        let local_version = first_js_meta(&content, "@version").unwrap_or_else(|| "1.0.0".into());
+        let uuid = source_identity(&content, file_name, source_dir);
+
+        let remote = self.download_source_text(&update_url).await?;
+        if !looks_like_js_source(&remote) {
+            return Err(ReaderCoreError::Message(
+                "@updateUrl 返回的内容不是有效的 JS 书源".to_string(),
+            ));
+        }
+        let remote_version = first_js_meta(&remote, "@version").unwrap_or_else(|| "1.0.0".into());
+
+        Ok(SourceUpdateCheck {
+            file_name: file_name.to_string(),
+            uuid,
+            has_update: version_has_update(&local_version, &remote_version),
+            local_version,
+            remote_version,
+        })
+    }
+
+    /// Download the source at `@updateUrl` and overwrite the local file,
+    /// preserving the local `@enabled` state. Validates the download before
+    /// writing, so a bad fetch never corrupts the installed source.
+    pub async fn apply_source_update(
+        &self,
+        file_name: &str,
+        source_dir: Option<&str>,
+    ) -> Result<(), ReaderCoreError> {
+        if self.is_legado_file(file_name, source_dir) {
+            return Err(ReaderCoreError::Message(
+                "Legado JSON 书源不支持在线更新（仅 JS 书源支持 @updateUrl）".to_string(),
+            ));
+        }
+        let local = self.read_source(file_name, source_dir).await?;
+        let update_url = first_js_meta(&local, "@updateUrl").ok_or_else(|| {
+            ReaderCoreError::Message("书源未设置 @updateUrl，无法更新".to_string())
+        })?;
+        let remote = self.download_source_text(&update_url).await?;
+        if !looks_like_js_source(&remote) {
+            return Err(ReaderCoreError::Message(
+                "@updateUrl 返回的内容不是有效的 JS 书源，已取消更新".to_string(),
+            ));
+        }
+        // Carry over the local enabled state so updating doesn't silently
+        // re-enable a source the user had disabled.
+        let enabled = first_js_meta(&local, "@enabled")
+            .map(|v| v != "false" && v != "0")
+            .unwrap_or(true);
+        let merged = set_js_meta_enabled(&remote, enabled);
+        self.save_js_source(file_name, &merged, source_dir).await
+    }
+
+    /// Fetch and parse a remote repository manifest (JSON).
+    pub async fn repository_fetch(&self, url: &str) -> Result<RepoManifest, ReaderCoreError> {
+        validate_network_url(url)?;
+        let text = self.download_source_text(url).await?;
+        serde_json::from_str(&text)
+            .map_err(|err| ReaderCoreError::Message(format!("仓库清单 JSON 解析失败: {err}")))
+    }
+
+    /// Download a remote source and parse its metadata for an install preview.
+    pub async fn repository_preview_source(
+        &self,
+        download_url: &str,
+        expected_uuid: Option<&str>,
+    ) -> Result<RemoteSourcePreview, ReaderCoreError> {
+        let content = self
+            .download_validated_source(download_url, expected_uuid)
+            .await?;
+        let file_name = file_name_from_url(download_url);
+        let meta = BookSourceMeta::from_js(&content, file_name, download_url.to_string(), None);
+        let has_explicit_uuid = first_js_meta(&content, "@uuid").is_some();
+        Ok(RemoteSourcePreview {
+            download_url: download_url.to_string(),
+            meta,
+            has_explicit_uuid,
+        })
+    }
+
+    /// Download a remote source and install it under `file_name`.
+    pub async fn repository_install(
+        &self,
+        download_url: &str,
+        file_name: &str,
+        expected_uuid: Option<&str>,
+    ) -> Result<(), ReaderCoreError> {
+        ensure_safe_file_name(file_name)?;
+        if !file_name.to_ascii_lowercase().ends_with(".js") {
+            return Err(ReaderCoreError::Message(
+                "书源文件名必须以 .js 结尾".to_string(),
+            ));
+        }
+        let content = self
+            .download_validated_source(download_url, expected_uuid)
+            .await?;
+        self.save_js_source(file_name, &content, None).await
+    }
+
+    /// Compare a locally installed source with the repository copy, ignoring
+    /// `@enabled` / `@uuid` lines (which legitimately differ per install).
+    pub async fn repository_check_source_sync(
+        &self,
+        file_name: &str,
+        download_url: &str,
+        expected_uuid: Option<&str>,
+    ) -> Result<RepoSourceSync, ReaderCoreError> {
+        let local = self.read_source(file_name, None).await?;
+        let remote = self
+            .download_validated_source(download_url, expected_uuid)
+            .await?;
+        let local_version = first_js_meta(&local, "@version").unwrap_or_else(|| "1.0.0".into());
+        let remote_version = first_js_meta(&remote, "@version").unwrap_or_else(|| "1.0.0".into());
+        let uuid = expected_uuid
+            .map(str::to_string)
+            .or_else(|| first_js_meta(&remote, "@uuid"))
+            .or_else(|| first_js_meta(&local, "@uuid"))
+            .unwrap_or_default();
+        let is_consistent =
+            normalize_source_for_compare(&local) == normalize_source_for_compare(&remote);
+        Ok(RepoSourceSync {
+            file_name: file_name.to_string(),
+            uuid,
+            is_consistent,
+            local_version,
+            remote_version,
+        })
+    }
+
+    /// Download text from a URL using the shared HTTP client (with SSRF guard).
+    async fn download_source_text(&self, url: &str) -> Result<String, ReaderCoreError> {
+        validate_network_url(url)?;
+        let text = self
+            .book_service
+            .http_client()
+            .get(url)
+            .send()
+            .await?
+            .error_for_status()?
+            .text()
+            .await?;
+        Ok(text)
+    }
+
+    /// Download a source, validate it looks like a JS source, and (when an
+    /// expected UUID is supplied and the source declares one) verify they match.
+    async fn download_validated_source(
+        &self,
+        url: &str,
+        expected_uuid: Option<&str>,
+    ) -> Result<String, ReaderCoreError> {
+        let content = self.download_source_text(url).await?;
+        if !looks_like_js_source(&content) {
+            return Err(ReaderCoreError::Message(
+                "下载的内容不是有效的 JS 书源".to_string(),
+            ));
+        }
+        if let Some(expected) = expected_uuid.map(str::trim).filter(|v| !v.is_empty()) {
+            if let Some(declared) = first_js_meta(&content, "@uuid") {
+                if declared.trim() != expected {
+                    return Err(ReaderCoreError::Message(format!(
+                        "书源 UUID 不匹配：期望 {expected}，实际 {declared}"
+                    )));
+                }
+            }
+        }
+        Ok(content)
     }
 
     pub async fn eval_source_capabilities(
@@ -2620,6 +2805,85 @@ fn split_tags(raw: &str) -> Vec<String> {
         .collect()
 }
 
+/// First value of a JS source meta header (e.g. `@version`).
+fn first_js_meta(content: &str, key: &str) -> Option<String> {
+    read_js_meta_values(content, key).into_iter().next()
+}
+
+/// Heuristic: does this text look like a JS book source (has `@name` or `@url`)?
+/// Used to reject HTML error pages / non-source downloads before installing.
+fn looks_like_js_source(content: &str) -> bool {
+    first_js_meta(content, "@name").is_some() || first_js_meta(content, "@url").is_some()
+}
+
+/// Stable identity for a JS source: declared `@uuid` if present, otherwise the
+/// path-based id `BookSourceMeta::from_js` uses.
+fn source_identity(content: &str, file_name: &str, source_dir: Option<&str>) -> String {
+    if let Some(uuid) = first_js_meta(content, "@uuid") {
+        return uuid;
+    }
+    let dir = source_dir.unwrap_or("");
+    md5_hex(&format!("{dir}/{file_name}"))
+}
+
+/// Derive a `.js` file name from a download URL's last path segment.
+fn file_name_from_url(url: &str) -> String {
+    let trimmed = url.split(['?', '#']).next().unwrap_or(url);
+    let last = trimmed.rsplit('/').next().unwrap_or("").trim();
+    if last.is_empty() {
+        "remote-source.js".to_string()
+    } else if last.to_ascii_lowercase().ends_with(".js") {
+        last.to_string()
+    } else {
+        format!("{last}.js")
+    }
+}
+
+/// Whether `remote` is a newer version than `local`. Numeric dot-versions
+/// compare component-wise; otherwise any non-empty difference counts as update.
+fn version_has_update(local: &str, remote: &str) -> bool {
+    let remote = remote.trim();
+    if remote.is_empty() {
+        return false;
+    }
+    match (parse_dot_version(local), parse_dot_version(remote)) {
+        (Some(l), Some(r)) => r > l,
+        _ => remote != local.trim(),
+    }
+}
+
+fn parse_dot_version(value: &str) -> Option<Vec<u64>> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    value
+        .split('.')
+        .map(|part| part.trim().parse::<u64>().ok())
+        .collect()
+}
+
+/// Normalize a JS source for content comparison: drop `@enabled` / `@uuid` meta
+/// lines (which differ per install) and trailing whitespace, so two copies that
+/// differ only in those are considered consistent.
+fn normalize_source_for_compare(content: &str) -> String {
+    content
+        .lines()
+        .filter(|line| {
+            let normalized = line
+                .trim_start()
+                .trim_start_matches("//")
+                .trim_start_matches('*')
+                .trim_start();
+            !normalized.starts_with("@enabled") && !normalized.starts_with("@uuid")
+        })
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
 fn ensure_safe_file_name(file_name: &str) -> Result<(), ReaderCoreError> {
     if file_name.trim().is_empty()
         || file_name.contains("..")
@@ -2839,4 +3103,53 @@ fn default_app_config() -> Value {
         "sync_mobile_resume_delay_ms": 1500,
         "sync_baidu_app_name": "legado-tauri"
     })
+}
+
+#[cfg(test)]
+mod cap_repo_tests {
+    use super::*;
+
+    #[test]
+    fn version_has_update_numeric_and_string() {
+        assert!(version_has_update("1.0.0", "1.0.1"));
+        assert!(version_has_update("1.0.0", "2.0.0"));
+        assert!(version_has_update("1.2", "1.10")); // numeric, not lexical
+        assert!(!version_has_update("2.0.0", "1.9.9"));
+        assert!(!version_has_update("1.0.0", "1.0.0"));
+        assert!(!version_has_update("1.0.0", "")); // empty remote = no update
+                                                   // non-numeric versions fall back to plain inequality
+        assert!(version_has_update("2026-06-10", "2026-06-12"));
+        assert!(!version_has_update("v1", "v1"));
+    }
+
+    #[test]
+    fn normalize_ignores_enabled_and_uuid_lines() {
+        let a = "// @name X\n// @enabled true\n// @uuid aaa\nfunction f(){}\n";
+        let b = "// @name X\n// @enabled false\n// @uuid bbb\nfunction f(){}  \n";
+        assert_eq!(
+            normalize_source_for_compare(a),
+            normalize_source_for_compare(b)
+        );
+        let c = "// @name X\nfunction g(){}\n";
+        assert_ne!(
+            normalize_source_for_compare(a),
+            normalize_source_for_compare(c)
+        );
+    }
+
+    #[test]
+    fn file_name_from_url_derives_js_name() {
+        assert_eq!(file_name_from_url("https://x.com/a/demo.js"), "demo.js");
+        assert_eq!(file_name_from_url("https://x.com/a/demo.js?v=2"), "demo.js");
+        assert_eq!(file_name_from_url("https://x.com/a/demo"), "demo.js");
+        assert_eq!(file_name_from_url("https://x.com/"), "remote-source.js");
+    }
+
+    #[test]
+    fn looks_like_js_source_detects_meta() {
+        assert!(looks_like_js_source("// @name Demo\nfn"));
+        assert!(looks_like_js_source("// @url https://x\n"));
+        assert!(!looks_like_js_source("<html><body>error</body></html>"));
+        assert!(!looks_like_js_source("{\"name\":\"repo\"}"));
+    }
 }

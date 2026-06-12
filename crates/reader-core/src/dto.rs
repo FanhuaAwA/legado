@@ -239,3 +239,90 @@ pub struct FrontendStorageNamespaceSummary {
     pub namespace: String,
     pub count: usize,
 }
+
+// ── 书源仓库 / 在线更新（CAP-REPO）──────────────────────────────
+
+/// Result of checking a single JS source against its `@updateUrl`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceUpdateCheck {
+    pub file_name: String,
+    pub uuid: String,
+    pub has_update: bool,
+    pub local_version: String,
+    pub remote_version: String,
+}
+
+/// A book-source repository manifest (remote JSON). Optional fields default so a
+/// partial manifest still parses; the frontend reports per-field problems.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoManifest {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub updated_at: String,
+    #[serde(default)]
+    pub sources: Vec<RepoSourceInfo>,
+}
+
+/// One source entry inside a repository manifest.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoSourceInfo {
+    #[serde(default)]
+    pub uuid: Option<String>,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub logo: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub file_name: String,
+    #[serde(default)]
+    pub download_url: String,
+    #[serde(default)]
+    pub file_size: u64,
+    #[serde(default)]
+    pub updated_at: String,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Preview of a remote JS source downloaded before install.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteSourcePreview {
+    pub download_url: String,
+    pub meta: BookSourceMeta,
+    pub has_explicit_uuid: bool,
+}
+
+/// Whether a remote repository source matches the locally installed copy
+/// (ignoring `@enabled` / `@uuid` lines).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoSourceSync {
+    pub file_name: String,
+    pub uuid: String,
+    pub is_consistent: bool,
+    pub local_version: String,
+    pub remote_version: String,
+}

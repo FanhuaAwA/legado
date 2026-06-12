@@ -2,7 +2,7 @@
 
 本文件记录当前 R 队列状态。事实数字只以当轮命令输出为准，不沿用历史表格。
 
-最后实测：2026-06-11（NET-001/002 轮，网络设置配置接入；commit 82590e0）。下方基线已按当轮 `check-command-contract.mjs --json` 输出刷新。
+最后实测：2026-06-12（CAP-REPO 轮，书源仓库+在线更新真实化；stub 58→52）。下方基线已按当轮 `check-command-contract.mjs --json` 输出刷新。
 
 实测命令：
 
@@ -27,8 +27,8 @@ command_contract.registeredTotal = 161
 command_contract.bothCount = 161
 command_contract.onlyFrontend = js_eval
 command_contract.onlyBackend = none
-command_contract.frontend_unsupported_stub_count = 58
-command_contract.frontend_implemented_count = 103
+command_contract.frontend_unsupported_stub_count = 52
+command_contract.frontend_implemented_count = 109
 command_contract.classificationScope = frontend-facing registered commands
 frontend.lint = passed_zero_warnings
 ```
@@ -61,21 +61,21 @@ frontend.lint = passed_zero_warnings
 | ~~NET-005~~         | **closed 2026-06-12**：DoH 已接入 JS 桥 blocking 客户端。`parser/js.rs` 加 `JS_HTTP_DOH_SERVER: Mutex<String>` + `set_js_http_doh_server`，`JS_HTTP_CLIENT` Lazy 构建时 `builder.dns_resolver(...)`；`facade.rs` 启动用 `http_cfg.doh_server` 下发。异步 Resolver 跑在 blocking 客户端内部 runtime 的风险已 live 验证（`doh_live_blocking_client_resolves_and_fetches` 经 Cloudflare DoH 真实抓取 example.com） | 已达成（JS 桥 java.ajax 按 `http_doh_server` 走 DoH，fail-open 一致） |
 | ~~SRC-FANQIE-LIVE~~ | **closed 2026-06-12**：番茄 search→bookInfo→toc(1928)→content(3135) 全链路 live_network_pass。bookInfo 字段完整性已验收（name/author/intro/kind/wordCount/coverUrl/tocUrl 均填充真实数据并加断言）。验收中发现并修复引擎两处通用字段管线缺陷（`@js:` 被 `##` 正则切分吞掉、单 `##` 删除被忽略），详见 `docs/source-compat-matrix.md`。书旗/七猫全链路无回归。剩 lastChapter=None（详情 JSON 无该字段，非缺陷）  | 已达成（含引擎保真修复）                                              |
 
-### B. 60 个已隐藏/降级后端能力本体（§14 缺口，每项大特性，单独立项）
+### B. 已隐藏/降级后端能力本体（§14 缺口，每项大特性，单独立项）
 
-实现前必读审计文档第 4 节处置规则。**含可能不需要的能力，动手前先与用户确认取舍（见下「待用户决策」）。**
+实现前必读审计文档第 4 节处置规则。**含可能不需要的能力，动手前先与用户确认取舍（见下「待用户决策」）。** 用户决策（2026-06-12）：百度网盘/FTP 同步、browser_probe、完全体 unlock 三项「都先保留」，暂不移除。
 
-| ID             | 能力域                   | 数量 | 当前处置                                       | 实现要点（审计文档第 4 节）                                                                                    |
-| -------------- | ------------------------ | ---- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| CAP-SYNC       | sync 云同步              | 16   | unsupported_hidden                             | WebDAV 至少做到凭据保存/连接测试/状态查询/手动同步；百度网盘/FTP 不做则保持隐藏                                |
-| CAP-BROWSER    | browser_probe 浏览器探测 | 12   | unsupported_hidden                             | 真实 session/导航/JS 执行/cookie/UA；不保留则从入口/配置/文档全部移除                                          |
-| CAP-TTS        | TTS 朗读                 | 6    | blocked_by_platform（已降级浏览器 Web Speech） | 开放需真实语音列表/播放/停止/状态/试听/错误回退                                                                |
-| CAP-COMICCOVER | 漫画/封面缓存            | 9    | blocked_by_platform                            | 真实下载/缓存/清理/计量                                                                                        |
-| CAP-REPO       | repository/source_update | 6    | unsupported_hidden                             | `booksource_check_update` 基于 `updateUrl` 真实比较；`apply_update` 真实下载/校验/写入/备份回滚                |
-| CAP-MISC       | update/unlock/misc       | 7    | blocked/hidden                                 | AI/插件 HTTP 需方法白名单+域名/IP 限制+超时+大小限制（§20.2）；unlock challenge 需真实签名/校验/过期，否则下架 |
-| CAP-VIDEO      | video 代理               | 2    | blocked_by_platform                            | 番茄短剧视频播放（Phase 7）                                                                                    |
+| ID             | 能力域                   | 数量 | 当前处置                                       | 实现要点（审计文档第 4 节）                                                                                                                                                                              |
+| -------------- | ------------------------ | ---- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ~~CAP-REPO~~   | repository/source_update | 6    | **closed 2026-06-12（已实现）**                | `booksource_check_update` 基于 `@updateUrl` 真实版本比较；`apply_update` 真实下载/校验/写入并保留本地 @enabled；`repository_fetch/preview/install/check_source_sync` 全部接入。详见 NET/CAP 表与迭代日志 |
+| CAP-SYNC       | sync 云同步              | 16   | unsupported_hidden                             | WebDAV 至少做到凭据保存/连接测试/状态查询/手动同步；百度网盘/FTP 先保留隐藏（用户决策保留）                                                                                                              |
+| CAP-BROWSER    | browser_probe 浏览器探测 | 12   | unsupported_hidden（用户决策保留）             | 真实 session/导航/JS 执行/cookie/UA                                                                                                                                                                      |
+| CAP-TTS        | TTS 朗读                 | 6    | blocked_by_platform（已降级浏览器 Web Speech） | 开放需真实语音列表/播放/停止/状态/试听/错误回退                                                                                                                                                          |
+| CAP-COMICCOVER | 漫画/封面缓存            | 9    | blocked_by_platform                            | 真实下载/缓存/清理/计量                                                                                                                                                                                  |
+| CAP-MISC       | update/unlock/misc       | 7    | blocked/hidden（unlock 用户决策保留）          | AI/插件 HTTP 需方法白名单+域名/IP 限制+超时+大小限制（§20.2）；unlock challenge 需真实签名/校验/过期                                                                                                     |
+| CAP-VIDEO      | video 代理               | 2    | blocked_by_platform                            | 番茄短剧视频播放（Phase 7）                                                                                                                                                                              |
 
-（命令清单见本文件「当前前端可触达 UNSUPPORTED 模块」表。）
+（命令清单见本文件「当前前端可触达 UNSUPPORTED 模块」表。CAP-REPO 已移出。）
 
 ### C. 架构验收
 
@@ -125,26 +125,32 @@ frontend.lint = passed_zero_warnings
 
 ## 当前前端可触达 UNSUPPORTED 模块
 
-R-P0-001 的契约口径经 R-P1-004 修正为 60 个前端可触达 stub；本轮已全部接入 `capabilities_get` + `useCapabilities`，并在 UI/调用层按模块禁用、隐藏、降级或 no-op。注意：这只关闭“点击后直撞 UNSUPPORTED”的入口裸露问题，不代表后端缓存、仓库、更新、解锁等能力已经实现。
+R-P0-001 的契约口径经 R-P1-004 修正为 60 个前端可触达 stub；本轮已全部接入 `capabilities_get` + `useCapabilities`，并在 UI/调用层按模块禁用、隐藏、降级或 no-op。2026-06-12 CAP-REPO 真实实现 repository/source_update 6 命令后，stub 降至 52，仓库/更新已移出本表。注意：本表只关闭“点击后直撞 UNSUPPORTED”的入口裸露问题，不代表后端缓存、解锁等剩余能力已经实现。
 
-| 模块                     | 数量 | 当前处置            | 命令                                                                                                                                                                                                                                                                                                                                                                                                    |
-| ------------------------ | ---: | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| sync                     |   16 | unsupported_hidden  | `sync_baidu_start_auth`, `sync_baidu_token_status`, `sync_baidu_poll_token`, `sync_baidu_revoke_auth`, `sync_client_state_set`, `sync_get_status`, `sync_set_credentials`, `sync_clear_credentials`, `sync_get_credentials`, `sync_test_connection`, `sync_now`, `sync_list_conflicts`, `sync_resolve_conflict`, `sync_report_reader_session`, `sync_v2_sync_reading_progress`, `sync_notify_lifecycle` |
-| tts                      |    6 | blocked_by_platform | `tts_stop`, `tts_is_initialized`, `tts_is_speaking`, `tts_speak`, `tts_get_voices`, `tts_preview_voice`                                                                                                                                                                                                                                                                                                 |
-| video                    |    2 | blocked_by_platform | `start_video_proxy`, `stop_video_proxy`                                                                                                                                                                                                                                                                                                                                                                 |
-| browser_probe            |   12 | unsupported_hidden  | `browser_probe_create`, `browser_probe_navigate`, `browser_probe_eval`, `browser_probe_run`, `browser_probe_get_cookies`, `browser_probe_set_cookie`, `browser_probe_set_user_agent`, `browser_probe_clear_data`, `browser_probe_show`, `browser_probe_hide`, `browser_probe_close`, `browser_probe_close_all`                                                                                          |
-| comic_cover              |    9 | blocked_by_platform | `comic_download_images`, `comic_get_page_sizes`, `comic_get_cached_page`, `comic_cache_clear_chapter`, `comic_cache_clear`, `comic_cache_size`, `cover_resolve_cache`, `cover_cache_size`, `cover_cache_clear`                                                                                                                                                                                          |
-| repository/source_update |    6 | unsupported_hidden  | `booksource_check_update`, `booksource_apply_update`, `repository_fetch`, `repository_install`, `repository_preview_source`, `repository_check_source_sync`                                                                                                                                                                                                                                             |
-| update/unlock/misc       |    7 | blocked/hidden      | `ai_http_proxy_url` / `explore_clear_cache` 为 `blocked_by_platform` 降级；`frontend_plugin_http_request`、`issue_*unlock*`、`verify_*unlock*` 为 `unsupported_hidden`                                                                                                                                                                                                                                  |
+| 模块               | 数量 | 当前处置            | 命令                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------ | ---: | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| sync               |   16 | unsupported_hidden  | `sync_baidu_start_auth`, `sync_baidu_token_status`, `sync_baidu_poll_token`, `sync_baidu_revoke_auth`, `sync_client_state_set`, `sync_get_status`, `sync_set_credentials`, `sync_clear_credentials`, `sync_get_credentials`, `sync_test_connection`, `sync_now`, `sync_list_conflicts`, `sync_resolve_conflict`, `sync_report_reader_session`, `sync_v2_sync_reading_progress`, `sync_notify_lifecycle` |
+| tts                |    6 | blocked_by_platform | `tts_stop`, `tts_is_initialized`, `tts_is_speaking`, `tts_speak`, `tts_get_voices`, `tts_preview_voice`                                                                                                                                                                                                                                                                                                 |
+| video              |    2 | blocked_by_platform | `start_video_proxy`, `stop_video_proxy`                                                                                                                                                                                                                                                                                                                                                                 |
+| browser_probe      |   12 | unsupported_hidden  | `browser_probe_create`, `browser_probe_navigate`, `browser_probe_eval`, `browser_probe_run`, `browser_probe_get_cookies`, `browser_probe_set_cookie`, `browser_probe_set_user_agent`, `browser_probe_clear_data`, `browser_probe_show`, `browser_probe_hide`, `browser_probe_close`, `browser_probe_close_all`                                                                                          |
+| comic_cover        |    9 | blocked_by_platform | `comic_download_images`, `comic_get_page_sizes`, `comic_get_cached_page`, `comic_cache_clear_chapter`, `comic_cache_clear`, `comic_cache_size`, `cover_resolve_cache`, `cover_cache_size`, `cover_cache_clear`                                                                                                                                                                                          |
+| update/unlock/misc |    7 | blocked/hidden      | `ai_http_proxy_url` / `explore_clear_cache` 为 `blocked_by_platform` 降级；`frontend_plugin_http_request`、`issue_*unlock*`、`verify_*unlock*` 为 `unsupported_hidden`                                                                                                                                                                                                                                  |
+
+> ~~repository/source_update（6）~~ 已于 2026-06-12（CAP-REPO）真实实现并移出本表，`repository` capability 置 supported。
 
 ## 下轮第一件事
 
-前后端接入审计已结清，**路线图 A 段（环境/网络阻塞项）也已全部结清**：NET-004-LIVE（DoH 实测修 360dns/onedns）、NET-005（DoH 接入 JS 桥）、SRC-FANQIE-LIVE（番茄 bookInfo 字段验收 + 引擎字段管线两处保真修复）均 closed 并推送（commit 82590e0~6245335 + 番茄轮）。
+前后端接入审计已结清，**路线图 A 段（环境/网络阻塞项）全部结清**，B 段 **CAP-REPO 也已结清**：
 
-下一步只剩 B 段（隐藏后端能力真实化）与 C 段（FORMB-ACCEPT 形态 B 浏览器闭环）：
+- A 段：NET-004-LIVE（DoH 实测修 360dns/onedns）、NET-005（DoH 接入 JS 桥）、SRC-FANQIE-LIVE（番茄 bookInfo 字段验收 + 引擎字段管线两处保真修复）。
+- B 段：CAP-REPO（书源仓库 + `@updateUrl` 在线更新，6 命令真实实现，stub 58→52）。
 
-1. **B 段动手前必须先与用户确认「待用户决策」三项**（百度网盘/FTP 同步、browser_probe、unlock 取舍）——用户已主动删过应用更新功能，部分能力可能不需要。确认后按审计文档第 4 节处置规则实现，同步 `capabilities_get` + 前端入口 + `docs/command-matrix.md`。
-2. C 段 FORMB-ACCEPT 不依赖新功能/网络，可独立推进。
-3. B 段中 CAP-REPO（书源更新真实化）、CAP-SYNC WebDAV 不在「待用户决策」之列，相对独立，可优先取用。
+用户决策（2026-06-12）：百度网盘/FTP 同步、browser_probe、完全体 unlock 三项「都先保留」（不移除）。
+
+下一步候选（B 段剩余 / C 段）：
+
+1. **CAP-SYNC WebDAV**（凭据保存/连接测试/状态/手动同步；百度网盘/FTP 保持隐藏）——不在「待用户决策」之列，相对独立。
+2. C 段 **FORMB-ACCEPT** 形态 B 浏览器闭环——不依赖新功能/网络，可独立推进；途中把 CAP-REPO 等新命令按需加入 `router.rs` 白名单 + 补 `ws_router.rs` 测试。
+3. 其余 B 段能力（CAP-BROWSER/CAP-TTS/CAP-COMICCOVER/CAP-MISC/CAP-VIDEO）均为大特性，按审计文档第 4 节处置规则实现，同步 `capabilities_get` + 前端入口 + `docs/command-matrix.md`。
 
 历史项 R-P2-003（番茄 JS API 缺口）已并入并随 SRC-FANQIE-LIVE 结清。

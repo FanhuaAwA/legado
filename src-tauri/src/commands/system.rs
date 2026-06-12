@@ -147,8 +147,8 @@ pub const CAPABILITY_SPECS: &[CapabilitySpec] = &[
     },
     CapabilitySpec {
         key: "repository",
-        supported: false,
-        reason: "Source repository browsing and source auto-update are not implemented in this build.",
+        supported: true,
+        reason: "Source repository browsing and JS-source auto-update via @updateUrl are supported.",
         commands: &[
             "repository_fetch",
             "repository_install",
