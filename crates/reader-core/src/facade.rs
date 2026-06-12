@@ -77,6 +77,8 @@ impl ReaderCore {
         // Keep the JS HTTP bridge's TLS policy in sync with the main client so
         // the Network panel's "ignore TLS errors" toggle governs every path.
         crate::parser::js::set_js_http_ignore_tls(http_cfg.ignore_tls_errors);
+        // Same for DoH: the bridge honors http_doh_server like the main client.
+        crate::parser::js::set_js_http_doh_server(&http_cfg.doh_server);
         crate::parser::js::set_js_engine_timeout_secs(config_u64_value(
             &app_config,
             "engine_timeout_secs",

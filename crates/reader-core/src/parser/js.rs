@@ -131,21 +131,44 @@ pub fn set_js_http_ignore_tls(ignore: bool) {
     JS_HTTP_IGNORE_TLS.store(ignore, Ordering::Relaxed);
 }
 
+/// DNS-over-HTTPS provider for the JS HTTP bridge (from `http_doh_server`). Read
+/// once when `JS_HTTP_CLIENT` is first built; like the TLS flag, changes need a
+/// restart, matching the main client's contract. Empty/`none`/unknown = system DNS.
+static JS_HTTP_DOH_SERVER: Mutex<String> = Mutex::new(String::new());
+
+/// Update the JS HTTP bridge DoH provider (from `http_doh_server`). Must be called
+/// before the first JS HTTP request for it to take effect this session.
+pub fn set_js_http_doh_server(key: &str) {
+    if let Ok(mut guard) = JS_HTTP_DOH_SERVER.lock() {
+        *guard = key.to_string();
+    }
+}
+
 static JS_HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
     // reqwest::blocking 客户端不能在 tokio 异步上下文中构建；Lazy 首次触发点
     // 可能位于异步规则引擎线程，因此固定在独立线程上完成构建。
     let ignore_tls = JS_HTTP_IGNORE_TLS.load(Ordering::Relaxed);
+    let doh_key = JS_HTTP_DOH_SERVER
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default();
     std::thread::spawn(move || {
-        Client::builder()
+        let mut builder = Client::builder()
             .timeout(Duration::from_secs(35))
             .connect_timeout(Duration::from_secs(10))
             .cookie_store(true)
             .gzip(true)
             .brotli(true)
             .deflate(true)
-            .danger_accept_invalid_certs(ignore_tls)
-            .build()
-            .expect("failed to build JS HTTP client")
+            .danger_accept_invalid_certs(ignore_tls);
+        // Honor http_doh_server on the JS bridge too. The DohResolver runs its
+        // async query on the blocking client's internal runtime and fails open
+        // to system DNS, so this can never break resolution (NET-005).
+        if let Some(resolver) = crate::crawler::doh::DohResolver::from_config(&doh_key, ignore_tls)
+        {
+            builder = builder.dns_resolver(resolver);
+        }
+        builder.build().expect("failed to build JS HTTP client")
     })
     .join()
     .expect("JS HTTP client init thread panicked")

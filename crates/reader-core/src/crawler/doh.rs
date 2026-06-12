@@ -232,4 +232,29 @@ mod tests {
             );
         }
     }
+
+    /// Live verification for NET-005: the JS bridge uses a *blocking* reqwest
+    /// client, but `DohResolver` is async (RwLock + async bootstrap client +
+    /// `tokio::net::lookup_host`). This proves the async resolver runs correctly
+    /// on the blocking client's internal runtime and actually fetches a page.
+    /// Requires network; run with: `cargo test -p reader-core doh_live -- --ignored`.
+    #[test]
+    #[ignore = "live network"]
+    fn doh_live_blocking_client_resolves_and_fetches() {
+        let resolver = DohResolver::from_config("cloudflare", false).expect("provider builds");
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .dns_resolver(resolver)
+            .build()
+            .expect("build blocking client with DoH resolver");
+        let resp = client
+            .get("https://www.example.com/")
+            .send()
+            .expect("blocking request resolved via async DoH on internal runtime");
+        assert!(
+            resp.status().is_success() || resp.status().is_redirection(),
+            "unexpected status: {}",
+            resp.status()
+        );
+    }
 }
