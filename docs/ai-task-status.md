@@ -124,7 +124,21 @@ frontend.lint = passed_zero_warnings
 - `allow_http=false` 时拒绝非 https URL（与 `validate_network_url` 同风格新增 `validate_webdav_url`）。
 - 连接测试：对 `{url}/{root_dir}/` 发 `PROPFIND Depth:0`，2xx/207 即 ok；404 则尝试 `MKCOL` 建目录再判。返回 `{ok,message}`，message 不得泄露完整凭据/敏感 header。
 - 凭据：密码存何处需定（Windows 无 keychain 抽象时可存 app data 下受限文件或 `frontend_storage` 专用命名空间，**不要**明文回传给前端）。`sync_get_credentials` 只回「是否已设置」语义。
-- 同步内容（`domains`）：需先排查到底同步哪些数据——候选是 `frontend_storage` 各命名空间 + app config + 书架进度。**动手前先 grep `dirtyDomains`/`domain` 在仓库的真实语义**（`storage_debug_dump` 已知会读 frontend namespaces）。`sync_now` 把本地 dirty 域打包成 JSON `PUT` 到 `{root}/legado/{domain}.json`，`pull` 时 `GET` 回并按 `conflictStrategy` 合并；冲突入 `sync_list_conflicts`。先做 push/pull 全量覆盖（mode=push/pull），`mode=sync` 双向 + 冲突检测可二期。
+- 同步内容（`domains`/scopes，已排查清楚，共 8 个，由 `sync_scope_{scope}` 布尔开关启用，`useSync.ts:enabledScopes`）：
+
+  | scope              | 数据来源（后端从哪取）                                                                                                                    |
+  | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+  | `bookshelf`        | 书架书目（facade 书架/`bookshelf_list` 同源 DB）                                                                                          |
+  | `reading_progress` | 每本书阅读进度（facade 进度存储）                                                                                                         |
+  | `booksources`      | 书源文件（`js_source_dir` 下 `.js` + legado JSON 源）                                                                                     |
+  | `app_settings`     | app config（`app_config_get_all` 全量）                                                                                                   |
+  | `reader_settings`  | **前端推送**：`sync_client_state_set{domain:"reader_settings",value}`，对应前端 namespace `dynamic-config.reader.defaults.lastEffective`  |
+  | `source_flags`     | **前端推送**：`sync_client_state_set{domain:"source_flags",value:{exploreDisabled,searchDisabled}}`，对应 namespace `source.capabilities` |
+  | `extensions`       | 待定（扩展/插件存储；grep `sync_scope_extensions` 确认，无现成推送则二期）                                                                |
+  | `script_config`    | 待定（脚本 REPL/脚本配置；同上）                                                                                                          |
+
+  关键架构点：`bookshelf`/`reading_progress`/`booksources`/`app_settings` 四个域后端**自有数据**直接读；`reader_settings`/`source_flags` 两个域是**前端在 `sync_now` 前经 `pushClientState()` → `sync_client_state_set` 推到后端内存**的——所以 `sync_client_state_set` 必须真实实现（存进进程内 `Mutex<HashMap<domain,Value>>`），`sync_now` 再把这些域 + 自有域一起序列化。`sync_now` 把每个启用域 JSON `PUT` 到 `{root}/legado/{domain}.json`，`pull` 时 `GET` 回按 `conflictStrategy` 合并；冲突入 `sync_list_conflicts`。先做 push/pull 全量覆盖（mode=push/pull），`mode=sync` 双向 + 冲突检测可二期。`SyncStatus.dirtyDomains` = 自上次成功同步后有改动的域集合（可先恒返回全部启用域，二期再做脏标记）。
+
 - 状态：进程内 `Mutex<SyncStatus>`（last\*、running、conflictCount），`sync_get_status` 读它。
 
 ### 能力门禁（关键陷阱）
