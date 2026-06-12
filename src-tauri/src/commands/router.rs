@@ -9,7 +9,7 @@
 //!
 //! 参数键名约定与 Tauri IPC 一致：Rust 参数 snake_case 对应前端 camelCase 键。
 
-use reader_core::{AddBookPayload, CachedChapter, UpdateShelfBookPayload};
+use reader_core::{AddBookPayload, CachedChapter, ReaderSessionPayload, UpdateShelfBookPayload};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tauri::Manager;
@@ -320,6 +320,54 @@ pub async fn dispatch<R: tauri::Runtime>(
                 sync_misc::repository_check_source_sync(state, file_name, download_url, expected_uuid)
                     .await,
             )
+        }
+
+        // ── WebDAV 同步（CAP-SYNC；纯 HTTP + 本地数据文件，形态 B 语义成立） ──
+        "sync_set_credentials" => {
+            let password = parsed!(raw, { password: String });
+            reply(sync_misc::sync_set_credentials(state, password).await)
+        }
+        "sync_get_credentials" => reply(sync_misc::sync_get_credentials(state).await),
+        "sync_clear_credentials" => reply(sync_misc::sync_clear_credentials(state).await),
+        "sync_get_status" => reply(sync_misc::sync_get_status(state).await),
+        "sync_test_connection" => {
+            let password = parsed!(raw, { password: Option<String> });
+            reply(sync_misc::sync_test_connection(state, password).await)
+        }
+        "sync_now" => {
+            let (mode, domains, conflict_strategy) = parsed!(raw, {
+                mode: String,
+                domains: Option<Vec<String>>,
+                conflict_strategy: Option<String>,
+            });
+            reply(
+                sync_misc::sync_now_impl(app, state.inner(), mode, domains, conflict_strategy)
+                    .await,
+            )
+        }
+        "sync_list_conflicts" => reply(sync_misc::sync_list_conflicts(state).await),
+        "sync_resolve_conflict" => {
+            let (conflict_id, action) = parsed!(raw, { conflict_id: String, action: String });
+            reply(
+                sync_misc::sync_resolve_conflict_impl(app, state.inner(), conflict_id, action)
+                    .await,
+            )
+        }
+        "sync_notify_lifecycle" => {
+            let event = parsed!(raw, { event: String });
+            reply(sync_misc::sync_notify_lifecycle(state, event).await)
+        }
+        "sync_client_state_set" => {
+            let (domain, value) = parsed!(raw, { domain: String, value: Value });
+            reply(sync_misc::sync_client_state_set(state, domain, value).await)
+        }
+        "sync_report_reader_session" => {
+            let session = parsed!(raw, { session: ReaderSessionPayload });
+            reply(sync_misc::sync_report_reader_session(state, session).await)
+        }
+        "sync_v2_sync_reading_progress" => {
+            let book_id = parsed!(raw, { book_id: String });
+            reply(sync_misc::sync_v2_sync_reading_progress(state, book_id).await)
         }
 
         // ── bookshelf ──────────────────────────────────────────────────────

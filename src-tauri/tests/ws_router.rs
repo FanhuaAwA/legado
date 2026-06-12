@@ -99,6 +99,7 @@ async fn capabilities_get_returns_map() {
         .expect("capabilities_get 应成功");
     assert!(value.is_object());
     assert!(value.get("sync").is_some());
+    assert_eq!(value["syncWebdav"]["supported"], true);
 }
 
 #[tokio::test]
@@ -119,6 +120,21 @@ async fn repository_commands_are_routed() {
     let err = router::dispatch(app.handle(), "repository_fetch", &json!({}))
         .await
         .expect_err("缺少 url 应报错");
+    assert!(err.starts_with("INVALID_ARGS"), "实际: {err}");
+}
+
+#[tokio::test]
+async fn webdav_sync_commands_are_routed() {
+    let (app, _dir) = test_app().await;
+    let value = router::dispatch(app.handle(), "sync_get_status", &json!({}))
+        .await
+        .expect("sync_get_status 应成功");
+    assert!(value.is_object());
+    assert_eq!(value["running"], false);
+
+    let err = router::dispatch(app.handle(), "sync_now", &json!({}))
+        .await
+        .expect_err("缺少 mode 应报参数错误");
     assert!(err.starts_with("INVALID_ARGS"), "实际: {err}");
 }
 

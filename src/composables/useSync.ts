@@ -52,6 +52,7 @@ export interface SyncConflict {
 
 export interface SyncCredentials {
   password: string;
+  passwordSet?: boolean;
 }
 
 export interface SyncQrPayload {
@@ -200,7 +201,7 @@ export function installSyncClientStateListener() {
 export function useSync() {
   const { config, setConfig, loadConfig } = useAppConfig();
   const capabilities = useCapabilities();
-  const syncCapability = capabilities.getCapability("sync");
+  const syncCapability = capabilities.getCapability("syncWebdav");
   void capabilities.loadCapabilities();
 
   function unsupportedReason(): string {

@@ -1,5 +1,41 @@
 # AI Iteration Log
 
+## 记录标题：2026-06-12 CAP-SYNC WebDAV 同步真实化
+
+任务 ID：CAP-SYNC（路线图 B 段；按用户指令优先推进 WebDAV，百度网盘/FTP 按已确认决策继续保留隐藏）
+
+本轮目标：把 CAP-SYNC 中 WebDAV 相关 12 个前端可触达命令从 `UNSUPPORTED` stub 改为真实实现，并同步前端 capability、Tauri 命令、WS 形态 B 路由、命令矩阵和门禁报告。
+
+实现：
+
+- `crates/reader-core/src/dto.rs`：新增 `SyncStatus`、`SyncCredentials`、`SyncConnectionTestResult`、`SyncRunSummary`、`SyncClientState`、`SyncConflict`、`ReaderSessionPayload`、`SyncV2ProgressResult` 等同步 DTO。`SyncCredentials.password` 对外保持空串，使用 `passwordSet` 表示本地是否已有密码。
+- `crates/reader-core/src/service/sync_webdav.rs`：新增 WebDAV 同步运行时与客户端。客户端实现 `PROPFIND`、`MKCOL`、`PUT`、`GET`，默认拒绝 HTTP，仅测试/显式配置 `sync_allow_http=true` 时允许；同步根目录与域名做基本净化。
+- `crates/reader-core/src/facade.rs`：新增 WebDAV 凭据保存/读取/清除、连接测试、状态、`sync_now`、冲突列表/解决、客户端状态上报、阅读会话/阅读进度同步入口。支持域为 `bookshelf`、`reading_progress`、`booksources`、`app_settings`、`reader_settings`、`source_flags`；`extensions`、`script_config` 明确返回未实现错误，避免假同步。
+- `src-tauri/src/commands/sync_misc.rs`：WebDAV 12 命令接入真实 facade；`sync_now`/`sync_resolve_conflict` 在拉取远端客户端状态后发出 `sync:client-state` 事件。百度网盘命令继续 `UNSUPPORTED`。
+- `src-tauri/src/commands/system.rs`、`src/composables/useCapabilities.ts`、`src/composables/useSync.ts`、`src/components/settings/SectionSync.vue`：capability 拆分为 `syncWebdav.supported=true` 与旧 `sync.supported=false`。设置页只允许 WebDAV，FTP/百度网盘保留为禁用 provider，旧非 WebDAV 配置可切回 WebDAV。
+- `src-tauri/src/commands/router.rs`、`src-tauri/tests/ws_router.rs`：12 个 WebDAV sync 命令加入 WS 白名单；新增路由测试，确认命令命中 facade 而非 `NOT_ROUTED`。
+- `crates/reader-core/tests/sync_webdav.rs`：用 axum mock WebDAV server 跑通凭据保存、连接测试、bookshelf/reader_settings push、清本地后 pull 恢复，以及客户端状态返回。
+- `docs/command-matrix.md`、`docs/ai-task-status.md`：命令矩阵刷新，WebDAV 12 命令移出 unsupported；当前 `frontend_unsupported_stub_count` 52→40，`frontend_implemented_count` 109→121；CAP-SYNC 行标记为 WebDAV closed，百度/FTP 保留隐藏。
+
+Gate：
+
+- `cargo fmt --all`：PASS。
+- `cargo check -p reader-core`：PASS。
+- `cargo test -p reader-core --test sync_webdav -- --nocapture`：PASS（1/1）。
+- `cargo check -p legado-tauri`：PASS。
+- `cargo test -p legado-tauri --test ws_router -- --nocapture`：PASS（11/11）。
+- `pnpm build`：PASS（仅既有 Vite/Rolldown 警告：vconsole eval、chunk size、动态导入提示、plugin timing）。
+- `pnpm lint`：PASS（0 warnings / 0 errors）。
+- `cargo test -p reader-core`：PASS（lib 45 passed / 3 ignored；book_source_compat 7/7；http_client_config 8/8；js_compat 17/17；js_engine_timeout 1/1；repository 1/1；route_b_facade 1 passed / 1 ignored；source_compat_import 17 ignored；sync_webdav 1/1）。
+- `cargo test -p legado-tauri`：PASS（1 unit + ws_router 11/11；仅 MSVC linker stdout warning）。
+- `node scripts/ci/check-command-contract.mjs --json`：PASS，162/161/161，onlyFrontend=`js_eval`，onlyBackend=0，`frontend_unsupported_stub_count=40`，`frontend_implemented_count=121`。
+
+补充说明：一次并行执行 `pnpm build` 与 `cargo check -p legado-tauri` 时，Tauri 读取前端 `dist` 遇到构建中间态哈希不一致；随后单独重跑两者均通过，判定为并发构建竞争，不是代码缺陷。
+
+Gate 报告：`reports/gates/2026-06-12-CAP-SYNC-webdav/summary.md`。
+
+后续第一件事：C 段 `FORMB-ACCEPT`——纯浏览器前端连接远端 WS 后端，走完整「书源列表 → 搜索 → 加书架 → 目录 → 正文 → 进度保存」闭环；途中如遇 `NOT_ROUTED`，逐个评估加入 `router.rs` 白名单并补 `ws_router.rs` 测试。
+
 ## 记录标题：2026-06-12 书源仓库 + @updateUrl 在线更新真实化（CAP-REPO）
 
 任务 ID：CAP-REPO（路线图 B 段，用户指定方向；隐藏能力取舍「都先保留」）

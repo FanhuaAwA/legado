@@ -66,14 +66,10 @@ pub struct CapabilitySpec {
 
 pub const CAPABILITY_SPECS: &[CapabilitySpec] = &[
     CapabilitySpec {
-        key: "sync",
-        supported: false,
-        reason: "Sync backend is not implemented in this build.",
+        key: "syncWebdav",
+        supported: true,
+        reason: "WebDAV sync is implemented for credentials, connection test, status and manual sync.",
         commands: &[
-            "sync_baidu_start_auth",
-            "sync_baidu_poll_token",
-            "sync_baidu_token_status",
-            "sync_baidu_revoke_auth",
             "sync_set_credentials",
             "sync_get_credentials",
             "sync_clear_credentials",
@@ -86,6 +82,17 @@ pub const CAPABILITY_SPECS: &[CapabilitySpec] = &[
             "sync_client_state_set",
             "sync_report_reader_session",
             "sync_v2_sync_reading_progress",
+        ],
+    },
+    CapabilitySpec {
+        key: "sync",
+        supported: false,
+        reason: "Baidu Netdisk and FTP sync providers are not implemented in this build.",
+        commands: &[
+            "sync_baidu_start_auth",
+            "sync_baidu_poll_token",
+            "sync_baidu_token_status",
+            "sync_baidu_revoke_auth",
         ],
     },
     CapabilitySpec {

@@ -24,10 +24,14 @@ const { config, savingKey } = storeToRefs(_appCfg);
 const { setConfig, loadConfig } = _appCfg;
 const sync = useSync();
 const capabilities = useCapabilities();
-const syncCapability = capabilities.getCapability("sync");
-const syncDisabled = computed(() => !syncCapability.value.supported);
-const syncDisabledReason = computed(
-  () => syncCapability.value.reason || "Sync backend is not implemented in this build.",
+const syncCapability = capabilities.getCapability("syncWebdav");
+const syncWebdavDisabled = computed(() => !syncCapability.value.supported);
+const providerUnsupported = computed(() => config.value.sync_provider !== "webdav");
+const syncDisabled = computed(() => syncWebdavDisabled.value || providerUnsupported.value);
+const syncDisabledReason = computed(() =>
+  providerUnsupported.value
+    ? "当前版本只实现 WebDAV 同步；FTP 与百度网盘先保持隐藏。"
+    : syncCapability.value.reason || "Sync backend is not implemented in this build.",
 );
 void capabilities.loadCapabilities();
 
@@ -57,8 +61,8 @@ const baiduTokenStatus = ref<{
 
 const providerOptions = [
   { label: "WebDAV", value: "webdav" },
-  { label: "FTP", value: "ftp" },
-  { label: "百度网盘", value: "baidu_netdisk" },
+  { label: "FTP（暂未实现）", value: "ftp", disabled: true },
+  { label: "百度网盘（暂未实现）", value: "baidu_netdisk", disabled: true },
 ];
 
 useOverlay(() => qrVisible.value, closeQr);
@@ -120,7 +124,16 @@ function ensureSyncEnabledForUi(): boolean {
 }
 
 async function handleSet(key: string, value: string) {
-  if (key.startsWith("sync_") && !ensureSyncEnabledForUi()) {
+  if (key === "sync_provider") {
+    if (value !== "webdav") {
+      message.warning("当前版本只开放 WebDAV 同步");
+      return;
+    }
+    if (syncWebdavDisabled.value) {
+      message.warning(syncDisabledReason.value);
+      return;
+    }
+  } else if (key.startsWith("sync_") && !ensureSyncEnabledForUi()) {
     return;
   }
   try {
@@ -402,7 +415,7 @@ onMounted(async () => {
           <n-select
             :value="config.sync_provider"
             size="small"
-            :disabled="syncDisabled"
+            :disabled="syncWebdavDisabled"
             :options="providerOptions"
             @update:value="(v: string) => handleSet('sync_provider', v)"
           />

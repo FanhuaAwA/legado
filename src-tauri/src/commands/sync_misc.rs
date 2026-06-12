@@ -1,8 +1,12 @@
 use crate::state::AppState;
-use reader_core::{CommandError, RemoteSourcePreview, RepoManifest, RepoSourceSync};
+use reader_core::{
+    CommandError, ReaderSessionPayload, RemoteSourcePreview, RepoManifest, RepoSourceSync,
+    SyncConflict, SyncConnectionTestResult, SyncCredentials, SyncRunSummary, SyncStatus,
+    SyncV2ProgressResult,
+};
 use serde::Serialize;
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{Emitter, State};
 
 type CommandResult<T> = Result<T, CommandError>;
 fn u(f: &str) -> CommandError {
@@ -36,52 +40,148 @@ pub async fn sync_baidu_revoke_auth() -> CommandResult<()> {
     Err(u("百度网盘授权"))
 }
 #[tauri::command]
-pub async fn sync_set_credentials() -> CommandResult<()> {
-    Err(u("云同步凭据"))
+pub async fn sync_set_credentials(
+    state: State<'_, AppState>,
+    password: String,
+) -> CommandResult<()> {
+    state
+        .core
+        .sync_set_credentials(&password)
+        .await
+        .map_err(map_err)
 }
 #[tauri::command]
-pub async fn sync_get_credentials() -> CommandResult<()> {
-    Err(u("云同步凭据"))
+pub async fn sync_get_credentials(state: State<'_, AppState>) -> CommandResult<SyncCredentials> {
+    state.core.sync_get_credentials().await.map_err(map_err)
 }
 #[tauri::command]
-pub async fn sync_clear_credentials() -> CommandResult<()> {
-    Err(u("云同步凭据"))
+pub async fn sync_clear_credentials(state: State<'_, AppState>) -> CommandResult<()> {
+    state.core.sync_clear_credentials().await.map_err(map_err)
 }
 #[tauri::command]
-pub async fn sync_get_status() -> CommandResult<()> {
-    Err(u("云同步状态"))
+pub async fn sync_get_status(state: State<'_, AppState>) -> CommandResult<SyncStatus> {
+    state.core.sync_get_status().await.map_err(map_err)
 }
 #[tauri::command]
-pub async fn sync_now() -> CommandResult<()> {
-    Err(u("云同步"))
+pub async fn sync_now(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    mode: String,
+    domains: Option<Vec<String>>,
+    conflict_strategy: Option<String>,
+) -> CommandResult<SyncRunSummary> {
+    sync_now_impl(&app, state.inner(), mode, domains, conflict_strategy).await
+}
+
+pub async fn sync_now_impl<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &AppState,
+    mode: String,
+    domains: Option<Vec<String>>,
+    conflict_strategy: Option<String>,
+) -> CommandResult<SyncRunSummary> {
+    let summary = state
+        .core
+        .sync_now(&mode, domains, conflict_strategy.as_deref())
+        .await
+        .map_err(map_err)?;
+    emit_client_states(&app, &summary);
+    Ok(summary)
 }
 #[tauri::command]
-pub async fn sync_test_connection() -> CommandResult<()> {
-    Err(u("云同步"))
+pub async fn sync_test_connection(
+    state: State<'_, AppState>,
+    password: Option<String>,
+) -> CommandResult<SyncConnectionTestResult> {
+    state
+        .core
+        .sync_test_connection(password.as_deref())
+        .await
+        .map_err(map_err)
 }
 #[tauri::command]
-pub async fn sync_list_conflicts() -> CommandResult<()> {
-    Err(u("云同步"))
+pub async fn sync_list_conflicts(state: State<'_, AppState>) -> CommandResult<Vec<SyncConflict>> {
+    state.core.sync_list_conflicts().await.map_err(map_err)
 }
 #[tauri::command]
-pub async fn sync_resolve_conflict() -> CommandResult<()> {
-    Err(u("云同步"))
+pub async fn sync_resolve_conflict(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    conflict_id: String,
+    action: String,
+) -> CommandResult<()> {
+    sync_resolve_conflict_impl(&app, state.inner(), conflict_id, action).await
+}
+
+pub async fn sync_resolve_conflict_impl<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &AppState,
+    conflict_id: String,
+    action: String,
+) -> CommandResult<()> {
+    let states = state
+        .core
+        .sync_resolve_conflict(&conflict_id, &action)
+        .await
+        .map_err(map_err)?;
+    for state in states {
+        let _ = app.emit(
+            "sync:client-state",
+            serde_json::json!({ "domain": state.domain, "value": state.value }),
+        );
+    }
+    Ok(())
 }
 #[tauri::command]
-pub async fn sync_notify_lifecycle() -> CommandResult<()> {
-    Err(u("云同步"))
+pub async fn sync_notify_lifecycle(state: State<'_, AppState>, event: String) -> CommandResult<()> {
+    state
+        .core
+        .sync_notify_lifecycle(&event)
+        .await
+        .map_err(map_err)
 }
 #[tauri::command]
-pub async fn sync_client_state_set() -> CommandResult<()> {
-    Err(u("云同步"))
+pub async fn sync_client_state_set(
+    state: State<'_, AppState>,
+    domain: String,
+    value: serde_json::Value,
+) -> CommandResult<()> {
+    state
+        .core
+        .sync_client_state_set(&domain, value)
+        .await
+        .map_err(map_err)
 }
 #[tauri::command]
-pub async fn sync_report_reader_session() -> CommandResult<()> {
-    Err(u("云同步"))
+pub async fn sync_report_reader_session(
+    state: State<'_, AppState>,
+    session: ReaderSessionPayload,
+) -> CommandResult<()> {
+    state
+        .core
+        .sync_report_reader_session(session)
+        .await
+        .map_err(map_err)
 }
 #[tauri::command]
-pub async fn sync_v2_sync_reading_progress() -> CommandResult<()> {
-    Err(u("云同步"))
+pub async fn sync_v2_sync_reading_progress(
+    state: State<'_, AppState>,
+    book_id: String,
+) -> CommandResult<SyncV2ProgressResult> {
+    state
+        .core
+        .sync_v2_sync_reading_progress(&book_id)
+        .await
+        .map_err(map_err)
+}
+
+fn emit_client_states<R: tauri::Runtime>(app: &tauri::AppHandle<R>, summary: &SyncRunSummary) {
+    for state in &summary.client_states {
+        let _ = app.emit(
+            "sync:client-state",
+            serde_json::json!({ "domain": state.domain, "value": state.value }),
+        );
+    }
 }
 
 // ── TTS ───────────────────────────────────────────────────

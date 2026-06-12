@@ -3,8 +3,10 @@ use crate::crawler::http_client::{HttpClient, HttpClientConfig};
 use crate::dto::{
     AddBookPayload, BookDetail, BookItem, BookSourceMeta, CachedChapter, ChapterItem,
     EpisodeProgress, EpisodeProgressMap, FrontendStorageEntry, FrontendStorageNamespaceSummary,
-    LegacyJsonImportResult, RemoteSourcePreview, RepoManifest, RepoSourceSync, ShelfBook,
-    SourceRuntimeKind, SourceSwitchRestoreResult, SourceUpdateCheck, UpdateShelfBookPayload,
+    LegacyJsonImportResult, ReaderSessionPayload, RemoteSourcePreview, RepoManifest,
+    RepoSourceSync, ShelfBook, SourceRuntimeKind, SourceSwitchRestoreResult, SourceUpdateCheck,
+    SyncClientState, SyncConflict, SyncConnectionTestResult, SyncCredentials, SyncRunSummary,
+    SyncStatus, SyncV2ProgressResult, UpdateShelfBookPayload,
 };
 use crate::error::ReaderCoreError;
 use crate::model::article_source::ArticleSource;
@@ -17,6 +19,7 @@ use crate::parser::rule_engine::{derive_toc_url_from_chapter_url, RuleEngine};
 use crate::service::book_service::BookService;
 use crate::service::book_source_service::BookSourceService;
 use crate::service::json_document_service::JsonDocumentService;
+use crate::service::sync_webdav::{SyncRuntime, WebDavClient, WebDavConfig};
 use crate::source_runtime::js_source::JsSourceRuntime;
 use crate::storage::cache::file_cache::FileCache;
 use crate::storage::db::init_pool;
@@ -27,6 +30,7 @@ use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::fs;
 
 const USER_NS: &str = "local";
@@ -36,6 +40,15 @@ const APP_CONFIG_SCOPE: &str = "app.config";
 const SOURCE_DIRS_CONFIG_SCOPE: &str = "booksource.dirs";
 const SOURCE_DIRS_CONFIG_KEY: &str = "external";
 const LEGADO_BROWSER_ACTION_FN: &str = "__legado_browser_action";
+const SYNC_SUPPORTED_DOMAINS: &[&str] = &[
+    "bookshelf",
+    "reading_progress",
+    "booksources",
+    "app_settings",
+    "reader_settings",
+    "source_flags",
+];
+const SYNC_DEFERRED_DOMAINS: &[&str] = &["extensions", "script_config"];
 
 #[derive(Clone)]
 pub struct ReaderCore {
@@ -46,6 +59,7 @@ pub struct ReaderCore {
     source_service: BookSourceService,
     book_service: BookService,
     document_service: JsonDocumentService,
+    sync_runtime: Arc<SyncRuntime>,
 }
 
 impl ReaderCore {
@@ -100,6 +114,7 @@ impl ReaderCore {
             source_service,
             book_service,
             document_service,
+            sync_runtime: Arc::new(SyncRuntime::new()),
         })
     }
 
@@ -1852,6 +1867,192 @@ impl ReaderCore {
         self.config_delete_key(APP_CONFIG_SCOPE, key).await
     }
 
+    // ── WebDAV 同步（CAP-SYNC）───────────────────────────────
+
+    pub async fn sync_set_credentials(&self, password: &str) -> Result<(), ReaderCoreError> {
+        let path = self.sync_credentials_path();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        let payload = json!({
+            "webdavPassword": password,
+            "updatedAt": now_ms(),
+        });
+        fs::write(path, serde_json::to_string_pretty(&payload)?).await?;
+        Ok(())
+    }
+
+    pub async fn sync_get_credentials(&self) -> Result<SyncCredentials, ReaderCoreError> {
+        Ok(SyncCredentials {
+            password: String::new(),
+            password_set: self.read_sync_password().await?.is_some(),
+        })
+    }
+
+    pub async fn sync_clear_credentials(&self) -> Result<(), ReaderCoreError> {
+        match fs::remove_file(self.sync_credentials_path()).await {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    pub async fn sync_get_status(&self) -> Result<SyncStatus, ReaderCoreError> {
+        let mut status = self.sync_runtime.status().await;
+        let config = self.sync_config().await?;
+        status.enabled = config.enabled
+            && config.provider == "webdav"
+            && !config.base_url.trim().is_empty()
+            && !config.enabled_domains.is_empty();
+        status.dirty_domains = config.enabled_domains;
+        status.conflict_count = self
+            .sync_runtime
+            .conflicts()
+            .await
+            .into_iter()
+            .filter(|item| !item.resolved)
+            .count();
+        Ok(status)
+    }
+
+    pub async fn sync_test_connection(
+        &self,
+        password: Option<&str>,
+    ) -> Result<SyncConnectionTestResult, ReaderCoreError> {
+        let client = self.sync_webdav_client(password).await?;
+        match client.test_connection().await {
+            Ok(()) => Ok(SyncConnectionTestResult {
+                ok: true,
+                message: "WebDAV 连接测试通过".to_string(),
+            }),
+            Err(err) => Ok(SyncConnectionTestResult {
+                ok: false,
+                message: sanitize_sync_error(&err.to_string()),
+            }),
+        }
+    }
+
+    pub async fn sync_now(
+        &self,
+        mode: &str,
+        domains: Option<Vec<String>>,
+        conflict_strategy: Option<&str>,
+    ) -> Result<SyncRunSummary, ReaderCoreError> {
+        let current = self.sync_runtime.status().await;
+        if current.running {
+            return Err(ReaderCoreError::Message("同步任务正在运行".to_string()));
+        }
+        self.sync_runtime.set_running(true).await;
+        let result = self.sync_now_inner(mode, domains, conflict_strategy).await;
+        match &result {
+            Ok(summary) => {
+                self.sync_runtime
+                    .mark_success(summary.message.clone(), summary.conflict_count)
+                    .await;
+            }
+            Err(err) => {
+                self.sync_runtime
+                    .mark_failure(sanitize_sync_error(&err.to_string()))
+                    .await;
+            }
+        }
+        result
+    }
+
+    pub async fn sync_list_conflicts(&self) -> Result<Vec<SyncConflict>, ReaderCoreError> {
+        Ok(self.sync_runtime.conflicts().await)
+    }
+
+    pub async fn sync_resolve_conflict(
+        &self,
+        conflict_id: &str,
+        action: &str,
+    ) -> Result<Vec<SyncClientState>, ReaderCoreError> {
+        let conflict = self
+            .sync_runtime
+            .resolve_conflict(conflict_id)
+            .await
+            .ok_or_else(|| ReaderCoreError::Message("同步冲突不存在或已处理".to_string()))?;
+        match action {
+            "local" => {
+                let client = self.sync_webdav_client(None).await?;
+                client.put_domain(&conflict.domain, &conflict.local).await?;
+                Ok(Vec::new())
+            }
+            "remote" => {
+                let client_state = self
+                    .apply_sync_domain(&conflict.domain, conflict.remote.clone())
+                    .await?;
+                Ok(client_state.into_iter().collect())
+            }
+            "ignore" => Ok(Vec::new()),
+            other => Err(ReaderCoreError::Message(format!(
+                "不支持的冲突处理动作: {other}"
+            ))),
+        }
+    }
+
+    pub async fn sync_client_state_set(
+        &self,
+        domain: &str,
+        value: Value,
+    ) -> Result<(), ReaderCoreError> {
+        match domain {
+            "reader_settings" | "source_flags" => {
+                self.sync_runtime.set_client_state(domain, value).await;
+                Ok(())
+            }
+            other => Err(ReaderCoreError::Message(format!(
+                "不支持的前端同步状态域: {other}"
+            ))),
+        }
+    }
+
+    pub async fn sync_report_reader_session(
+        &self,
+        session: ReaderSessionPayload,
+    ) -> Result<(), ReaderCoreError> {
+        self.sync_runtime.set_reader_session(session).await;
+        Ok(())
+    }
+
+    pub async fn sync_v2_sync_reading_progress(
+        &self,
+        book_id: &str,
+    ) -> Result<SyncV2ProgressResult, ReaderCoreError> {
+        let local = self.reading_progress_snapshot().await?;
+        let summary = self
+            .sync_now("sync", Some(vec!["reading_progress".to_string()]), None)
+            .await?;
+        let remote = self
+            .sync_runtime
+            .conflicts()
+            .await
+            .into_iter()
+            .find(|item| item.domain == "reading_progress" && !item.resolved)
+            .and_then(|item| item.remote.get("books").cloned())
+            .and_then(|books| find_progress_for_book(&books, book_id));
+        Ok(SyncV2ProgressResult {
+            status: summary.status,
+            message: summary.message,
+            local: find_progress_for_book(&local["books"], book_id),
+            remote,
+        })
+    }
+
+    pub async fn sync_notify_lifecycle(&self, event: &str) -> Result<(), ReaderCoreError> {
+        if !matches!(event, "startup" | "resume" | "background") {
+            return Err(ReaderCoreError::Message(format!(
+                "未知同步生命周期事件: {event}"
+            )));
+        }
+        Ok(())
+    }
+
+    pub async fn sync_client_states_for_domains(&self, domains: &[String]) -> Vec<SyncClientState> {
+        self.sync_runtime.client_states_for_domains(domains).await
+    }
+
     pub async fn resolve_audio_cache(
         &self,
         url: &str,
@@ -2016,6 +2217,457 @@ impl ReaderCore {
         Ok(sources
             .into_iter()
             .find(|source| legado_file_name(source) == file_name))
+    }
+
+    async fn sync_now_inner(
+        &self,
+        mode: &str,
+        domains: Option<Vec<String>>,
+        conflict_strategy: Option<&str>,
+    ) -> Result<SyncRunSummary, ReaderCoreError> {
+        let mode = if mode.trim().is_empty() { "sync" } else { mode };
+        if !matches!(mode, "sync" | "pull" | "push") {
+            return Err(ReaderCoreError::Message(format!(
+                "不支持的同步模式: {mode}"
+            )));
+        }
+        let config = self.sync_config().await?;
+        if !config.enabled {
+            return Err(ReaderCoreError::Message("同步未启用".to_string()));
+        }
+        if config.provider != "webdav" {
+            return Err(ReaderCoreError::Message(format!(
+                "当前只实现 WebDAV 同步，未实现 provider={}",
+                config.provider
+            )));
+        }
+        if !config.deferred_domains.is_empty() {
+            return Err(ReaderCoreError::Message(format!(
+                "以下同步范围尚未实现，请先关闭后重试: {}",
+                config.deferred_domains.join(", ")
+            )));
+        }
+        let domains = self.selected_sync_domains(domains, &config)?;
+        if domains.is_empty() {
+            return Ok(SyncRunSummary {
+                status: "success".to_string(),
+                mode: mode.to_string(),
+                domains,
+                uploaded_domains: Vec::new(),
+                applied_domains: Vec::new(),
+                conflict_count: 0,
+                message: "没有启用同步范围".to_string(),
+                client_states: Vec::new(),
+            });
+        }
+
+        let client = self.sync_webdav_client(None).await?;
+        let mut uploaded = Vec::new();
+        let mut applied = Vec::new();
+        let mut conflicts = Vec::new();
+
+        for domain in &domains {
+            match mode {
+                "push" => {
+                    let local = self.sync_domain_snapshot(domain).await?;
+                    client.put_domain(domain, &local).await?;
+                    uploaded.push(domain.clone());
+                }
+                "pull" => {
+                    if let Some(remote) = client.get_domain(domain).await? {
+                        if self.apply_sync_domain(domain, remote).await?.is_some() {
+                            // Emitted by the command layer after this returns.
+                        }
+                        applied.push(domain.clone());
+                    }
+                }
+                "sync" => {
+                    let local = self.sync_domain_snapshot(domain).await?;
+                    match client.get_domain(domain).await? {
+                        None => {
+                            client.put_domain(domain, &local).await?;
+                            uploaded.push(domain.clone());
+                        }
+                        Some(remote) if remote == local => {}
+                        Some(remote) => match conflict_strategy {
+                            Some("local") => {
+                                client.put_domain(domain, &local).await?;
+                                uploaded.push(domain.clone());
+                            }
+                            Some("remote") => {
+                                self.apply_sync_domain(domain, remote).await?;
+                                applied.push(domain.clone());
+                            }
+                            Some(other) => {
+                                return Err(ReaderCoreError::Message(format!(
+                                    "不支持的冲突策略: {other}"
+                                )));
+                            }
+                            None => {
+                                conflicts.push(SyncConflict {
+                                    id: md5_hex(&format!("{domain}:{}", now_ms())),
+                                    domain: domain.clone(),
+                                    key: format!("{domain}.json"),
+                                    message: "本地与远端内容不一致，需要选择保留本地或服务器版本"
+                                        .to_string(),
+                                    local,
+                                    remote,
+                                    created_at: now_ms(),
+                                    resolved: false,
+                                });
+                            }
+                        },
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        self.sync_runtime.replace_conflicts(conflicts.clone()).await;
+        let client_states = self.sync_runtime.client_states_for_domains(&applied).await;
+        if !conflicts.is_empty() {
+            return Ok(SyncRunSummary {
+                status: "conflict".to_string(),
+                mode: mode.to_string(),
+                domains,
+                uploaded_domains: uploaded,
+                applied_domains: applied,
+                conflict_count: conflicts.len(),
+                message: format!("发现 {} 个同步冲突", conflicts.len()),
+                client_states,
+            });
+        }
+        Ok(SyncRunSummary {
+            status: "success".to_string(),
+            mode: mode.to_string(),
+            domains,
+            uploaded_domains: uploaded.clone(),
+            applied_domains: applied.clone(),
+            conflict_count: 0,
+            message: format!(
+                "同步完成：上传 {} 个域，应用 {} 个域",
+                uploaded.len(),
+                applied.len()
+            ),
+            client_states,
+        })
+    }
+
+    async fn sync_webdav_client(
+        &self,
+        password_override: Option<&str>,
+    ) -> Result<WebDavClient, ReaderCoreError> {
+        let config = self.sync_config().await?;
+        if config.provider != "webdav" {
+            return Err(ReaderCoreError::Message(format!(
+                "当前只实现 WebDAV 同步，未实现 provider={}",
+                config.provider
+            )));
+        }
+        let password = match password_override {
+            Some(value) => value.to_string(),
+            None => self.read_sync_password().await?.unwrap_or_default(),
+        };
+        if !config.username.trim().is_empty() && password.is_empty() {
+            return Err(ReaderCoreError::Message(
+                "WebDAV 密码/Token 未保存".to_string(),
+            ));
+        }
+        WebDavClient::new(self.book_service.http_client().clone(), config, password)
+    }
+
+    async fn sync_config(&self) -> Result<WebDavConfig, ReaderCoreError> {
+        let config = self.app_config_get_all().await?;
+        let provider = config_string_value(&config, "sync_provider", "webdav");
+        let enabled_domains = SYNC_SUPPORTED_DOMAINS
+            .iter()
+            .filter(|domain| config_bool_value(&config, &format!("sync_scope_{domain}"), false))
+            .map(|domain| (*domain).to_string())
+            .collect::<Vec<_>>();
+        let deferred_domains = SYNC_DEFERRED_DOMAINS
+            .iter()
+            .filter(|domain| config_bool_value(&config, &format!("sync_scope_{domain}"), false))
+            .map(|domain| (*domain).to_string())
+            .collect::<Vec<_>>();
+        Ok(WebDavConfig {
+            enabled: config_bool_value(&config, "sync_enabled", false),
+            provider,
+            base_url: config_string_value(&config, "sync_webdav_url", ""),
+            username: config_string_value(&config, "sync_webdav_username", ""),
+            root_dir: config_string_value(&config, "sync_webdav_root_dir", "legado-sync"),
+            allow_http: config_bool_value(&config, "sync_webdav_allow_http", false),
+            enabled_domains,
+            deferred_domains,
+        })
+    }
+
+    fn selected_sync_domains(
+        &self,
+        requested: Option<Vec<String>>,
+        config: &WebDavConfig,
+    ) -> Result<Vec<String>, ReaderCoreError> {
+        let mut domains = requested.unwrap_or_else(|| config.enabled_domains.clone());
+        domains.retain(|item| !item.trim().is_empty());
+        dedupe_strings(&mut domains);
+        for domain in &domains {
+            if SYNC_DEFERRED_DOMAINS.contains(&domain.as_str()) {
+                return Err(ReaderCoreError::Message(format!(
+                    "同步域 {domain} 尚未实现"
+                )));
+            }
+            if !SYNC_SUPPORTED_DOMAINS.contains(&domain.as_str()) {
+                return Err(ReaderCoreError::Message(format!("未知同步域: {domain}")));
+            }
+        }
+        Ok(domains)
+    }
+
+    async fn sync_domain_snapshot(&self, domain: &str) -> Result<Value, ReaderCoreError> {
+        match domain {
+            "bookshelf" => self.bookshelf_snapshot().await,
+            "reading_progress" => self.reading_progress_snapshot().await,
+            "booksources" => self.booksources_snapshot().await,
+            "app_settings" => self.app_config_get_all().await,
+            "reader_settings" | "source_flags" => Ok(self
+                .sync_runtime
+                .client_state(domain)
+                .await
+                .unwrap_or(Value::Null)),
+            other => Err(ReaderCoreError::Message(format!("同步域 {other} 尚未实现"))),
+        }
+    }
+
+    async fn apply_sync_domain(
+        &self,
+        domain: &str,
+        value: Value,
+    ) -> Result<Option<SyncClientState>, ReaderCoreError> {
+        match domain {
+            "bookshelf" => {
+                self.apply_bookshelf_snapshot(value).await?;
+                Ok(None)
+            }
+            "reading_progress" => {
+                self.apply_reading_progress_snapshot(value).await?;
+                Ok(None)
+            }
+            "booksources" => {
+                self.apply_booksources_snapshot(value).await?;
+                Ok(None)
+            }
+            "app_settings" => {
+                self.apply_app_settings_snapshot(value).await?;
+                Ok(None)
+            }
+            "reader_settings" | "source_flags" => {
+                self.sync_runtime
+                    .set_client_state(domain, value.clone())
+                    .await;
+                Ok(Some(SyncClientState {
+                    domain: domain.to_string(),
+                    value,
+                }))
+            }
+            other => Err(ReaderCoreError::Message(format!("同步域 {other} 尚未实现"))),
+        }
+    }
+
+    async fn bookshelf_snapshot(&self) -> Result<Value, ReaderCoreError> {
+        let books = self
+            .read_shelf_books()
+            .await?
+            .into_values()
+            .collect::<Vec<_>>();
+        Ok(json!({
+            "schemaVersion": 1,
+            "books": books,
+        }))
+    }
+
+    async fn apply_bookshelf_snapshot(&self, value: Value) -> Result<(), ReaderCoreError> {
+        let books = value
+            .get("books")
+            .cloned()
+            .ok_or_else(|| ReaderCoreError::Message("远端书架数据缺少 books 字段".to_string()))?;
+        let items = serde_json::from_value::<Vec<ShelfBook>>(books)?;
+        let map = items
+            .into_iter()
+            .map(|book| (book.id.clone(), book))
+            .collect::<BTreeMap<_, _>>();
+        self.write_shelf_books(&map).await
+    }
+
+    async fn reading_progress_snapshot(&self) -> Result<Value, ReaderCoreError> {
+        let books = self.read_shelf_books().await?;
+        let progress = books
+            .values()
+            .map(|book| {
+                json!({
+                    "id": book.id,
+                    "readChapterIndex": book.read_chapter_index,
+                    "readChapterUrl": book.read_chapter_url,
+                    "readPageIndex": book.read_page_index,
+                    "readScrollRatio": book.read_scroll_ratio,
+                    "readPlaybackTime": book.read_playback_time,
+                    "readerSettings": book.reader_settings,
+                    "lastReadAt": book.last_read_at,
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(json!({
+            "schemaVersion": 1,
+            "books": progress,
+        }))
+    }
+
+    async fn apply_reading_progress_snapshot(&self, value: Value) -> Result<(), ReaderCoreError> {
+        let Some(items) = value.get("books").and_then(|v| v.as_array()) else {
+            return Err(ReaderCoreError::Message(
+                "远端阅读进度数据缺少 books 字段".to_string(),
+            ));
+        };
+        let mut books = self.read_shelf_books().await?;
+        for item in items {
+            let Some(id) = item.get("id").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Some(book) = books.get_mut(id) else {
+                continue;
+            };
+            if let Some(value) = item.get("readChapterIndex").and_then(|v| v.as_i64()) {
+                book.read_chapter_index = value as i32;
+            }
+            if item.get("readChapterUrl").is_some() {
+                book.read_chapter_url = item
+                    .get("readChapterUrl")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+            }
+            if let Some(value) = item.get("readPageIndex").and_then(|v| v.as_i64()) {
+                book.read_page_index = value as i32;
+            }
+            if let Some(value) = item.get("readScrollRatio").and_then(|v| v.as_f64()) {
+                book.read_scroll_ratio = value;
+            }
+            if let Some(value) = item.get("readPlaybackTime").and_then(|v| v.as_f64()) {
+                book.read_playback_time = value;
+            }
+            if item.get("readerSettings").is_some() {
+                book.reader_settings = item
+                    .get("readerSettings")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+            }
+            if let Some(value) = item.get("lastReadAt").and_then(|v| v.as_i64()) {
+                book.last_read_at = value;
+            }
+        }
+        self.write_shelf_books(&books).await
+    }
+
+    async fn booksources_snapshot(&self) -> Result<Value, ReaderCoreError> {
+        Ok(json!({
+            "schemaVersion": 1,
+            "js": self.source_file_snapshot(&self.js_source_dir, "js").await?,
+            "legado": self.source_file_snapshot(&self.legado_source_dir, "legado.json").await?,
+        }))
+    }
+
+    async fn source_file_snapshot(
+        &self,
+        dir: &Path,
+        suffix: &str,
+    ) -> Result<Vec<Value>, ReaderCoreError> {
+        let mut out = Vec::new();
+        let mut entries = match fs::read_dir(dir).await {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(out),
+            Err(err) => return Err(err.into()),
+        };
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            if !file_name.ends_with(suffix) {
+                continue;
+            }
+            out.push(json!({
+                "fileName": file_name,
+                "content": fs::read_to_string(path).await.unwrap_or_default(),
+            }));
+        }
+        Ok(out)
+    }
+
+    async fn apply_booksources_snapshot(&self, value: Value) -> Result<(), ReaderCoreError> {
+        self.write_source_bundle(value.get("js"), &self.js_source_dir, ".js")
+            .await?;
+        self.write_source_bundle(value.get("legado"), &self.legado_source_dir, ".legado.json")
+            .await
+    }
+
+    async fn write_source_bundle(
+        &self,
+        value: Option<&Value>,
+        dir: &Path,
+        required_suffix: &str,
+    ) -> Result<(), ReaderCoreError> {
+        let Some(items) = value.and_then(|v| v.as_array()) else {
+            return Ok(());
+        };
+        fs::create_dir_all(dir).await?;
+        for item in items {
+            let Some(file_name) = item.get("fileName").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            ensure_safe_file_name(file_name)?;
+            if !file_name.ends_with(required_suffix) {
+                return Err(ReaderCoreError::Message(format!(
+                    "远端书源文件扩展名不匹配: {file_name}"
+                )));
+            }
+            let content = item
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            fs::write(dir.join(file_name), content).await?;
+        }
+        Ok(())
+    }
+
+    async fn apply_app_settings_snapshot(&self, value: Value) -> Result<(), ReaderCoreError> {
+        let Some(object) = value.as_object() else {
+            return Err(ReaderCoreError::Message(
+                "远端 app settings 不是 JSON 对象".to_string(),
+            ));
+        };
+        for (key, value) in object {
+            self.config_write_json(APP_CONFIG_SCOPE, key, value).await?;
+        }
+        Ok(())
+    }
+
+    fn sync_credentials_path(&self) -> PathBuf {
+        self.reader_dir
+            .join("config")
+            .join("sync-webdav-credentials.json")
+    }
+
+    async fn read_sync_password(&self) -> Result<Option<String>, ReaderCoreError> {
+        let path = self.sync_credentials_path();
+        let raw = match fs::read_to_string(path).await {
+            Ok(raw) => raw,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err.into()),
+        };
+        let value: Value = serde_json::from_str(&raw)?;
+        Ok(value
+            .get("webdavPassword")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .filter(|v| !v.is_empty()))
     }
 
     fn resolve_source_file(&self, file_name: &str, source_dir: Option<&str>) -> PathBuf {
@@ -3017,6 +3669,49 @@ fn config_u64_value(value: &Value, key: &str, default: u64) -> u64 {
                 .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
         })
         .unwrap_or(default)
+}
+
+fn config_string_value(value: &Value, key: &str, default: &str) -> String {
+    value
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| default.to_string())
+}
+
+fn config_bool_value(value: &Value, key: &str, default: bool) -> bool {
+    match value.get(key) {
+        Some(Value::Bool(value)) => *value,
+        Some(Value::String(value)) => match value.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" | "on" => true,
+            "false" | "0" | "no" | "off" | "" => false,
+            _ => default,
+        },
+        Some(Value::Number(value)) => value.as_i64().map(|v| v != 0).unwrap_or(default),
+        _ => default,
+    }
+}
+
+fn sanitize_sync_error(value: &str) -> String {
+    // Keep protocol/status detail but avoid echoing long request internals that
+    // may contain Basic auth material in lower-level error messages.
+    value
+        .lines()
+        .next()
+        .unwrap_or("同步失败")
+        .chars()
+        .take(240)
+        .collect()
+}
+
+fn find_progress_for_book(books: &Value, book_id: &str) -> Option<Value> {
+    books.as_array()?.iter().find_map(|item| {
+        if item.get("id").and_then(|v| v.as_str()) == Some(book_id) {
+            Some(item.clone())
+        } else {
+            None
+        }
+    })
 }
 
 fn default_app_config() -> Value {

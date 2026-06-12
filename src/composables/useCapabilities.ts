@@ -2,6 +2,7 @@ import { computed, readonly, ref } from "vue";
 import { invokeWithTimeout } from "./useInvoke";
 
 export type CapabilityKey =
+  | "syncWebdav"
   | "sync"
   | "tts"
   | "videoProxy"
@@ -41,11 +42,7 @@ function supported(reason: string, commands: string[]): FeatureCapability {
 // 离线兜底表：capabilities_get 不可达时使用。键集合必须与后端
 // src-tauri/src/commands/system.rs 的 CAPABILITY_SPECS 保持一致。
 const fallbackCapabilities: AppCapabilities = {
-  sync: unsupported("Sync backend is not implemented in this build.", [
-    "sync_baidu_start_auth",
-    "sync_baidu_poll_token",
-    "sync_baidu_token_status",
-    "sync_baidu_revoke_auth",
+  syncWebdav: supported("WebDAV sync is implemented for this build.", [
     "sync_set_credentials",
     "sync_get_credentials",
     "sync_clear_credentials",
@@ -58,6 +55,12 @@ const fallbackCapabilities: AppCapabilities = {
     "sync_client_state_set",
     "sync_report_reader_session",
     "sync_v2_sync_reading_progress",
+  ]),
+  sync: unsupported("Baidu Netdisk and FTP sync providers are not implemented in this build.", [
+    "sync_baidu_start_auth",
+    "sync_baidu_poll_token",
+    "sync_baidu_token_status",
+    "sync_baidu_revoke_auth",
   ]),
   tts: unsupported(
     "Native TTS backend is not implemented in this build; browser speech remains available.",

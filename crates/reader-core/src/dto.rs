@@ -240,6 +240,110 @@ pub struct FrontendStorageNamespaceSummary {
     pub count: usize,
 }
 
+// ── WebDAV 同步（CAP-SYNC）────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncStatus {
+    pub enabled: bool,
+    pub running: bool,
+    pub last_success_at: i64,
+    pub last_failed_at: i64,
+    pub last_error: String,
+    pub dirty_domains: Vec<String>,
+    pub conflict_count: usize,
+    pub last_run_summary: String,
+}
+
+impl Default for SyncStatus {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            running: false,
+            last_success_at: 0,
+            last_failed_at: 0,
+            last_error: String::new(),
+            dirty_domains: Vec::new(),
+            conflict_count: 0,
+            last_run_summary: "idle".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncCredentials {
+    pub password: String,
+    #[serde(default)]
+    pub password_set: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncConnectionTestResult {
+    pub ok: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncRunSummary {
+    pub status: String,
+    pub mode: String,
+    pub domains: Vec<String>,
+    pub uploaded_domains: Vec<String>,
+    pub applied_domains: Vec<String>,
+    pub conflict_count: usize,
+    pub message: String,
+    #[serde(default)]
+    pub client_states: Vec<SyncClientState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncClientState {
+    pub domain: String,
+    pub value: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncConflict {
+    pub id: String,
+    pub domain: String,
+    pub key: String,
+    pub message: String,
+    pub local: Value,
+    pub remote: Value,
+    pub created_at: i64,
+    pub resolved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReaderSessionPayload {
+    pub active: bool,
+    pub book_id: String,
+    pub chapter_index: i32,
+    pub chapter_name: String,
+    pub chapter_url: String,
+    pub page_index: i32,
+    pub scroll_ratio: f64,
+    pub playback_time: f64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncV2ProgressResult {
+    pub status: String,
+    pub message: String,
+    #[serde(default)]
+    pub local: Option<Value>,
+    #[serde(default)]
+    pub remote: Option<Value>,
+}
+
 // ── 书源仓库 / 在线更新（CAP-REPO）──────────────────────────────
 
 /// Result of checking a single JS source against its `@updateUrl`.
