@@ -572,6 +572,21 @@ function adjustLightness(hex: string, amount: number): string {
   return rgbToHex(r, g, b);
 }
 
+function mixHex(fromHex: string, toHex: string, amount: number): string {
+  const from = hexToRgb(fromHex);
+  const to = hexToRgb(toHex);
+  if (!from || !to) return fromHex;
+  const r = from.r + (to.r - from.r) * amount;
+  const g = from.g + (to.g - from.g) * amount;
+  const b = from.b + (to.b - from.b) * amount;
+  return rgbToHex(r, g, b);
+}
+
+function rgbaFromHex(hex: string, alpha: number): string {
+  const rgb = hexToRgb(hex);
+  return rgb ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})` : hex;
+}
+
 /** 获取用户自定义主题色（空字符串=使用默认） */
 const customThemeBase = computed(() => {
   const c = appConfig.value.ui_theme_color;
@@ -611,7 +626,9 @@ const naiveThemeOverrides = computed<GlobalThemeOverrides>(() => {
         borderColor: "#3f3f46",
         inputColor: "#27272a",
         actionColor: adjustLightness(darkBase, 0.3),
-        hoverColor: "rgba(255, 255, 255, 0.06)",
+        hoverColor: customThemeBase.value
+          ? rgbaFromHex(darkBase, 0.14)
+          : "rgba(255, 255, 255, 0.06)",
         textColorBase: "#fafafa",
         textColor1: "#fafafa",
         textColor2: "#a1a1aa",
@@ -639,7 +656,7 @@ const naiveThemeOverrides = computed<GlobalThemeOverrides>(() => {
       borderColor: "#e4e4e7",
       inputColor: "#ffffff",
       actionColor: adjustLightness(lightBase, 0.45),
-      hoverColor: "rgba(99, 102, 241, 0.08)",
+      hoverColor: rgbaFromHex(lightBase, 0.08),
       textColorBase: "#18181b",
       textColor1: "#18181b",
       textColor2: "#52525b",
@@ -648,26 +665,88 @@ const naiveThemeOverrides = computed<GlobalThemeOverrides>(() => {
   };
 });
 
+const customThemeVariableNames = [
+  "--color-accent",
+  "--color-accent-hover",
+  "--color-accent-soft",
+  "--color-accent-subtle",
+  "--color-focus",
+  "--color-hover",
+  "--color-sidebar-bg",
+  "--color-sidebar-border",
+  "--color-sidebar-hover",
+  "--color-sidebar-active-bg",
+  "--color-sidebar-active-text",
+  "--color-content-bg",
+  "--content-bg-texture",
+  "--app-bg-texture",
+];
+
+function applyCustomThemeVariables(themeColor: string, isDark: boolean) {
+  const rootStyle = document.documentElement.style;
+  if (!themeColor) {
+    customThemeVariableNames.forEach((name) => rootStyle.removeProperty(name));
+    return;
+  }
+
+  const hoverAccent = adjustLightness(themeColor, isDark ? 0.12 : 0.08);
+  const softAccent = isDark ? rgbaFromHex(themeColor, 0.16) : mixHex(themeColor, "#ffffff", 0.9);
+  const sidebarBg = isDark
+    ? mixHex("#141418", themeColor, 0.08)
+    : mixHex(themeColor, "#ffffff", 0.9);
+  const sidebarBorder = isDark
+    ? rgbaFromHex(themeColor, 0.18)
+    : mixHex(themeColor, "#ffffff", 0.76);
+  const sidebarHover = isDark ? rgbaFromHex(themeColor, 0.14) : mixHex(themeColor, "#ffffff", 0.82);
+  const sidebarActiveBg = isDark
+    ? rgbaFromHex(themeColor, 0.24)
+    : mixHex(themeColor, "#ffffff", 0.72);
+  const sidebarActiveText = isDark
+    ? adjustLightness(themeColor, 0.42)
+    : adjustLightness(themeColor, -0.18);
+  const contentBg = isDark
+    ? mixHex("#13141d", themeColor, 0.05)
+    : mixHex(themeColor, "#f4f4f5", 0.9);
+  const secondaryAccent = adjustLightness(themeColor, isDark ? 0.18 : 0.12);
+
+  rootStyle.setProperty("--color-accent", themeColor);
+  rootStyle.setProperty("--color-accent-hover", hoverAccent);
+  rootStyle.setProperty("--color-accent-soft", softAccent);
+  rootStyle.setProperty("--color-accent-subtle", softAccent);
+  rootStyle.setProperty("--color-focus", isDark ? adjustLightness(themeColor, 0.22) : themeColor);
+  rootStyle.setProperty("--color-hover", rgbaFromHex(themeColor, isDark ? 0.12 : 0.08));
+  rootStyle.setProperty("--color-sidebar-bg", sidebarBg);
+  rootStyle.setProperty("--color-sidebar-border", sidebarBorder);
+  rootStyle.setProperty("--color-sidebar-hover", sidebarHover);
+  rootStyle.setProperty("--color-sidebar-active-bg", sidebarActiveBg);
+  rootStyle.setProperty("--color-sidebar-active-text", sidebarActiveText);
+  rootStyle.setProperty("--color-content-bg", contentBg);
+  rootStyle.setProperty(
+    "--content-bg-texture",
+    [
+      `radial-gradient(ellipse 90% 42% at 50% -4%, ${rgbaFromHex(themeColor, isDark ? 0.1 : 0.08)} 0%, transparent 65%)`,
+      `radial-gradient(ellipse 42% 36% at 96% 6%, ${rgbaFromHex(secondaryAccent, isDark ? 0.08 : 0.06)} 0%, transparent 52%)`,
+      `repeating-linear-gradient(0deg, transparent 0px, transparent 44px, ${rgbaFromHex(themeColor, isDark ? 0.018 : 0.016)} 44px, ${rgbaFromHex(themeColor, isDark ? 0.018 : 0.016)} 45px)`,
+    ].join(", "),
+  );
+  rootStyle.setProperty(
+    "--app-bg-texture",
+    [
+      `radial-gradient(ellipse 60% 55% at 0% 0%, ${rgbaFromHex(themeColor, isDark ? 0.16 : 0.12)} 0%, transparent 60%)`,
+      `radial-gradient(ellipse 50% 45% at 100% 100%, ${rgbaFromHex(secondaryAccent, isDark ? 0.12 : 0.08)} 0%, transparent 55%)`,
+      `radial-gradient(ellipse 35% 30% at 12% 88%, ${rgbaFromHex(themeColor, isDark ? 0.1 : 0.07)} 0%, transparent 50%)`,
+      `repeating-linear-gradient(-45deg, transparent 0px, transparent 22px, ${rgbaFromHex(themeColor, isDark ? 0.035 : 0.024)} 22px, ${rgbaFromHex(themeColor, isDark ? 0.035 : 0.024)} 23px)`,
+    ].join(", "),
+  );
+}
+
 // 将 data-theme 属性同步到 <html>️元素，驱动 CSS 变量
 // 同时同步用户自定义主题色 CSS 变量
 watch(
   [effectiveDark, customThemeBase],
   ([isDark, themeColor]) => {
     document.documentElement.setAttribute("data-theme", isDark ? "dark" : "light");
-    // 应用自定义主题色到 CSS 变量，覆盖 theme.css 中的 brand 默认值
-    if (themeColor) {
-      const lightAccent = themeColor;
-      const hoverAccent = adjustLightness(themeColor, isDark ? 0.12 : 0.08);
-      const softAccent = isDark ? themeColor + "28" : adjustLightness(themeColor, 0.45);
-      document.documentElement.style.setProperty("--color-accent", lightAccent);
-      document.documentElement.style.setProperty("--color-accent-hover", hoverAccent);
-      document.documentElement.style.setProperty("--color-accent-soft", softAccent);
-    } else {
-      // 恢复默认（由 theme.css 的 :root / [data-theme] 规则接管）
-      document.documentElement.style.removeProperty("--color-accent");
-      document.documentElement.style.removeProperty("--color-accent-hover");
-      document.documentElement.style.removeProperty("--color-accent-soft");
-    }
+    applyCustomThemeVariables(themeColor, isDark);
   },
   { immediate: true },
 );

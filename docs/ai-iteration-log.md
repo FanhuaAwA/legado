@@ -2379,3 +2379,54 @@ GitHub 说明：
 - 若继续拆分，优先看 `useFrontendPlugins` 内部是否能把 TTS、reader slots、bookshelf actions、plugin dialog、plugin evaluator 分成按能力加载的子模块。
 
 下一轮第一件事：提交推送并观察 GitHub Actions；若 CI 通过，继续审计 `useFrontendPlugins` 内部可拆点，或添加桶边界/Naive 注册清单自动校验脚本。
+
+## 2026-06-13 UI-THEME-CUSTOM-COVERAGE
+
+任务 ID：`UI-THEME-001`
+
+本轮目标：修复设置页自定义主题色未覆盖左侧全局底纹和侧栏选中背景的问题。用户指定截图中红圈区域仍保持默认紫蓝底纹，本轮只处理主题色覆盖，不顺手调整其它 UI。
+
+范围声明：
+
+- 允许修改：`src/App.vue`、状态文档与本轮 gate 报告。
+- 不触碰：侧边栏组件结构、后端命令契约、reader-core、依赖版本、用户数据目录、第三方书源样本、Windows/Android 发布产物。
+
+关键修改：
+
+- 在 `src/App.vue` 的现有主题同步逻辑中新增 `mixHex()` 与 `rgbaFromHex()`，用于从用户主题色派生浅色/透明色。
+- 自定义主题色不再只设置 `--color-accent`、`--color-accent-hover`、`--color-accent-soft`，同时覆盖 `--color-accent-subtle`、`--color-focus`、`--color-hover`。
+- 新增侧栏变量覆盖：`--color-sidebar-bg`、`--color-sidebar-border`、`--color-sidebar-hover`、`--color-sidebar-active-bg`、`--color-sidebar-active-text`。
+- 新增全局背景覆盖：`--color-content-bg`、`--content-bg-texture`、`--app-bg-texture`，使截图中左侧空白底纹跟随主题色。
+- 自定义主题色为空时统一移除这些内联变量，恢复 `style.css` / `theme.css` 的默认亮暗色主题规则。
+- Naive UI light/dark hover 色同步改为基于当前主题色派生，避免保留默认 indigo hover。
+
+浏览器检查：
+
+- 使用 Vite + 临时 `legado-headless` 进行 UI smoke，headless `DATA` 指向临时目录，不触碰真实用户数据。
+- 访问 `http://127.0.0.1:5173/?ws=ws://127.0.0.1:7688/ws`，进入设置页选择 `#ef4444`。
+- 实测 `--color-sidebar-bg = #fdecec`，`.app-layout` 背景为 `rgb(253, 236, 236)`。
+- 实测 `.side-bar__item--active` 背景为 `rgb(251, 203, 203)`，文字为 `rgb(196, 56, 56)`。
+- 检查过程中临时 headless 弹出 `extension_list NOT_ROUTED`，属于 headless 路由覆盖缺口，和本轮主题变量修复无关，未混入本轮修复。
+
+门禁结果：
+
+- `node scripts/ci/check-command-contract.mjs --json`（改动前基线）：PASS，`frontendTotal=162`、`registeredTotal=161`、`bothCount=161`、`onlyBackendCount=0`。
+- `pnpm exec oxfmt --check .`：PASS。
+- `pnpm lint`：PASS，0 warnings / 0 errors。
+- `pnpm build`：PASS；保留既有 warning：`vconsole` direct eval、大 chunk、plugin timing。
+- `cargo check -p reader-core`：PASS。
+- `cargo check -p legado-tauri`：PASS。
+- `cargo test -p reader-core`：PASS，reader-core 全部非 ignored 测试通过。
+- `node scripts/ci/check-command-contract.mjs --json`（改动后复核）：PASS，`frontendTotal=162`、`registeredTotal=161`、`bothCount=161`、`onlyBackendCount=0`、`frontend_unsupported_stub_count=39`、`frontend_implemented_count=122`。
+
+本地 gate 报告：
+
+- `reports/gates/2026-06-13-UI-THEME-CUSTOM-COVERAGE/summary.md`
+- `reports/gates/2026-06-13-UI-THEME-CUSTOM-COVERAGE/commands.json`
+
+剩余风险：
+
+- 本轮只修主题变量覆盖，不处理临时 headless 暴露的 `extension_list NOT_ROUTED`。
+- 自定义色派生采用线性混色，极亮或极暗自定义颜色仍可能需要后续做对比度增强策略。
+
+下一轮第一件事：提交推送并观察 GitHub Actions；若 CI 通过，按任务队列继续处理 headless/browser 形态下的 `extension_list NOT_ROUTED` 或前端性能边界校验脚本。
