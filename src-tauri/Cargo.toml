@@ -1,6 +1,6 @@
 [package]
 name = "legado-tauri"
-version = "0.8.0"
+version = "0.9.0"
 description = "Legado Tauri reader shell"
 authors = ["Legado Tauri"]
 license = ""

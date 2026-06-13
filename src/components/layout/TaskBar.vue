@@ -13,8 +13,6 @@ withDefaults(
     latestLogMessage?: string;
     /** Vue 前端版本号 */
     vueVersion?: string;
-    /** Tauri 壳版本号（非 Tauri 环境传空字符串） */
-    tauriVersion?: string;
     platformLabel?: string;
     /** 是否显示实时日志区域（由设置开关控制） */
     showLogZone?: boolean;
@@ -23,7 +21,6 @@ withDefaults(
     latestLogLevel: "INFO",
     latestLogMessage: "",
     vueVersion: "0.0.0",
-    tauriVersion: "",
     platformLabel: "-",
     showLogZone: false,
   },
@@ -45,12 +42,7 @@ const emit = defineEmits<{
       @click="emit('open-about')"
     >
       <!-- 前端（Vue）版本 -->
-      <span class="task-bar__version">前端 v{{ vueVersion }}</span>
-      <!-- Tauri 壳版本：仅 Tauri 环境显示；鸿蒙版本暂未对接，预留注释 -->
-      <!-- TODO: 鸿蒙环境在此处显示鸿蒙版本号，待后续对接 HarmonyOS 版本 API -->
-      <span v-if="tauriVersion" class="task-bar__version task-bar__version--tauri"
-        >壳 v{{ tauriVersion }}</span
-      >
+      <span class="task-bar__version">前端v{{ vueVersion }}</span>
       <span class="task-bar__platform">{{ platformLabel }}</span>
     </button>
 
@@ -151,9 +143,6 @@ const emit = defineEmits<{
   font-weight: var(--fw-semibold);
   color: var(--color-text-soft);
   font-family: var(--font-mono, monospace);
-}
-.task-bar__version--tauri {
-  color: var(--color-text-muted);
 }
 .task-bar__platform {
   font-size: var(--fs-11);

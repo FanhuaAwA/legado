@@ -13,7 +13,6 @@ import {
 } from "@/composables/useEnv";
 import { usePreferencesStore } from "@/stores/preferences";
 import packageJson from "../../../package.json";
-import tauriConfig from "../../../src-tauri/tauri.conf.json";
 import FullModeUnlockDialog from "./FullModeUnlockDialog.vue";
 import SettingSection from "./SettingSection.vue";
 
@@ -29,6 +28,9 @@ const rawUserAgent = ref("读取中");
 const showFullModeUnlockDialog = ref(false);
 
 const contributors = ["Fanhua"];
+const versionLabel = computed(
+  () => `前端v${packageJson.version || "0.0.0"} ${platform.value || "未知"}`,
+);
 
 const runtimeModeLabel = computed(() => {
   switch (transportMode.value) {
@@ -166,8 +168,7 @@ onMounted(async () => {
         </p>
       </div>
       <div class="about-hero__chips">
-        <n-tag size="small" :bordered="false">前端 {{ packageJson.version }}</n-tag>
-        <n-tag size="small" :bordered="false" type="info">桌面壳 {{ tauriConfig.version }}</n-tag>
+        <n-tag size="small" :bordered="false">{{ versionLabel }}</n-tag>
         <n-tag size="small" :bordered="false" :type="runtimeTagType as any">
           {{ runtimeModeLabel }}
         </n-tag>

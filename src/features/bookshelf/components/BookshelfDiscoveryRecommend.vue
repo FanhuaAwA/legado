@@ -1430,7 +1430,17 @@ defineExpose({ openSettings });
 
 <style scoped>
 .bs-rec {
-  padding: 2px 0 18px;
+  --bs-rec-panel-bg: color-mix(
+    in srgb,
+    var(--color-accent-soft) 64%,
+    var(--color-bg-page, var(--color-bg))
+  );
+  --bs-rec-item-bg: color-mix(in srgb, var(--color-accent-soft) 34%, var(--color-surface));
+  --bs-rec-item-hover-bg: color-mix(in srgb, var(--color-accent-soft) 48%, var(--color-surface));
+  --bs-rec-cover-bg: color-mix(in srgb, var(--color-accent-soft) 52%, var(--color-surface-hover));
+  padding: 12px 12px 18px;
+  border-radius: var(--radius-2, var(--radius-1));
+  background: var(--bs-rec-panel-bg);
 }
 
 .bs-rec__head {
@@ -1490,7 +1500,7 @@ defineExpose({ openSettings });
   height: 30px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-1);
-  background: var(--color-surface);
+  background: var(--bs-rec-item-bg);
   color: var(--color-text-muted);
   cursor: pointer;
   transition:
@@ -1508,7 +1518,7 @@ defineExpose({ openSettings });
   .bs-rec__icon-btn:hover:not(:disabled) {
     color: var(--color-accent);
     border-color: var(--color-accent);
-    background: color-mix(in srgb, var(--color-accent) 9%, transparent);
+    background: var(--bs-rec-item-hover-bg);
   }
 }
 
@@ -1557,7 +1567,7 @@ defineExpose({ openSettings });
   padding: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-1);
-  background: var(--color-surface);
+  background: var(--bs-rec-item-bg);
   color: inherit;
   text-align: left;
   cursor: pointer;
@@ -1608,7 +1618,7 @@ defineExpose({ openSettings });
   width: 100%;
   aspect-ratio: 3 / 4;
   overflow: hidden;
-  background: var(--color-surface-hover);
+  background: var(--bs-rec-cover-bg);
 }
 
 .bs-rec-card__body {
@@ -1687,7 +1697,7 @@ defineExpose({ openSettings });
   padding: 8px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-1);
-  background: var(--color-surface);
+  background: var(--bs-rec-item-bg);
   color: inherit;
   text-align: left;
   cursor: pointer;
@@ -1724,7 +1734,7 @@ defineExpose({ openSettings });
   height: 64px;
   overflow: hidden;
   border-radius: var(--radius-1);
-  background: var(--color-surface-hover);
+  background: var(--bs-rec-cover-bg);
 }
 
 .bs-rec-rank-card__body {
@@ -1769,7 +1779,7 @@ defineExpose({ openSettings });
   padding: 6px 10px 6px 8px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-1);
-  background: var(--color-surface);
+  background: var(--bs-rec-item-bg);
   color: inherit;
   cursor: pointer;
   transition:
@@ -1782,7 +1792,7 @@ defineExpose({ openSettings });
   .bs-rec-button-card:hover {
     color: var(--color-accent);
     border-color: var(--color-accent);
-    background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+    background: var(--bs-rec-item-hover-bg);
   }
 }
 
@@ -1846,6 +1856,7 @@ defineExpose({ openSettings });
   min-height: 104px;
   border: 1px dashed var(--color-border);
   border-radius: var(--radius-1);
+  background: var(--bs-rec-item-bg);
   color: var(--color-text-muted);
   font-size: var(--fs-13);
 }
@@ -1854,7 +1865,7 @@ defineExpose({ openSettings });
   padding: 4px 9px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-1);
-  background: var(--color-surface);
+  background: var(--bs-rec-item-bg);
   color: var(--color-text-soft);
   cursor: pointer;
 }
@@ -1862,7 +1873,7 @@ defineExpose({ openSettings });
 .bs-rec-skeleton {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-1);
-  background: var(--color-surface);
+  background: var(--bs-rec-item-bg);
   overflow: hidden;
 }
 
@@ -1870,7 +1881,7 @@ defineExpose({ openSettings });
 .bs-rec-skeleton__line {
   position: relative;
   overflow: hidden;
-  background: var(--color-surface-hover);
+  background: var(--bs-rec-cover-bg);
 }
 
 .bs-rec-skeleton__cover::after,

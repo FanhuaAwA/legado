@@ -5,7 +5,6 @@ import { storeToRefs } from "pinia";
 import { ref, computed, defineAsyncComponent, watch, reactive, onMounted, onUnmounted } from "vue";
 import type { NavItem } from "@/types";
 import packageJson from "../package.json";
-import tauriConfig from "../src-tauri/tauri.conf.json";
 import GlobalFeedbackMirror from "./components/GlobalFeedbackMirror.vue";
 import BottomNav from "./components/layout/BottomNav.vue";
 import LogWindowPanel from "./components/layout/LogWindowPanel.vue";
@@ -687,8 +686,6 @@ function onNavSelect(id: string) {
 }
 
 const vueVersion = computed(() => packageJson.version || "0.0.0");
-// Tauri 壳版本：仅在 Tauri 环境下传给 TaskBar；鸿蒙版本暂不对接
-const tauriVersion = computed(() => (isTauri ? tauriConfig.version || "" : ""));
 const { logZoneEnabled: showLogZone } = useLogZonePref();
 const latestLogMessage = computed(() => shellStatusStore.latestLog?.message ?? "暂无日志");
 </script>
@@ -745,7 +742,6 @@ const latestLogMessage = computed(() => shellStatusStore.latestLog?.message ?? "
               :latest-log-level="shellStatusStore.latestLogLevel"
               :latest-log-message="latestLogMessage"
               :vue-version="vueVersion"
-              :tauri-version="tauriVersion"
               :platform-label="platform || '-'"
               :show-log-zone="showLogZone"
               @toggle-log-window="shellStatusStore.toggleLogWindow"
