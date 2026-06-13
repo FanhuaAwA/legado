@@ -2,7 +2,7 @@
 import tailwindcss from "@tailwindcss/vite";
 import vue from "@vitejs/plugin-vue";
 import { fileURLToPath, URL } from "node:url";
-import { defineConfig } from "vite";
+import { defineConfig, type ModulePreloadOptions } from "vite";
 // import Components from 'unplugin-vue-components/vite';
 // import AutoImport from 'unplugin-auto-import/vite';
 // import { NaiveUiResolver } from 'unplugin-vue-components/resolvers';
@@ -12,6 +12,29 @@ const hasHost = typeof host === "string" && host.length > 0;
 const devHost = hasHost ? host : "127.0.0.1";
 const buildTarget = process.env.LEGADO_BUILD_TARGET;
 const isHarmonyBuild = buildTarget === "harmony";
+const eagerHtmlPreloadPrefixes = [
+  "rolldown-runtime-",
+  "vendor-vue-naive-",
+  "_plugin-vue_export-helper-",
+  "useTransport-",
+  "useInvoke-",
+] as const;
+
+function shouldPreloadFromHtml(dep: string): boolean {
+  const name = dep.split("/").pop() ?? dep;
+  return eagerHtmlPreloadPrefixes.some((prefix) => name.startsWith(prefix));
+}
+
+const modulePreload: false | ModulePreloadOptions = isHarmonyBuild
+  ? false
+  : {
+      resolveDependencies(_filename, deps, context) {
+        if (context.hostType === "html") {
+          return deps.filter(shouldPreloadFromHtml);
+        }
+        return [];
+      },
+    };
 
 // https://vite.dev/config/
 export default defineConfig(() => ({
@@ -53,7 +76,7 @@ export default defineConfig(() => ({
     sourcemap: false,
     assetsInlineLimit: isHarmonyBuild ? Number.MAX_SAFE_INTEGER : undefined,
     cssCodeSplit: !isHarmonyBuild,
-    modulePreload: isHarmonyBuild ? false : undefined,
+    modulePreload,
     rollupOptions: {
       output: {
         inlineDynamicImports: isHarmonyBuild ? true : undefined,

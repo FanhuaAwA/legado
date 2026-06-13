@@ -2055,3 +2055,46 @@ GitHub 说明：
 - 不得把本轮结果扩展为付费站、登录站或试看内容的绕过方案；后续新增站点必须先确认授权边界与站点访问规则。
 
 下一轮第一件事：本轮提交推送后观察 GitHub Actions；若 CI 通过，则继续按队列处理 UI 体系化回归或前端大 chunk 拆分。
+
+## 2026-06-13 PERF-MODULEPRELOAD-PRUNE
+
+任务 ID：`PERF-2026-06-13-MODULEPRELOAD-PRUNE`
+
+本轮目标：继续前端性能收口，降低生产 HTML 和动态导入 helper 对大批异步 chunk 的提前预加载压力，避免移动端或 WebView 首屏阶段触发过多并发资源请求。
+
+范围声明：
+
+- 允许修改：`vite.config.ts`、状态文档和本轮 gate 报告。
+- 不触碰：业务组件逻辑、后端命令契约、reader-core 解析逻辑、用户数据目录、依赖版本、Windows/Android 发布产物。
+
+关键修改：
+
+- `vite.config.ts` 新增非 Harmony 构建的 `modulePreload.resolveDependencies` 策略。
+- HTML 入口只保留核心运行依赖的 eager preload：`rolldown-runtime`、`vendor-vue-naive`、`_plugin-vue_export-helper`、`useTransport`、`useInvoke`。
+- JS 动态导入返回空 JS 预加载依赖，避免路由和懒加载弹窗在触发前把整条 JS 依赖链预先塞进 preload helper；异步组件 CSS 依赖仍由构建产物保留。
+
+构建观察：
+
+- `dist/index.html` 的 `modulepreload` 链接从 20 条降为 5 条。
+- 入口 `index-BjH9Vjka.js` 为 65.83 kB，gzip 22.66 kB；上一轮同名入口为 67.96 kB，gzip 23.36 kB。
+- 动态导入的 `__vite__mapDeps` 从包含大量 JS chunk 的映射，收敛为异步组件 CSS 依赖映射。
+- 既有 warning 仍存在：`vconsole` direct eval、大 chunk、`useTransport` ineffective dynamic import。
+
+门禁结果：
+
+- `cmd /c pnpm.cmd build`：PASS。
+- `cmd /c pnpm.cmd lint`：PASS，0 warnings / 0 errors。
+- `node scripts\ci\check-command-contract.mjs --json`：PASS，`frontendTotal=162`、`registeredTotal=161`、`bothCount=161`、`onlyFrontend=["js_eval"]`、`onlyBackend=[]`、`frontend_unsupported_stub_count=39`。
+- `cargo fmt --all -- --check`：PASS。
+- `cargo check -p reader-core`：PASS。
+- `cargo check -p legado-tauri`：PASS。
+- `cargo test -p reader-core`：PASS，reader-core 全部非 ignored 测试通过。
+- `git diff --check`：PASS，仅 Windows LF/CRLF 工作区提示。
+
+剩余风险：
+
+- 这轮只减少预加载和首屏网络扇出，不会减少静态入口实际必须加载的 Vue/Naive UI/共享 store 体积。
+- `vendor-vue-naive` 和 `_plugin-vue_export-helper` 仍是最大 chunk；下一轮需要更细地拆 Naive UI 全量注册、全局组件和共享 composable/store 依赖。
+- `useTransport` ineffective dynamic import 仍需单独处理静态导入链。
+
+下一轮第一件事：提交推送并观察 GitHub Actions；若 CI 通过，继续审计 `vendor-vue-naive` / `_plugin-vue_export-helper` 的首屏来源，或先处理 `useTransport` ineffective dynamic import。
