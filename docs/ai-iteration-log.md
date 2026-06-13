@@ -2098,3 +2098,47 @@ GitHub 说明：
 - `useTransport` ineffective dynamic import 仍需单独处理静态导入链。
 
 下一轮第一件事：提交推送并观察 GitHub Actions；若 CI 通过，继续审计 `vendor-vue-naive` / `_plugin-vue_export-helper` 的首屏来源，或先处理 `useTransport` ineffective dynamic import。
+
+## 2026-06-13 PERF-TRANSPORT-LAZY
+
+任务 ID：`PERF-2026-06-13-TRANSPORT-LAZY`
+
+本轮目标：继续前端性能收口，处理上一轮遗留的 `useTransport` ineffective dynamic import，避免统一传输层被入口模块静态拉入并参与首屏预加载。
+
+范围声明：
+
+- 允许修改：传输层调用封装、入口会经过的 appConfig/scriptBridge/useFrontendStorage/书架/设置页调用点、状态文档和本轮 gate 报告。
+- 不触碰：后端命令契约、reader-core 业务逻辑、WS 协议、用户数据目录、依赖版本、Windows/Android 发布产物。
+
+关键修改：
+
+- `useInvoke.ts` 和 `useEventBus.ts` 改为缓存 `import("./useTransport")`，在实际 invoke/listen/emit 时才加载传输层。
+- `useFrontendStorage.ts` 的调试日志转发改为动态导入 `transportEmit`，避免存储模块导入期拉入完整传输层。
+- `useAppConfig.ts`、`stores/appConfig.ts`、`stores/scriptBridge.ts`、`BookshelfView.vue` 的传输可用性检查改为局部动态导入。
+- `WsConnectDialog.vue` 与设置页 `SectionAbout`、`SectionAdvanced`、`SectionNetwork`、`SectionStorage` 不再静态导入 `useTransport`，只在 mounted 或用户操作时加载。
+
+构建观察：
+
+- `useTransport` 现在是独立异步 chunk：`useTransport-BKg5SsZx.js` 7.21 kB，gzip 2.75 kB。
+- `dist/index.html` 首屏 `modulepreload` 从 5 条降到 4 条，不再包含 `useTransport`。
+- 入口 `index-C-PUgMzD.js` 为 65.87 kB，gzip 22.66 kB。
+- `useTransport ineffective dynamic import` warning 已消失；剩余 warning 为既有 `vconsole` direct eval 与大 chunk。
+
+门禁结果：
+
+- `cmd /c pnpm.cmd lint`：PASS，0 warnings / 0 errors。
+- `cmd /c pnpm.cmd build`：PASS。
+- `node scripts\ci\check-command-contract.mjs --json`：PASS，`frontendTotal=162`、`registeredTotal=161`、`bothCount=161`、`onlyFrontend=["js_eval"]`、`onlyBackend=[]`、`frontend_unsupported_stub_count=39`。
+- `cargo fmt --all -- --check`：PASS。
+- `cargo check -p reader-core`：PASS。
+- `cargo check -p legado-tauri`：PASS。
+- `cargo test -p reader-core`：PASS，reader-core 全部非 ignored 测试通过。
+- `git diff --check`：PASS，仅 Windows LF/CRLF 工作区提示。
+
+剩余风险：
+
+- 传输层首次调用会多一次动态 chunk 加载；这是有意用首屏静态依赖换取按需加载，运行语义不变。
+- `vendor-vue-naive` 和 `_plugin-vue_export-helper` 仍是最大 chunk；后续需要审计 `stores/index.ts` 桶导出、全局组件和 Naive UI 全量注册。
+- 这轮未做浏览器端真实 WS 回归；本地通过类型检查、构建和现有 reader-core/tauri 编译门禁覆盖。
+
+下一轮第一件事：提交推送并观察 GitHub Actions；若 CI 通过，继续拆解 `vendor-vue-naive` / `_plugin-vue_export-helper` 首屏来源。

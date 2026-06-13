@@ -5,13 +5,6 @@ import { storeToRefs } from "pinia";
 import { onMounted, ref } from "vue";
 import { hasNativeTransport, isMobile, isTauri } from "@/composables/useEnv";
 import { invokeWithTimeout } from "@/composables/useInvoke";
-import {
-  isTransportAvailable,
-  getCustomWsUrl,
-  setCustomWsUrl,
-  clearCustomWsUrl,
-  resetWsProbe,
-} from "@/composables/useTransport";
 import { useAppConfigStore } from "@/stores";
 import SettingItem from "./SettingItem.vue";
 import SettingSection from "./SettingSection.vue";
@@ -24,12 +17,18 @@ const { setConfig, loadConfig } = _appCfg;
 const webServerPortInput = ref<number | null>(null);
 const localIps = ref<string[]>([]);
 const transportReady = ref(hasNativeTransport);
-const customWsUrl = ref(getCustomWsUrl());
+const customWsUrl = ref("");
 const wsUrlInput = ref("");
 const wsConnecting = ref(false);
 const webServerDistRestarting = ref(false);
 
+function loadTransportControls() {
+  return import("@/composables/useTransport");
+}
+
 onMounted(async () => {
+  const { getCustomWsUrl, isTransportAvailable } = await loadTransportControls();
+  customWsUrl.value = getCustomWsUrl();
   transportReady.value = await isTransportAvailable();
   wsUrlInput.value = customWsUrl.value || `ws://${window.location.hostname || "localhost"}:7688/ws`;
 
@@ -78,6 +77,7 @@ async function saveWsUrl() {
   }
   wsConnecting.value = true;
   try {
+    const { isTransportAvailable, resetWsProbe, setCustomWsUrl } = await loadTransportControls();
     setCustomWsUrl(url);
     customWsUrl.value = url;
     const ok = await isTransportAvailable();
@@ -93,7 +93,8 @@ async function saveWsUrl() {
   }
 }
 
-function handleClearWsUrl() {
+async function handleClearWsUrl() {
+  const { clearCustomWsUrl } = await loadTransportControls();
   clearCustomWsUrl();
   customWsUrl.value = "";
   wsUrlInput.value = `ws://${window.location.hostname || "localhost"}:7688/ws`;

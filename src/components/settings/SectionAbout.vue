@@ -11,7 +11,6 @@ import {
   isTauri,
   platform,
 } from "@/composables/useEnv";
-import { getCustomWsUrl, getTransportType, isTransportAvailable } from "@/composables/useTransport";
 import { usePreferencesStore } from "@/stores/preferences";
 import packageJson from "../../../package.json";
 import tauriConfig from "../../../src-tauri/tauri.conf.json";
@@ -23,8 +22,9 @@ const { devTools } = storeToRefs(prefStore);
 
 type TransportMode = "tauri" | "harmony" | "websocket" | "none";
 
-const transportMode = ref<TransportMode>(getTransportType());
+const transportMode = ref<TransportMode>(isTauri ? "tauri" : isHarmonyNative ? "harmony" : "none");
 const transportReady = ref(hasNativeTransport);
+const customWsUrl = ref("");
 const rawUserAgent = ref("读取中");
 const showFullModeUnlockDialog = ref(false);
 
@@ -67,8 +67,12 @@ const wsEndpoint = computed(() => {
   if (transportMode.value !== "websocket") {
     return "未使用";
   }
-  return getCustomWsUrl() || "同源 WebSocket 自动探测";
+  return customWsUrl.value || "同源 WebSocket 自动探测";
 });
+
+function loadTransportControls() {
+  return import("@/composables/useTransport");
+}
 
 const detectWebViewVersion = (ua: string) => {
   const harmonyWebView = ua.match(/ArkWeb\/([^\s]+)/i);
@@ -143,8 +147,10 @@ function collectUserAgentInfo() {
 
 onMounted(async () => {
   collectUserAgentInfo();
+  const { getCustomWsUrl, getTransportType, isTransportAvailable } = await loadTransportControls();
   transportReady.value = await isTransportAvailable();
   transportMode.value = getTransportType();
+  customWsUrl.value = getCustomWsUrl();
 });
 </script>
 

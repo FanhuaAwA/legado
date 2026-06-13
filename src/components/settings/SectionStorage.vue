@@ -9,7 +9,6 @@ import { useCapabilities } from "@/composables/useCapabilities";
 import { hasNativeTransport } from "@/composables/useEnv";
 import { loadStorageDebugDump } from "@/composables/useFrontendStorage";
 import { invokeWithTimeout } from "@/composables/useInvoke";
-import { isTransportAvailable } from "@/composables/useTransport";
 import { useAppConfigStore, useBookshelfStore } from "@/stores";
 import SettingItem from "./SettingItem.vue";
 import SettingSection from "./SettingSection.vue";
@@ -25,6 +24,11 @@ const comicCacheClearing = ref(false);
 const coverCacheSizeBytes = ref(0);
 const coverCacheClearing = ref(false);
 const transportReady = ref(hasNativeTransport);
+
+async function isBackendAvailable(): Promise<boolean> {
+  const { isTransportAvailable } = await import("@/composables/useTransport");
+  return isTransportAvailable();
+}
 
 const capabilities = useCapabilities();
 const comicCacheCapability = capabilities.getCapability("comicCache");
@@ -222,7 +226,7 @@ async function refreshSelectedScope() {
 }
 
 onMounted(async () => {
-  transportReady.value = await isTransportAvailable();
+  transportReady.value = await isBackendAvailable();
   await refreshCacheSize();
   await refreshInspector();
 });

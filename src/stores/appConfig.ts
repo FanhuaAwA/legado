@@ -3,9 +3,13 @@ import { computed, ref } from "vue";
 import { BUILTIN_USER_AGENT, type AppConfig } from "@/composables/useAppConfig";
 import { eventListenSync } from "@/composables/useEventBus";
 import { invokeWithTimeout } from "@/composables/useInvoke";
-import { isTransportAvailable } from "@/composables/useTransport";
 
 const TIMEOUT = 10_000;
+
+async function isBackendAvailable(): Promise<boolean> {
+  const { isTransportAvailable } = await import("@/composables/useTransport");
+  return isTransportAvailable();
+}
 
 const DEFAULT_CONFIG: AppConfig = {
   http_user_agent: BUILTIN_USER_AGENT,
@@ -99,7 +103,7 @@ export const useAppConfigStore = defineStore("appConfig", () => {
 
   /** 从后端加载完整配置 */
   async function loadConfig(): Promise<AppConfig> {
-    const available = await isTransportAvailable();
+    const available = await isBackendAvailable();
     if (!available) {
       ready.value = true;
       return config.value;

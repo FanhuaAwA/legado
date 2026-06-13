@@ -12,12 +12,6 @@ import { useMessage } from "naive-ui";
 import { ref, onMounted } from "vue";
 import { hasNativeTransport } from "@/composables/useEnv";
 import { useOverlay } from "@/composables/useOverlay";
-import {
-  isTransportAvailable,
-  getCustomWsUrl,
-  setCustomWsUrl,
-  resetWsProbe,
-} from "@/composables/useTransport";
 
 const message = useMessage();
 
@@ -28,12 +22,17 @@ let connectRequestId = 0;
 
 useOverlay(() => show.value, handleSkip);
 
+function loadTransportControls() {
+  return import("@/composables/useTransport");
+}
+
 onMounted(async () => {
   if (hasNativeTransport) {
     return;
   }
 
   // 预填当前已保存的地址，或构造默认猜测地址
+  const { getCustomWsUrl, isTransportAvailable } = await loadTransportControls();
   const saved = getCustomWsUrl();
   wsUrlInput.value = saved || `ws://${window.location.hostname || "localhost"}:7688/ws`;
 
@@ -53,6 +52,7 @@ async function handleConnect() {
   const requestId = ++connectRequestId;
   connecting.value = true;
   try {
+    const { isTransportAvailable, resetWsProbe, setCustomWsUrl } = await loadTransportControls();
     setCustomWsUrl(url);
     const ok = await isTransportAvailable();
     if (requestId !== connectRequestId || !show.value) {

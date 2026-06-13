@@ -1,5 +1,4 @@
 import { invokeWithTimeout } from "./useInvoke";
-import { transportEmit } from "./useTransport";
 import { log } from "@/utils/logger";
 
 const STORAGE_EVENT = "legado:frontend-storage-changed";
@@ -12,7 +11,9 @@ export function dbgLog(msg: string, warn = false) {
   } else {
     log.info("FrontendStorage", msg);
   }
-  void transportEmit("app:log", { message: msg }).catch(() => {});
+  void import("./useTransport")
+    .then(({ transportEmit }) => transportEmit("app:log", { message: msg }))
+    .catch(() => {});
 }
 
 type NamespaceCache = {

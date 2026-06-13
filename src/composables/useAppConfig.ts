@@ -12,7 +12,6 @@
 import { ref, computed } from "vue";
 import { eventListenSync } from "./useEventBus";
 import { invokeWithTimeout } from "./useInvoke";
-import { isTransportAvailable } from "./useTransport";
 
 // ── 类型定义（与 Rust AppConfig 结构体对齐） ─────────────────────────────
 
@@ -237,12 +236,17 @@ let initialized = false;
 
 const TIMEOUT = 10_000;
 
+async function isBackendAvailable(): Promise<boolean> {
+  const { isTransportAvailable } = await import("./useTransport");
+  return isTransportAvailable();
+}
+
 // ── 导出 ──────────────────────────────────────────────────────────────────
 
 export function useAppConfig() {
   /** 从后端加载完整配置 */
   async function loadConfig(): Promise<AppConfig> {
-    const available = await isTransportAvailable();
+    const available = await isBackendAvailable();
     if (!available) {
       initialized = true;
       return config.value;

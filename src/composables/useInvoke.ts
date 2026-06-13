@@ -6,7 +6,14 @@
  * 在浏览器中自动通过 WebSocket 通信。
  */
 
-import { transportInvoke } from "./useTransport";
+type TransportModule = typeof import("./useTransport");
+
+let transportModulePromise: Promise<TransportModule> | null = null;
+
+function loadTransportModule(): Promise<TransportModule> {
+  transportModulePromise ??= import("./useTransport");
+  return transportModulePromise;
+}
 
 /** invoke 超时错误 */
 export class InvokeTimeoutError extends Error {
@@ -42,5 +49,6 @@ export async function invokeWithTimeout<T>(
   args?: Record<string, unknown>,
   timeoutMs = 35000,
 ): Promise<T> {
+  const { transportInvoke } = await loadTransportModule();
   return transportInvoke<T>(command, args, timeoutMs);
 }

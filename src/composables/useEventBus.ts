@@ -21,7 +21,16 @@
  * ```
  */
 
-import { transportListen, transportEmit, type EventHandler, type UnlistenFn } from "./useTransport";
+import type { EventHandler, UnlistenFn } from "./useTransport";
+
+type TransportModule = typeof import("./useTransport");
+
+let transportModulePromise: Promise<TransportModule> | null = null;
+
+function loadTransportModule(): Promise<TransportModule> {
+  transportModulePromise ??= import("./useTransport");
+  return transportModulePromise;
+}
 
 /**
  * 监听后端事件（统一入口）
@@ -37,6 +46,7 @@ export async function eventListen<T = unknown>(
   event: string,
   handler: EventHandler<T>,
 ): Promise<UnlistenFn> {
+  const { transportListen } = await loadTransportModule();
   return transportListen<T>(event, handler);
 }
 
@@ -52,7 +62,8 @@ export function eventListenSync<T = unknown>(event: string, handler: EventHandle
   let unlisten: UnlistenFn | null = null;
   let cancelled = false;
 
-  void transportListen<T>(event, handler)
+  void loadTransportModule()
+    .then(({ transportListen }) => transportListen<T>(event, handler))
     .then((fn) => {
       if (cancelled) {
         fn(); // 已取消，立即解除
@@ -80,5 +91,6 @@ export function eventListenSync<T = unknown>(event: string, handler: EventHandle
  * @param payload 事件数据
  */
 export async function eventEmit<T = unknown>(event: string, payload?: T): Promise<void> {
+  const { transportEmit } = await loadTransportModule();
   return transportEmit(event, payload);
 }

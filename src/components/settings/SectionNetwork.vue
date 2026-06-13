@@ -5,7 +5,6 @@ import { computed, ref, onMounted } from "vue";
 import { BUILTIN_USER_AGENT } from "@/composables/useAppConfig";
 import { browserProbeClearData } from "@/composables/useBrowserProbe";
 import { useCapabilities } from "@/composables/useCapabilities";
-import { isTransportAvailable } from "@/composables/useTransport";
 import { useAppConfigStore, usePreferencesStore } from "@/stores";
 import SettingItem from "./SettingItem.vue";
 import SettingSection from "./SettingSection.vue";
@@ -56,6 +55,11 @@ const probeUaInput = ref("");
 const selectedPresetUa = ref<string | null>(null);
 /** 是否已连接到后端 */
 const transportReady = ref(false);
+
+async function isBackendAvailable(): Promise<boolean> {
+  const { isTransportAvailable } = await import("@/composables/useTransport");
+  return isTransportAvailable();
+}
 
 async function handleSet(key: string, value: string) {
   try {
@@ -112,7 +116,7 @@ async function clearBrowserProbeData() {
 }
 
 onMounted(async () => {
-  transportReady.value = await isTransportAvailable();
+  transportReady.value = await isBackendAvailable();
   if (!transportReady.value) {
     return;
   }

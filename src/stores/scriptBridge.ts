@@ -5,7 +5,6 @@ import { useCapabilities } from "@/composables/useCapabilities";
 import { isTauri } from "@/composables/useEnv";
 import { eventListen } from "@/composables/useEventBus";
 import { invokeWithTimeout } from "@/composables/useInvoke";
-import { isTransportAvailable } from "@/composables/useTransport";
 import {
   PARAGRAPH_COMMENT_COUNTS_FN,
   PARAGRAPH_COMMENT_DETAILS_FN,
@@ -17,6 +16,11 @@ import {
 import { safeRandomUUID } from "@/utils/uuid";
 import { usePreferencesStore } from "./preferences";
 import { log } from "@/utils/logger";
+
+async function isBackendAvailable(): Promise<boolean> {
+  const { isTransportAvailable } = await import("@/composables/useTransport");
+  return isTransportAvailable();
+}
 
 // ── 类型定义（与 useScriptBridge 保持一致）──────────────────────────────
 
@@ -136,7 +140,7 @@ export const useScriptBridgeStore = defineStore("scriptBridge", () => {
       return;
     }
 
-    const available = await isTransportAvailable();
+    const available = await isBackendAvailable();
     if (!available) {
       state.initialized = true;
       return;

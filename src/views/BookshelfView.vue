@@ -11,7 +11,6 @@ import { useInlineBookReader } from "@/composables/useInlineBookReader";
 import { useOverlay } from "@/composables/useOverlay";
 import { useShelfGroups } from "@/composables/useShelfGroups";
 import { useTocAutoUpdate } from "@/composables/useTocAutoUpdate";
-import { isTransportAvailable } from "@/composables/useTransport";
 import { useViewCardDensity, type CardSizeKey } from "@/composables/useViewCardDensity";
 import BookshelfContextMenu from "@/features/bookshelf/components/BookshelfContextMenu.vue";
 import BookshelfDialogs from "@/features/bookshelf/components/BookshelfDialogs.vue";
@@ -78,6 +77,11 @@ const {
   refreshingToc,
 } = storeToRefs(readerStore);
 const { privacyModeEnabled, privacyExitTick } = storeToRefs(privacyModeStore);
+
+async function isBackendAvailable(): Promise<boolean> {
+  const { isTransportAvailable } = await import("@/composables/useTransport");
+  return isTransportAvailable();
+}
 const { togglePrivacyMode } = privacyModeStore;
 
 // 分组功能
@@ -407,7 +411,7 @@ async function handleRefresh() {
 
 onMounted(async () => {
   privacyModeStore.setupAutoExit();
-  if (!(await isTransportAvailable())) {
+  if (!(await isBackendAvailable())) {
     return;
   }
   loading.value = true;
