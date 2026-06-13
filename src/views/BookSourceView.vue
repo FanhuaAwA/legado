@@ -2,7 +2,7 @@
 import { Folder } from "lucide-vue-next";
 import { useMessage } from "naive-ui";
 import { storeToRefs } from "pinia";
-import { ref, computed, nextTick, onMounted, onUnmounted, watch } from "vue";
+import { ref, computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, watch } from "vue";
 import type {
   DebugSourceTabInstance,
   InstalledSourcesTabInstance,
@@ -13,11 +13,6 @@ import { eventEmit, eventListen } from "@/composables/useEventBus";
 import { invokeWithTimeout } from "@/composables/useInvoke";
 import { useMobileHorizontalSwipe } from "@/composables/useMobileHorizontalSwipe";
 import { useBookSourceStore, useNavigationStore } from "@/stores";
-import AiSourceTab from "../components/booksource/AiSourceTab.vue";
-import DebugSourceTab from "../components/booksource/DebugSourceTab.vue";
-import InstalledSourcesTab from "../components/booksource/InstalledSourcesTab.vue";
-import OnlineSourcesTab from "../components/booksource/OnlineSourcesTab.vue";
-import TestSourcesTab from "../components/booksource/TestSourcesTab.vue";
 import AppPageHeader from "../components/layout/AppPageHeader.vue";
 import MobileToolbarMenu from "../components/layout/MobileToolbarMenu.vue";
 import { type BookSourceMeta, getBookSourceDir } from "../composables/useBookSource";
@@ -37,6 +32,20 @@ const { onlineRepoDeepLinkRequest, bookSourceImportDeepLinkRequest } = storeToRe
 
 type BookSourceTab = "installed" | "online" | "debug" | "test" | "ai";
 const BOOK_SOURCE_TABS: BookSourceTab[] = ["installed", "online", "debug", "test", "ai"];
+
+const InstalledSourcesTab = defineAsyncComponent(
+  () => import("../components/booksource/InstalledSourcesTab.vue"),
+);
+const OnlineSourcesTab = defineAsyncComponent(
+  () => import("../components/booksource/OnlineSourcesTab.vue"),
+);
+const DebugSourceTab = defineAsyncComponent(
+  () => import("../components/booksource/DebugSourceTab.vue"),
+);
+const TestSourcesTab = defineAsyncComponent(
+  () => import("../components/booksource/TestSourcesTab.vue"),
+);
+const AiSourceTab = defineAsyncComponent(() => import("../components/booksource/AiSourceTab.vue"));
 
 const activeTab = ref<BookSourceTab>("installed");
 
@@ -513,7 +522,7 @@ onUnmounted(() => {
         <TestSourcesTab :sources="sources" />
       </n-tab-pane>
 
-      <n-tab-pane name="ai" tab="AI 写书源" display-directive="show">
+      <n-tab-pane name="ai" tab="AI 写书源" display-directive="show:lazy">
         <div class="bv-pane bv-pane--fill">
           <AiSourceTab :sources="sources" @reload="handleInstalledReload" />
         </div>

@@ -1941,6 +1941,50 @@ GitHub/CI 备注：
 下一轮第一件事：
 `CI-2026-06-13-CARGO-FETCH-RETRY`，修复 GitHub Actions 因 crates.io 瞬断导致的门禁失败；完成后继续 UI 体系化回归或前端大 chunk 拆分。
 
+## 2026-06-13 PERF-LAZY-FRONTEND-CHUNKS
+
+任务 ID：`PERF-2026-06-13-LAZY-FRONTEND-CHUNKS`
+
+本轮目标：继续前端性能收口，降低同步设置、书源管理和开发者调试功能对主入口的静态依赖，改善前端大 chunk 与首屏加载压力。
+
+范围声明：
+
+- 允许修改：`src/components/settings/SectionSync.vue`、`src/composables/useSync.ts`、`src/composables/useVConsole.ts`、`src/views/BookSourceView.vue`、状态文档与本轮 gate 报告。
+- 不触碰：后端命令契约、reader-core 业务逻辑、书源解析规则、用户数据目录、第三方书源样本、依赖版本、Windows/Android 发布产物。
+
+关键修改：
+
+- `BookSourceView.vue`：已安装、在线、调试、测试、AI 写书源五个子页改为 `defineAsyncComponent`；AI 写书源标签页改为 `display-directive="show:lazy"`，未访问时不提前加载 AI 工作台。
+- `SectionSync.vue` / `useSync.ts`：二维码生成和扫码器依赖改为动作触发时动态导入，避免同步设置页首屏静态加载 `qrcode` 与 `@zxing/browser`。
+- `useVConsole.ts`：`vconsole` 改为开发者开关启用时动态导入，默认关闭时不进入主入口；补充 import 在途时关闭开关的竞态保护。
+
+构建观测：
+
+- `vConsole` 懒加载前，本轮中间构建入口 JS 为 `370.53 kB`，gzip `103.94 kB`。
+- 最终构建入口 `index-BjH9Vjka.js` 为 `67.96 kB`，gzip `23.36 kB`。
+- `vconsole.min-D3qedUWG.js` 独立为按需 chunk：`281.46 kB`，gzip `78.04 kB`。
+- `AiSourceTab-CfbQgSAY.js` 保持独立异步 chunk：`463.36 kB`，gzip `118.58 kB`。
+
+门禁结果：
+
+- `cmd /c pnpm.cmd lint`：PASS，0 warnings / 0 errors。
+- `cmd /c pnpm.cmd build`：PASS；保留既有 warning：`vconsole` direct eval、大 chunk、`useTransport` ineffective dynamic import、plugin timings。
+- `git diff --check`：PASS，仅 Windows LF/CRLF 工作区提示。
+- `node scripts\ci\check-command-contract.mjs --json`：PASS，`frontendTotal=162`、`registeredTotal=161`、`bothCount=161`、`onlyFrontend=["js_eval"]`、`onlyBackend=[]`、`frontend_unsupported_stub_count=39`、`frontend_implemented_count=122`。
+- `cargo fmt --all -- --check`：PASS。
+- `cargo check -p reader-core`：PASS。
+- `cargo check -p legado-tauri`：PASS。
+- `cargo test -p reader-core`：PASS，reader-core 全部非 ignored 测试通过。
+
+剩余风险：
+
+- `vendor-vue-naive` 与 `_plugin-vue_export-helper` 仍超过 500 kB；根因包含 Naive UI 全量注册与共享依赖策略，本轮未扩大到依赖注册重构。
+- `vconsole` 包内部 direct eval warning 仍会在构建扫描动态 chunk 时出现，但已从主入口拆出；是否替换该依赖需单独立项。
+- `useTransport` ineffective dynamic import 仍存在，需要单独审计哪些设置页静态导入传输层。
+
+下一轮第一件事：
+继续前端性能收口，优先审计 Naive UI 全量注册与 `_plugin-vue_export-helper` 大 chunk；如范围过大，先登记拆分计划，再处理 `useTransport` ineffective dynamic import。
+
 ## 2026-06-13 CI-CARGO-FETCH-RETRY
 
 任务 ID：`CI-2026-06-13-CARGO-FETCH-RETRY`

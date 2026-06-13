@@ -1,5 +1,37 @@
 # AI Task Status
 
+## 2026-06-13 PERF-LAZY-FRONTEND-CHUNKS 状态更新
+
+本轮状态：`gate-pass`；提交与推送状态以 git history 和远程状态为准。
+
+本轮收口前端首屏性能与大 chunk 拆分：
+
+- `BookSourceView.vue` 的已安装、在线、调试、测试、AI 写书源子页改为异步组件；AI 写书源标签页使用 `show:lazy`，未访问时不挂载 AI 工作台。
+- `SectionSync.vue` / `useSync.ts` 将 `qrcode` 与 `@zxing/browser` 改为二维码生成、扫码动作触发时再加载。
+- `useVConsole.ts` 将 `vconsole` 改为开发者开关启用时动态加载，并处理开关关闭时 import 仍在途的竞态。
+
+构建观测：
+
+- `vConsole` 懒加载前本轮中间构建入口 `index` chunk 为 `370.53 kB`，gzip `103.94 kB`。
+- 最终构建入口 `index-BjH9Vjka.js` 为 `67.96 kB`，gzip `23.36 kB`。
+- `vconsole.min-D3qedUWG.js` 独立为按需 chunk，`281.46 kB`，gzip `78.04 kB`。
+- `AiSourceTab-CfbQgSAY.js` 保持独立异步 chunk，`463.36 kB`，gzip `118.58 kB`。
+
+已通过 gate：
+
+- `cmd /c pnpm.cmd lint`
+- `cmd /c pnpm.cmd build`
+- `git diff --check`
+- `node scripts\ci\check-command-contract.mjs --json`
+- `cargo fmt --all -- --check`
+- `cargo check -p reader-core`
+- `cargo check -p legado-tauri`
+- `cargo test -p reader-core`
+
+剩余风险：`vendor-vue-naive` 与 `_plugin-vue_export-helper` 仍超过 500 kB；`vconsole` 包内部 direct eval warning 仍会在构建扫描动态 chunk 时出现；`useTransport` ineffective dynamic import 仍需单独审计。
+
+下一轮优先候选：继续前端性能收口，优先审计 Naive UI 全量注册与 `_plugin-vue_export-helper` 大 chunk；如范围过大，先登记拆分计划，再处理 `useTransport` ineffective dynamic import。
+
 ## 2026-06-13 SOURCE-WIKISOURCE-CLASSICS 状态更新
 
 本轮状态：`gate-pass`，待提交并推送；提交推送状态以 git history 为准。

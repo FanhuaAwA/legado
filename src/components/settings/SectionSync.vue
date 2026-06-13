@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { useMessage } from "naive-ui";
 import { storeToRefs } from "pinia";
-import QRCode from "qrcode";
 import { computed, onMounted, ref } from "vue";
 import { useBackAwareDialog as useDialog } from "@/composables/useBackAwareDialog";
 import { useCapabilities } from "@/composables/useCapabilities";
@@ -218,6 +217,7 @@ async function showQr() {
     onPositiveClick: async () => {
       try {
         const payload = await sync.generateQrPayload();
+        const { default: QRCode } = await import("qrcode");
         qrRawText.value = JSON.stringify(payload);
         qrDataUrl.value = await QRCode.toDataURL(qrRawText.value, {
           errorCorrectionLevel: "M",

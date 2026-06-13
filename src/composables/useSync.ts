@@ -1,5 +1,3 @@
-import { BrowserQRCodeReader } from "@zxing/browser";
-import QRCode from "qrcode";
 import { useAppConfig, type AppConfig } from "./useAppConfig";
 import { useCapabilities } from "./useCapabilities";
 import { eventListen, eventListenSync } from "./useEventBus";
@@ -329,6 +327,7 @@ export function useSync() {
 
   async function generateQrDataUrl(): Promise<string> {
     const payload = await generateQrPayload();
+    const { default: QRCode } = await import("qrcode");
     return QRCode.toDataURL(JSON.stringify(payload), { errorCorrectionLevel: "M", margin: 1 });
   }
 
@@ -363,6 +362,7 @@ export function useSync() {
   }
 
   async function scanQrFromVideo(videoEl: HTMLVideoElement): Promise<SyncQrPayload> {
+    const { BrowserQRCodeReader } = await import("@zxing/browser");
     const reader = new BrowserQRCodeReader();
     const result = await reader.decodeOnceFromVideoDevice(undefined, videoEl);
     return JSON.parse(result.getText()) as SyncQrPayload;

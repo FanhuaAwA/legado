@@ -1,5 +1,5 @@
 import { storeToRefs } from "pinia";
-import VConsole from "vconsole";
+import type VConsoleModule from "vconsole";
 /**
  * useVConsole — 管理 vConsole 调试面板的生命周期
  *
@@ -9,7 +9,24 @@ import VConsole from "vconsole";
 import { watch, type Ref } from "vue";
 import { usePreferencesStore } from "@/stores/preferences";
 
-let _instance: VConsole | null = null;
+type VConsoleConstructor = typeof VConsoleModule;
+type VConsoleInstance = InstanceType<VConsoleConstructor>;
+
+let _instance: VConsoleInstance | null = null;
+let _loading: Promise<VConsoleConstructor> | null = null;
+let _enabled = false;
+
+function loadVConsole(): Promise<VConsoleConstructor> {
+  if (!_loading) {
+    _loading = import("vconsole")
+      .then((mod) => mod.default)
+      .catch((error: unknown) => {
+        _loading = null;
+        throw error;
+      });
+  }
+  return _loading;
+}
 
 export function useVConsole(effectiveDark: Ref<boolean>) {
   const prefStore = usePreferencesStore();
@@ -19,11 +36,19 @@ export function useVConsole(effectiveDark: Ref<boolean>) {
     return effectiveDark.value ? "dark" : "light";
   }
 
-  function init() {
+  async function init() {
     if (_instance) {
       return;
     }
-    _instance = new VConsole({ theme: getTheme() });
+    try {
+      const VConsole = await loadVConsole();
+      if (!_enabled || _instance) {
+        return;
+      }
+      _instance = new VConsole({ theme: getTheme() });
+    } catch (error: unknown) {
+      console.warn("vConsole 加载失败", error);
+    }
   }
 
   function destroy() {
@@ -38,8 +63,9 @@ export function useVConsole(effectiveDark: Ref<boolean>) {
   watch(
     () => devTools.value.vConsoleEnabled,
     (enabled) => {
+      _enabled = enabled;
       if (enabled) {
-        init();
+        void init();
       } else {
         destroy();
       }
