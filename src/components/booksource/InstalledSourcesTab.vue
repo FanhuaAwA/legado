@@ -352,8 +352,6 @@ const showLegacyUrlInputModal = ref(false);
 const legacyUrlInputValue = ref("");
 const legacySmartSubCategories = ref(false);
 const legacyImporting = ref(false);
-const MIAOGONGZI_SUBSCRIPTION_URL =
-  "yuedu://rsssource/importonline?src=http://yuedu.miaogongzi.net/shuyuan/miaogongziDY.json";
 const LEGACY_IMPORT_RESOLVE_CONCURRENCY = 4;
 
 interface ResolvedLegacyImport {
@@ -794,14 +792,6 @@ function importLegacyJsonFromUrl() {
   showLegacyUrlInputModal.value = true;
 }
 
-function importMiaoGongziSubscription() {
-  if (legacyImporting.value) {
-    return;
-  }
-  legacyUrlInputValue.value = MIAOGONGZI_SUBSCRIPTION_URL;
-  showLegacyUrlInputModal.value = true;
-}
-
 async function confirmLegacyUrlInput() {
   if (legacyImporting.value) {
     return;
@@ -1235,7 +1225,6 @@ defineExpose({
   importFromUrl,
   importLegacyJsonFromFile,
   importLegacyJsonFromUrl,
-  importMiaoGongziSubscription,
   importLegacyJsonFromDeepLink,
   exportSources,
   openEditor,

@@ -212,7 +212,6 @@ const newSourceOptions = [
 const legacyJsonImportOptions = [
   { label: "选择文件导入", key: "import-legacy-file" },
   { label: "输入 URL 导入", key: "import-legacy-url" },
-  { label: "喵公子订阅", key: "import-miaogongzi" },
 ];
 
 const mobileMenuOptions = computed(() => [
@@ -221,7 +220,6 @@ const mobileMenuOptions = computed(() => [
   { label: "导入在线", key: "import-online" },
   { label: "阅读源文件导入", key: "import-legacy-file" },
   { label: "阅读源 URL 导入", key: "import-legacy-url" },
-  { label: "喵公子订阅", key: "import-miaogongzi" },
   { label: "导出书源", key: "export-file" },
   { label: "新建书源", key: "new", children: newSourceOptions },
   { label: "全部重载", key: "reload", disabled: loading.value },
@@ -260,9 +258,6 @@ function handleMobileMenuSelect(key: string) {
       break;
     case "import-legacy-url":
       installedRef.value?.importLegacyJsonFromUrl();
-      break;
-    case "import-miaogongzi":
-      installedRef.value?.importMiaoGongziSubscription();
       break;
     case "export-file":
       void installedRef.value?.exportSources();
