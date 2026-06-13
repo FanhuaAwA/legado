@@ -10,7 +10,7 @@ import { Pause, Play, SkipForward, X } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import { computed } from "vue";
 import { isMobile } from "@/composables/useEnv";
-import { useMusicPlayerStore } from "@/stores";
+import { useMusicPlayerStore } from "@/stores/musicPlayer";
 import { getCoverImageUrl } from "@/utils/coverImage";
 
 const player = useMusicPlayerStore();

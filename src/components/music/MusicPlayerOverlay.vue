@@ -26,7 +26,7 @@ import {
 import { storeToRefs } from "pinia";
 import { computed, ref } from "vue";
 import { useOverlay } from "@/composables/useOverlay";
-import { useMusicPlayerStore, type PlayMode } from "@/stores";
+import { useMusicPlayerStore, type PlayMode } from "@/stores/musicPlayer";
 import { getCoverImageUrl } from "@/utils/coverImage";
 
 const player = useMusicPlayerStore();

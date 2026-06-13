@@ -19,7 +19,7 @@
  */
 import { type DialogOptions, type DialogReactive, useDialog as useNaiveDialog } from "naive-ui";
 
-import { useBackStackStore } from "@/stores";
+import { useBackStackStore } from "@/stores/backStack";
 import { log } from "@/utils/logger";
 
 type DialogApi = ReturnType<typeof useNaiveDialog>;

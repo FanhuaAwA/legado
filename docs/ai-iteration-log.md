@@ -2142,3 +2142,54 @@ GitHub 说明：
 - 这轮未做浏览器端真实 WS 回归；本地通过类型检查、构建和现有 reader-core/tauri 编译门禁覆盖。
 
 下一轮第一件事：提交推送并观察 GitHub Actions；若 CI 通过，继续拆解 `vendor-vue-naive` / `_plugin-vue_export-helper` 首屏来源。
+
+## 2026-06-13 PERF-APP-SHELL-SPLIT
+
+任务 ID：`PERF-2026-06-13-APP-SHELL-SPLIT`
+
+本轮目标：继续前端性能收口，审计 App shell 入口静态依赖，避免首屏通过 store 桶导入和全局组件提前拉入书源、音乐、TTS、前端插件运行时与调试日志链路。
+
+范围声明：
+
+- 允许修改：App shell 导入、全局轻量状态拆分、深链安装弹窗懒加载、音乐全局组件懒加载、状态文档与本轮 gate 报告。
+- 不触碰：后端命令契约、reader-core 解析逻辑、用户数据目录、第三方书源样本、依赖版本、Windows/Android 发布产物。
+
+关键修改：
+
+- `src/App.vue` 不再从 `./stores` 桶导入，改为直接导入 `appConfig`、`backStack`、`navigation`、`privacyMode`、`shellStatus`、reader settings 与 reader UI store。
+- App 启动期书源数量检查改为动态导入 `./stores/bookSource`，保留原有数量提示语义，但不再把书源 store 拉进入口静态图。
+- `LegadoDeepLinkDialog.vue` 中的 `BookSourceInstallDialog` 改为 `defineAsyncComponent`，仅在深链弹窗实际显示时加载安装 UI 与书源导入链路。
+- `MiniPlayerBar` 与 `MusicPlayerOverlay` 改为 App 中的异步组件，音乐 store 与播放器逻辑不再进入首屏静态依赖。
+- 新增 `src/composables/useTtsState.ts`，`useTts.ts` 复用同一个 `ttsIsPlaying` ref；App 的 keep-awake 逻辑只读轻量状态，不再静态导入完整 TTS composable 与前端插件运行时。
+- `GlobalFeedbackMirror.vue` 的 `scriptBridge` debug-log 兜底改为失败路径动态导入，正常反馈镜像链路不再静态依赖 script bridge store。
+- 相关组件和 composable 从 `@/stores` 桶导入改为按 store 文件直接导入，减少桶文件副作用。
+
+构建观察：
+
+- 最终入口 `index-Dm9WUU1T.js` 为 56.55 kB，gzip 19.82 kB；上一轮 transport lazy 后入口约 65.87 kB，gzip 22.66 kB。
+- 最终入口 CSS `index-bSHetTZa.css` 为 59.71 kB，gzip 12.43 kB；本轮拆分前同类构建约 75.21 kB，gzip 15.05 kB。
+- `_plugin-vue_export-helper-CHAozXME.js` 收敛为 0.08 kB 小 helper，不再表现为 1MB 级共享 chunk。
+- `dist/index.html` 首屏 `modulepreload` 保持 4 条：`_plugin-vue_export-helper`、`rolldown-runtime`、`vendor-vue-naive`、`useInvoke`。
+- 入口静态 import 扫描未再发现 `useFrontendPlugins`、`useBookSource`、`bookSource`、`musicPlayer` 或 `stores/index` 静态链路；`scriptBridge` 只存在于失败兜底动态 import。
+- `useFrontendPlugins-DD6nSmlQ.js` 仍为 1.17 MB / gzip 509.87 kB 的大异步 chunk，说明体积问题仍存在，但已从 App shell 首屏静态图移出。
+
+门禁结果：
+
+- `cmd /c node_modules\.bin\oxfmt.cmd src\App.vue src\composables\useTts.ts src\composables\useTtsState.ts`：PASS。
+- `cmd /c pnpm.cmd lint`：PASS，0 warnings / 0 errors。
+- `cmd /c pnpm.cmd build`：PASS；保留既有 warning：`vconsole` direct eval、大 chunk、plugin timing。
+- `node scripts\ci\check-command-contract.mjs --json`：PASS，`frontendTotal=162`、`registeredTotal=161`、`bothCount=161`、`onlyFrontend=["js_eval"]`、`onlyBackend=[]`、`frontend_unsupported_stub_count=39`、`frontend_implemented_count=122`。
+- `cargo fmt --all -- --check`：PASS。
+- `git diff --check`：PASS，仅 Windows 工作区 LF/CRLF 提示。
+- `cargo check -p reader-core`：PASS。
+- `cargo test -p reader-core`：PASS，reader-core 全部非 ignored 测试通过。
+- `cargo check -p legado-tauri`：PASS。
+
+剩余风险：
+
+- 音乐全局组件变为异步后，若首屏立即可见仍会很快加载对应 chunk；本轮目标是移出入口静态图，不改变播放器可见行为。
+- 启动期书源数量检查现在在 mounted 后动态加载书源 store，首次执行多一次异步 chunk 请求。
+- TTS 播放状态已拆轻，但完整 TTS 与插件运行时仍会在阅读器控制链路中按需加载。
+- `vendor-vue-naive` 仍是最大首屏依赖，下一轮应继续审计 Naive UI 注册与全局组件依赖。
+
+下一轮第一件事：提交推送并观察 GitHub Actions；若 CI 通过，继续做 `vendor-vue-naive` 首屏来源审计和 Naive UI/全局组件拆分。

@@ -2,7 +2,6 @@
 import { useMessage, type MessageApi, type MessageOptions, type MessageReactive } from "naive-ui";
 import { isHarmonyNative } from "@/composables/useEnv";
 import { invokeWithTimeout } from "@/composables/useInvoke";
-import { useScriptBridgeStore } from "@/stores";
 import { log } from "@/utils/logger";
 
 type MessageLevel = "success" | "error" | "warning" | "info";
@@ -41,12 +40,15 @@ function mirrorPrompt(level: MessageLevel, content: unknown): void {
     return;
   }
 
-  invokeWithTimeout("frontend_log", { level, message: text }, 3000).catch((error) => {
+  invokeWithTimeout("frontend_log", { level, message: text }, 3000).catch(async (error) => {
     const fallbackLevel = level === "error" ? "ERROR" : level === "warning" ? "WARN" : "INFO";
-    useScriptBridgeStore().appendDebugLog(
-      `[UI][${fallbackLevel}][mirror-fallback][${level}] ${text}`,
-      "app",
-    );
+    try {
+      const { useScriptBridgeStore } = await import("@/stores/scriptBridge");
+      useScriptBridgeStore().appendDebugLog(
+        `[UI][${fallbackLevel}][mirror-fallback][${level}] ${text}`,
+        "app",
+      );
+    } catch {}
     log.warn("GlobalFeedback", "后端日志转发失败，已回退本地日志", error);
   });
 

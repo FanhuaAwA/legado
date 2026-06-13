@@ -15,8 +15,6 @@ import TaskBar from "./components/layout/TaskBar.vue";
 import TaskCenterDrawer from "./components/layout/TaskCenterDrawer.vue";
 import TitleBar from "./components/layout/TitleBar.vue";
 import LegadoDeepLinkDialog from "./components/LegadoDeepLinkDialog.vue";
-import MiniPlayerBar from "./components/music/MiniPlayerBar.vue";
-import MusicPlayerOverlay from "./components/music/MusicPlayerOverlay.vue";
 import {
   isMobile,
   setLayoutMode,
@@ -31,18 +29,15 @@ import { useInputMode } from "./composables/useInputMode";
 import { useLogZonePref } from "./composables/useLogZonePref";
 import { useRemoteDebug } from "./composables/useRemoteDebug";
 import { installSyncClientStateListener, useSync } from "./composables/useSync";
-import { useTts } from "./composables/useTts";
+import { useTtsPlaybackState } from "./composables/useTtsState";
 import { useVConsole } from "./composables/useVConsole";
-import {
-  useAppConfigStore,
-  useBackStackStore,
-  useNavigationStore,
-  usePrivacyModeStore,
-  useReaderSettingsStore,
-  useReaderUiStore,
-  useShellStatusStore,
-  useBookSourceStore,
-} from "./stores";
+import { useReaderSettingsStore } from "@/features/reader/stores/readerSettings";
+import { useReaderUiStore } from "@/features/reader/stores/readerUi";
+import { useAppConfigStore } from "./stores/appConfig";
+import { useBackStackStore } from "./stores/backStack";
+import { useNavigationStore } from "./stores/navigation";
+import { usePrivacyModeStore } from "./stores/privacyMode";
+import { useShellStatusStore } from "./stores/shellStatus";
 import { log } from "@/utils/logger";
 // ScriptDialog 按需懒加载：仅在 Boa 引擎触发弹窗时才加载，不阻塞首屏
 const ScriptDialog = defineAsyncComponent(() => import("./components/ScriptDialog.vue"));
@@ -51,6 +46,10 @@ const FrontendPluginDialog = defineAsyncComponent(
 );
 // WsConnectDialog：非 Tauri 环境下后端连接失败时弹出地址输入框
 const WsConnectDialog = defineAsyncComponent(() => import("./components/WsConnectDialog.vue"));
+const MiniPlayerBar = defineAsyncComponent(() => import("./components/music/MiniPlayerBar.vue"));
+const MusicPlayerOverlay = defineAsyncComponent(
+  () => import("./components/music/MusicPlayerOverlay.vue"),
+);
 import BookSourceLimitWarningDialog from "./components/BookSourceLimitWarningDialog.vue";
 import PrefetchProgressBar from "./components/PrefetchProgressBar.vue";
 
@@ -106,7 +105,7 @@ const appConfigStore = useAppConfigStore();
 const { setupAutoExit: setupPrivacyModeAutoExit } = usePrivacyModeStore();
 const readerSettingsStore = useReaderSettingsStore();
 const readerUiStore = useReaderUiStore();
-const tts = useTts();
+const tts = useTtsPlaybackState();
 const shellStatusStore = useShellStatusStore();
 const backStackStore = useBackStackStore();
 useInputMode();
@@ -129,9 +128,18 @@ let _maskTimer: ReturnType<typeof setTimeout> | null = null;
 let _maskSafetyTimer: ReturnType<typeof setTimeout> | null = null;
 
 // ── 书源超限警告对话框 ────────────────────────────────────────────────────
-const bookSourceStore = useBookSourceStore();
 const showBookSourceLimitWarning = ref(false);
 const enabledBookSourceCount = ref(0);
+
+const bookSourceStore = {
+  enabledSources: [] as unknown[],
+  async loadSources() {
+    const { useBookSourceStore } = await import("./stores/bookSource");
+    const store = useBookSourceStore();
+    await store.loadSources();
+    this.enabledSources = store.enabledSources;
+  },
+};
 
 function onSuspenseResolve(viewId: string) {
   resolvedViews.add(viewId);

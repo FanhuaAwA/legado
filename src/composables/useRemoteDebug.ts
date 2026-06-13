@@ -6,7 +6,7 @@
 
 import { storeToRefs } from "pinia";
 import { watch } from "vue";
-import { useAppConfigStore } from "@/stores";
+import { useAppConfigStore } from "@/stores/appConfig";
 
 const SCRIPT_ID = "legado-chii-target";
 

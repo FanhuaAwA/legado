@@ -28,7 +28,7 @@
  */
 import { onBeforeUnmount, watch } from "vue";
 
-import { useBackStackStore } from "@/stores";
+import { useBackStackStore } from "@/stores/backStack";
 
 export type OverlayActiveSource = () => boolean;
 

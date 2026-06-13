@@ -1,7 +1,7 @@
 <!-- TaskBar — PC 端底部任务栏，展示版本、平台、日志入口和运行模式标识。 -->
 <script setup lang="ts">
 import { Unlock } from "lucide-vue-next";
-import type { ShellLogLevel } from "@/stores";
+import type { ShellLogLevel } from "@/stores/shellStatus";
 import { usePreferencesStore } from "@/stores/preferences";
 import { UNLOCK_SCOPE_LABELS } from "@/stores/preferences";
 

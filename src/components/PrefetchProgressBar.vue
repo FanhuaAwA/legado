@@ -2,7 +2,7 @@
 import { RefreshCw, X } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import { computed } from "vue";
-import { usePrefetchStore } from "@/stores";
+import { usePrefetchStore } from "@/stores/prefetch";
 
 const prefetchStore = usePrefetchStore();
 const { manualRunning, manualProgress, manualBookName } = storeToRefs(prefetchStore);

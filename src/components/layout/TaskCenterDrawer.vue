@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import type { ShellTaskItem } from "@/stores";
+import type { ShellTaskItem } from "@/stores/shellStatus";
 import { useOverlay } from "@/composables/useOverlay";
 
 const props = withDefaults(

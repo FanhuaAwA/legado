@@ -1,4 +1,5 @@
 import { computed, readonly, ref } from "vue";
+import { ttsIsPlaying } from "./useTtsState";
 import { useCapabilities } from "./useCapabilities";
 import { useDynamicConfig } from "./useDynamicConfig";
 import { eventListen } from "./useEventBus";
@@ -518,7 +519,7 @@ function normalizePluginVoices(value: TtsVoiceDefinition[]): TtsVoice[] {
   }));
 }
 
-const isPlaying = ref(false);
+const isPlaying = ttsIsPlaying;
 const isLoading = ref(false);
 const hasSession = ref(false);
 const playbackRate = computed({

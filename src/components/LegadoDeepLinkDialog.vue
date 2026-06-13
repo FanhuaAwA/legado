@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { defineAsyncComponent, onMounted, onUnmounted, ref } from "vue";
 import { eventEmit } from "@/composables/useEventBus";
 import {
   classifyLegadoInstallTarget,
   installLegadoDeepLinkListener,
 } from "@/composables/useLegadoDeepLink";
-import { useNavigationStore } from "@/stores";
-import BookSourceInstallDialog from "./BookSourceInstallDialog.vue";
+import { useNavigationStore } from "@/stores/navigation";
+
+const BookSourceInstallDialog = defineAsyncComponent(() => import("./BookSourceInstallDialog.vue"));
 
 const navigationStore = useNavigationStore();
 
@@ -126,6 +127,7 @@ onUnmounted(() => {
 
 <template>
   <BookSourceInstallDialog
+    v-if="show"
     :show="show"
     :download-url="currentDownloadUrl"
     :raw-link="currentRawLink"

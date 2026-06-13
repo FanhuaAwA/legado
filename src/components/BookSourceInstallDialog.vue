@@ -17,7 +17,7 @@ import {
 } from "@/composables/useBookSource";
 import { classifyLegadoInstallTarget } from "@/composables/useLegadoDeepLink";
 import { useOverlay } from "@/composables/useOverlay";
-import { useNavigationStore } from "@/stores";
+import { useNavigationStore } from "@/stores/navigation";
 
 const props = defineProps<{
   show: boolean;
