@@ -27,6 +27,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+type WsOutgoing = Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>>;
+
 #[derive(Clone)]
 struct AppState {
     core: Arc<ReaderCore>,
@@ -111,8 +113,7 @@ async fn ws_handler(
 
 async fn handle_socket(socket: WebSocket, state: AppState) {
     let (mut sink, mut source) = socket.split();
-    let out_tx: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>> =
-        Arc::new(Mutex::new(None));
+    let out_tx: WsOutgoing = Arc::new(Mutex::new(None));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     *out_tx.lock().await = Some(tx);
 
@@ -131,7 +132,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             let state = state.clone();
             let out = out_tx.clone();
             tokio::spawn(async move {
-                if let Some(response) = dispatch(&state, &text).await {
+                if let Some(response) = dispatch(&state, &text, &out).await {
                     if let Some(tx) = out.lock().await.as_ref() {
                         let _ = tx.send(response);
                     }
@@ -143,7 +144,28 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     write_handle.abort();
 }
 
-async fn dispatch(state: &AppState, raw: &str) -> Option<String> {
+async fn send_ws_event(out: &WsOutgoing, event: &str, payload: Value) {
+    let message = json!({
+        "type": "event",
+        "event": event,
+        "payload": payload,
+    })
+    .to_string();
+    if let Some(tx) = out.lock().await.as_ref() {
+        let _ = tx.send(message);
+    }
+}
+
+fn response_err(id: &str, error: String) -> String {
+    json!({
+        "type": "response",
+        "id": id,
+        "error": error,
+    })
+    .to_string()
+}
+
+async fn dispatch(state: &AppState, raw: &str, out: &WsOutgoing) -> Option<String> {
     let msg: WsInbound = serde_json::from_str(raw).ok()?;
     if msg.kind != "invoke" {
         return None;
@@ -180,6 +202,52 @@ async fn dispatch(state: &AppState, raw: &str) -> Option<String> {
             .await
             .map(|v| serde_json::to_value(v).unwrap_or_default())
             .map_err(|e| e.to_string()),
+        "booksource_get_dir" => Ok(Value::String(
+            core.js_source_dir().to_string_lossy().to_string(),
+        )),
+        "booksource_get_dirs" => core
+            .source_dirs()
+            .await
+            .map(|v| serde_json::to_value(v).unwrap_or_default())
+            .map_err(|e| e.to_string()),
+        "booksource_list_streaming" => {
+            let request_id = arg_str(&args, "requestId").unwrap_or("").to_string();
+            let items = match core.list_sources().await {
+                Ok(items) => items,
+                Err(err) => return Some(response_err(&id, err.to_string())),
+            };
+            let total = items.len();
+            let batch_size = 20;
+            if total == 0 {
+                send_ws_event(
+                    out,
+                    "booksource:batch",
+                    json!({
+                        "requestId": request_id,
+                        "items": [],
+                        "done": true,
+                        "total": 0
+                    }),
+                )
+                .await;
+            } else {
+                for (idx, chunk) in items.chunks(batch_size).enumerate() {
+                    let done = (idx + 1) * batch_size >= total;
+                    send_ws_event(
+                        out,
+                        "booksource:batch",
+                        json!({
+                            "requestId": request_id,
+                            "items": chunk,
+                            "done": done,
+                            "total": total
+                        }),
+                    )
+                    .await;
+                }
+            }
+            Ok(Value::Null)
+        }
         "booksource_read" => {
             let file_name = arg_str(&args, "fileName").unwrap_or("");
             let source_dir = arg_str(&args, "sourceDir");

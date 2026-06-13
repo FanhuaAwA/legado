@@ -2466,7 +2466,7 @@ function getToolStatus(activity: AgentActivity): string {
   height: 46px;
   flex: 0 0 46px;
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto minmax(280px, auto) auto;
+  grid-template-columns: minmax(160px, 1fr) auto minmax(0, auto) auto;
   align-items: center;
   gap: 12px;
   padding: 0 14px;
@@ -2512,17 +2512,18 @@ function getToolStatus(activity: AgentActivity): string {
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
+  flex-wrap: wrap;
   min-width: 0;
 }
 .workbench-grid {
   flex: 1;
   display: grid;
-  grid-template-columns: 248px minmax(460px, 1fr) clamp(330px, 28vw, 430px);
+  grid-template-columns: minmax(220px, 248px) minmax(0, 1fr) clamp(300px, 28vw, 430px);
   min-height: 0;
   overflow: hidden;
 }
 .workbench-grid--sidebar-collapsed {
-  grid-template-columns: 36px minmax(460px, 1fr) clamp(330px, 28vw, 430px);
+  grid-template-columns: 36px minmax(0, 1fr) clamp(300px, 28vw, 430px);
 }
 .ai-sidebar {
   width: auto;
@@ -2727,6 +2728,7 @@ function getToolStatus(activity: AgentActivity): string {
 .chat-composer .source-selector-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
 }
 .chat-composer .prompt-tools {
   padding: 0;
@@ -2746,8 +2748,9 @@ function getToolStatus(activity: AgentActivity): string {
 }
 .chat-composer .prompt-buttons {
   display: grid;
-  grid-template-columns: auto 1fr 1fr;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) minmax(0, 1fr);
   gap: 6px;
+  min-width: 0;
 }
 .ai-config-panel {
   padding: 0;
@@ -2758,8 +2761,11 @@ function getToolStatus(activity: AgentActivity): string {
 }
 
 @media (max-width: 1280px) {
+  .workbench-topbar {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
   .workbench-grid {
-    grid-template-columns: 220px minmax(380px, 1fr) 340px;
+    grid-template-columns: minmax(188px, 220px) minmax(0, 1fr) minmax(300px, 340px);
   }
   .topbar-stats {
     display: none;
@@ -2771,6 +2777,9 @@ function getToolStatus(activity: AgentActivity): string {
     height: auto;
     grid-template-columns: minmax(0, 1fr);
     padding: 8px 10px;
+  }
+  .topbar-title {
+    flex-wrap: wrap;
   }
   .workbench-grid {
     grid-template-columns: 1fr;
@@ -2792,7 +2801,7 @@ function getToolStatus(activity: AgentActivity): string {
   }
   .workspace-panel,
   .chat-panel {
-    min-height: 560px;
+    min-height: min(560px, 78vh);
   }
 }
 
@@ -2810,6 +2819,13 @@ function getToolStatus(activity: AgentActivity): string {
   .draft-actions :deep(.n-button),
   .chat-composer .prompt-buttons :deep(.n-button) {
     flex: 1 1 120px;
+  }
+  .chat-composer .source-selector-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .workspace-panel,
+  .chat-panel {
+    min-height: min(520px, 82vh);
   }
 }
 </style>

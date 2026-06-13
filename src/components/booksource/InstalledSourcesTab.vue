@@ -1386,7 +1386,7 @@ defineExpose({
       />
     </div>
     <template #footer>
-      <div style="display: flex; justify-content: space-between; align-items: center">
+      <div class="dir-mgr__footer">
         <span class="dir-mgr__hint">外部目录中的 .js 书源将被自动载入，文件变动实时监听。</span>
         <n-button type="primary" size="small" @click="addExternalDir">添加外部目录</n-button>
       </div>
@@ -1398,6 +1398,7 @@ defineExpose({
     :show="showUrlInputModal"
     preset="dialog"
     title="导入在线书源"
+    style="width: min(420px, 92vw)"
     positive-text="安装"
     negative-text="取消"
     @update:show="updateUrlInputModalShow"
@@ -1418,6 +1419,7 @@ defineExpose({
     :show="showLegacyFileOptionsModal"
     preset="dialog"
     title="导入开源阅读书源"
+    style="width: min(420px, 92vw)"
     positive-text="选择文件"
     negative-text="取消"
     @update:show="updateLegacyFileOptionsModalShow"
@@ -1437,6 +1439,7 @@ defineExpose({
     :show="showLegacyUrlInputModal"
     preset="dialog"
     title="导入开源阅读书源"
+    style="width: min(420px, 92vw)"
     positive-text="导入"
     negative-text="取消"
     @update:show="updateLegacyUrlInputModalShow"
@@ -1481,19 +1484,25 @@ defineExpose({
   gap: 8px;
   flex-wrap: wrap;
   margin-bottom: 8px;
+  min-width: 0;
 }
 
 .bv-search-input {
+  flex: 1 1 220px;
   width: 220px;
+  min-width: 180px;
   max-width: 100%;
 }
 
 /* ---- 统计 ---- */
 .bv-stat {
-  flex: 1;
+  flex: 1 1 180px;
+  min-width: 0;
   font-size: 0.75rem;
   color: var(--color-text-muted);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ---- 批量操作栏 ---- */
@@ -1502,11 +1511,17 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
   padding: 6px 10px;
   margin-bottom: 6px;
   border-radius: var(--radius-sm);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
+  min-width: 0;
+}
+
+.bv-batch-bar :deep(.n-checkbox) {
+  min-width: 0;
 }
 
 .bv-batch-stat {
@@ -1518,7 +1533,10 @@ defineExpose({
   display: flex;
   gap: 4px;
   margin-left: auto;
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
 }
 
 /* ---- Pane ---- */
@@ -1611,8 +1629,18 @@ defineExpose({
 }
 
 .dir-mgr__hint {
+  min-width: 0;
   font-size: 0.75rem;
   color: var(--color-text-muted);
+}
+
+.dir-mgr__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .legacy-import-option {
@@ -1642,6 +1670,22 @@ defineExpose({
     flex: 0 0 100%;
     white-space: normal;
     line-height: 1.4;
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  .bv-batch-bar {
+    align-items: stretch;
+  }
+
+  .bv-batch-actions {
+    flex: 0 0 100%;
+    margin-left: 0;
+    justify-content: stretch;
+  }
+
+  .bv-batch-actions :deep(.n-button) {
+    flex: 1 1 64px;
   }
 }
 </style>

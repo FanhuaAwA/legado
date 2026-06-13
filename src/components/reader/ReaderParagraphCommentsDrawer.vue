@@ -277,14 +277,25 @@ watch(
 <style scoped>
 .paragraph-comments {
   min-height: 180px;
+  min-width: 0;
 }
 
 .paragraph-comments__meta {
   display: flex;
   gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
   margin-bottom: 12px;
   color: var(--text-color-3);
   font-size: 12px;
+}
+
+.paragraph-comments__meta span {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .paragraph-comments__center {
@@ -315,9 +326,15 @@ watch(
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
+  min-width: 0;
 }
 
 .paragraph-comments__nickname {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 600;
 }
 
@@ -331,6 +348,7 @@ watch(
   display: flex;
   gap: 12px;
   align-items: center;
+  flex-wrap: wrap;
   color: var(--text-color-3);
   font-size: 12px;
 }
@@ -357,5 +375,25 @@ watch(
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: end;
+  min-width: 0;
+}
+
+.paragraph-comments__reply :deep(.n-input) {
+  min-width: 0;
+}
+
+@media (max-width: 420px) {
+  .paragraph-comments__item {
+    grid-template-columns: 32px minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .paragraph-comments__reply {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .paragraph-comments__reply :deep(.n-button) {
+    width: 100%;
+  }
 }
 </style>

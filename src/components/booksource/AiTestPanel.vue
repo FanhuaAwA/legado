@@ -765,8 +765,12 @@ function clearState(tabId: TabId) {
   flex-shrink: 0;
   background: var(--color-surface);
   padding: 0 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
 }
 .atp-tab {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -797,7 +801,7 @@ function clearState(tabId: TabId) {
   font-size: 10px;
   font-weight: 700;
   padding: 1px 5px;
-  border-radius: 10px;
+  border-radius: 8px;
   line-height: 1.4;
   font-family: monospace;
   letter-spacing: 0;
@@ -898,10 +902,11 @@ function clearState(tabId: TabId) {
   gap: 6px;
   align-items: center;
   flex-wrap: wrap;
+  min-width: 0;
 }
 .manual-inputs > :first-child {
-  flex: 1;
-  min-width: 160px;
+  flex: 1 1 180px;
+  min-width: 0;
 }
 
 /* ── 链式操作 ── */
@@ -911,10 +916,16 @@ function clearState(tabId: TabId) {
   gap: 6px;
   flex-wrap: wrap;
   padding: 3px 0;
+  min-width: 0;
 }
 .chain-label {
+  flex-shrink: 0;
   font-size: 11px;
   color: var(--color-text-muted);
+}
+
+.chain-actions :deep(.n-button) {
+  max-width: 100%;
 }
 
 /* ── 输出区 ── */
@@ -972,9 +983,14 @@ function clearState(tabId: TabId) {
   padding: 4px 12px;
   font-size: 11px;
   background: var(--color-surface);
+  min-width: 0;
 }
 .footer-hint {
+  display: block;
+  overflow: hidden;
   color: var(--color-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .footer-running {
   color: var(--color-accent);
@@ -987,6 +1003,28 @@ function clearState(tabId: TabId) {
   }
   50% {
     opacity: 0.4;
+  }
+}
+
+@media (max-width: 520px) {
+  .atp-tabs {
+    padding: 0 4px;
+  }
+
+  .atp-tab {
+    padding: 7px 8px;
+  }
+
+  .atp-pane {
+    padding: 10px;
+  }
+
+  .manual-inputs > :first-child {
+    flex-basis: 100%;
+  }
+
+  .manual-inputs :deep(.n-button) {
+    flex: 1 1 72px;
   }
 }
 </style>

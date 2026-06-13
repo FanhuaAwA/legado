@@ -1,5 +1,41 @@
 # AI Task Status
 
+## 2026-06-13 UI-SOURCE-AI-COMMENT-LAYOUT 状态更新
+
+本轮状态：`closed-local`，待提交推送。
+
+实测命令契约基线：
+
+```text
+command_contract.frontendTotal = 162
+command_contract.registeredTotal = 161
+command_contract.bothCount = 161
+command_contract.onlyFrontend = js_eval
+command_contract.onlyBackend = none
+command_contract.frontend_unsupported_stub_count = 39
+command_contract.frontend_implemented_count = 122
+```
+
+本轮收口：
+
+- `InstalledSourcesTab.vue`、`AiSourceTab.vue`、`AiTestPanel.vue`、`ReaderParagraphCommentsDrawer.vue` 已完成响应式布局加固，重点覆盖书源管理标题横排、搜索/统计/批量管理条、AI 写书源三栏与输入区、段评抽屉长文本。
+- `src-headless/src/main.rs` 已补齐 `booksource_get_dir`、`booksource_get_dirs`、`booksource_list_streaming`，使 headless 预览可通过真实 WS 渲染书源卡片并验证流式列表事件。
+- Chrome headless 实测 1000x800、768x800、390x800 三档均无横向溢出；书源管理标题 `writing-mode=horizontal-tb`，3 条测试书源卡片全部渲染；段评抽屉合成长文本检查 `tooWide=0`。
+
+已通过 gate：
+
+- `cmd /c node_modules\.bin\oxfmt.cmd --check .`
+- `git diff --check`
+- `node scripts/ci/check-command-contract.mjs --json`
+- `cmd /c pnpm.cmd lint`
+- `cmd /c pnpm.cmd build`
+- `cargo check -p reader-core`
+- `cargo check -p legado-tauri`
+- `cargo check -p legado-headless`
+- `cargo test -p reader-core`
+
+后续第一任务：`CI-2026-06-13-CARGO-FETCH-RETRY`。用户报告 GitHub Actions 在 2026-06-13 01:00 左右下载 crates.io 依赖 `cipher` 时连接 reset；该日志指向网络瞬断/registry 下载不稳定，不是本地代码编译失败。下一轮应加固 quality-gate 的 Cargo 缓存与 fetch/check/test 重试。
+
 本文件记录当前 R 队列状态。事实数字只以当轮命令输出为准，不沿用历史表格。
 
 最后实测：2026-06-12（AI-DEEPSEEK-MGZ 轮；stub 40→39）。下方基线仍以当轮 `check-command-contract.mjs --json` 输出为准。

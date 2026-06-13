@@ -1891,3 +1891,52 @@ UI 验证：
 
 - 继续 UI 体系化回归：书源管理批量导入弹窗、AI 写书源、段评抽屉、设置子页在 390px/768px/1000px 下的布局一致性。
 - 前端性能：拆分 `vendor-vue-naive` / `useOverlay` / `BookSourceView` 大 chunk，处理 `useTransport` 无效动态导入。
+
+## 2026-06-13 UI-SOURCE-AI-COMMENT-LAYOUT
+
+任务 ID：`UI-2026-06-13-SOURCE-AI-COMMENT-LAYOUT`
+
+本轮目标：继续收口用户反馈的书源管理、AI 写书源和段评抽屉布局稳定性，避免后续新增按钮、标签、输入项时再次把标题、工具栏、批量条或抽屉内容挤成错乱布局；同时补齐 headless 预览的书源目录与流式列表契约，使布局实测能渲染真实书源卡片。
+
+范围声明：
+
+- 允许修改：`src/components/booksource/InstalledSourcesTab.vue`、`src/components/booksource/AiSourceTab.vue`、`src/components/booksource/AiTestPanel.vue`、`src/components/reader/ReaderParagraphCommentsDrawer.vue`、`src-headless/src/main.rs`、状态文档与本轮 gate 报告。
+- 不触碰：书源解析规则、AI 生成业务逻辑、段评数据语义、用户数据目录、第三方书源样例、依赖版本、Windows/Android 发布产物。
+
+关键修改：
+
+- `InstalledSourcesTab.vue`：搜索/统计/批量管理工具栏改为可换行且不撑宽；批量操作按钮在窄屏下平均分配宽度；导入与目录管理弹窗宽度收敛到 `min(..., vw)`；目录管理 footer 改为可换行布局。
+- `AiSourceTab.vue`：AI 工作台 topbar、三栏 grid、聊天输入区和 prompt 按钮改为 `minmax(0, ...)` 与断点收敛，避免 768px/390px 下撑出横向滚动。
+- `AiTestPanel.vue`：测试标签条支持横向滚动，手动测试输入区和 footer hint 收敛到容器内。
+- `ReaderParagraphCommentsDrawer.vue`：段评 meta、昵称、标签、footer、回复行补齐 `min-width: 0`、ellipsis、wrap 和窄屏单列规则。
+- `src-headless/src/main.rs`：补齐 `booksource_get_dir`、`booksource_get_dirs` 和 `booksource_list_streaming`；流式列表通过 WebSocket `event` 消息推送 `booksource:batch`，与前端 transport/listen 契约一致，支撑纯浏览器/headless 真实卡片布局回归。
+
+UI 实测：
+
+- 运行 `legado-headless` 于 `127.0.0.1:7791`，用系统 Chrome headless 打开 `http://127.0.0.1:7791/?ws=ws://127.0.0.1:7791/ws`。
+- 通过真实 WS 命令写入 3 条临时 JS 书源，并验证 `booksource_list_streaming` 推送 1 个 `booksource:batch` 事件、`items=3`、`done=true`。
+- 1000x800：书源管理标题 `writing-mode=horizontal-tb`、`80x32`；显示 `共 3 个书源`、3 张卡片；页面/批量条/AI 工作台横向溢出均为 0。
+- 768x800：显示 3 张卡片；页面/批量条/AI 工作台横向溢出均为 0；AI grid 收敛为单列 `520px`。
+- 390x800：显示 3 张卡片；标题仍为横排 `80x32`；批量按钮宽度约 83px；AI grid 收敛为 `366px`；横向溢出均为 0。
+- 段评抽屉用编译后的 scoped CSS 属性 `data-v-cbd9482a` 做长昵称/长 rangeKey/长评论/回复行合成布局检查，`tooWide=0`，回复区 display 为 `grid`。
+- headless 初始书架仍会提示 `NOT_ROUTED: extension_get_dir/list`，属于扩展模块 headless 白名单缺口，不影响本轮书源管理/AI/段评布局证据；后续如做完整 headless parity 可单独立项。
+
+门禁结果：
+
+- `cmd /c node_modules\.bin\oxfmt.cmd --check .`：PASS。
+- `git diff --check`：PASS，仅 Windows LF/CRLF 工作区提示。
+- `node scripts/ci/check-command-contract.mjs --json`：PASS，`frontendTotal=162`、`registeredTotal=161`、`bothCount=161`、`onlyFrontend=["js_eval"]`、`onlyBackend=[]`、`frontend_unsupported_stub_count=39`、`frontend_implemented_count=122`。
+- `cmd /c pnpm.cmd lint`：PASS，0 warnings / 0 errors。
+- `cmd /c pnpm.cmd build`：PASS；保留既有 Vite warning：`vconsole` direct eval、大 chunk、`useTransport` ineffective dynamic import。
+- `cargo check -p reader-core`：PASS。
+- `cargo check -p legado-tauri`：PASS。
+- `cargo check -p legado-headless`：PASS。
+- `cargo test -p reader-core`：PASS，reader-core 全部非 ignored 测试通过。
+
+GitHub/CI 备注：
+
+- 用户已完成本机 GitHub 登录，提交后应重新尝试 `git push origin master`。
+- 用户报告 2026-06-13 01:00 左右 GitHub Actions 在 `cargo check -p reader-core` 阶段下载 `cipher` 依赖时 crates.io 连接 reset。该报错是依赖索引/下载网络瞬断，不是本轮代码编译失败。下一小轮优先做 `CI-2026-06-13-CARGO-FETCH-RETRY`：检查 workflow，增加 Cargo 缓存与 `cargo fetch/check` 重试策略。
+
+下一轮第一件事：
+`CI-2026-06-13-CARGO-FETCH-RETRY`，修复 GitHub Actions 因 crates.io 瞬断导致的门禁失败；完成后继续 UI 体系化回归或前端大 chunk 拆分。
