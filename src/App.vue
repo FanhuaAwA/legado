@@ -129,6 +129,23 @@ let _maskSafetyTimer: ReturnType<typeof setTimeout> | null = null;
 // ── 书源超限警告对话框 ────────────────────────────────────────────────────
 const showBookSourceLimitWarning = ref(false);
 const enabledBookSourceCount = ref(0);
+const BOOK_SOURCE_LIMIT_WARNING_SEEN_KEY = "legado:booksource-limit-warning-seen:v1";
+
+function hasSeenBookSourceLimitWarning(): boolean {
+  try {
+    return localStorage.getItem(BOOK_SOURCE_LIMIT_WARNING_SEEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markBookSourceLimitWarningSeen(): void {
+  try {
+    localStorage.setItem(BOOK_SOURCE_LIMIT_WARNING_SEEN_KEY, "1");
+  } catch {
+    // Ignore storage failures; the warning must not block startup.
+  }
+}
 
 const bookSourceStore = {
   enabledSources: [] as unknown[],
@@ -508,9 +525,10 @@ onMounted(() => {
     .loadSources()
     .then(() => {
       const enabledCount = bookSourceStore.enabledSources.length;
-      if (enabledCount > 30) {
+      if (enabledCount > 30 && !hasSeenBookSourceLimitWarning()) {
         enabledBookSourceCount.value = enabledCount;
         showBookSourceLimitWarning.value = true;
+        markBookSourceLimitWarningSeen();
       }
     })
     .catch(() => {

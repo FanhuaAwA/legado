@@ -61,7 +61,9 @@ android {
             }
         }
         getByName("release") {
-            isMinifyEnabled = true
+            // Keep Android release APKs unminified so Tauri's generated WebView/IPC
+            // entry points remain stable for local smoke validation.
+            isMinifyEnabled = false
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
             }
