@@ -15,6 +15,17 @@ use tracing_subscriber::Layer;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if let Err(payload) = std::panic::catch_unwind(run_inner) {
+        let message = payload
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("unknown panic payload");
+        eprintln!("fatal panic while starting tauri application: {message}");
+    }
+}
+
+fn run_inner() {
     // Set up file-based logging with rotation
     let app_data = std::env::var("APPDATA")
         .or_else(|_| std::env::var("HOME").map(|h| format!("{}/.local/share", h)))
@@ -24,13 +35,13 @@ pub fn run() {
         .join("reader")
         .join("logs");
 
-    // Create the log directory
-    if let Err(e) = std::fs::create_dir_all(&log_dir) {
-        eprintln!("Failed to create log dir: {e}");
-    }
-
-    let file_appender = tracing_appender::rolling::daily(&log_dir, "app.log");
-    let error_appender = tracing_appender::rolling::daily(&log_dir, "app.error.log");
+    let log_dir_ready = match std::fs::create_dir_all(&log_dir) {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!("Failed to create log dir: {e}");
+            false
+        }
+    };
 
     // Console layer (for development)
     let console_layer = tracing_subscriber::fmt::layer()
@@ -40,25 +51,32 @@ pub fn run() {
                 .unwrap_or_else(|_| "info,reader_core=info,legado_tauri=info".into()),
         );
 
-    // File layer: all logs (info and above)
-    let file_layer = tracing_subscriber::fmt::layer()
-        .with_writer(file_appender)
-        .with_ansi(false)
-        .with_filter(tracing_subscriber::filter::LevelFilter::INFO);
+    let file_layer = log_dir_ready.then(|| {
+        let file_appender = tracing_appender::rolling::daily(&log_dir, "app.log");
+        tracing_subscriber::fmt::layer()
+            .with_writer(file_appender)
+            .with_ansi(false)
+            .with_filter(tracing_subscriber::filter::LevelFilter::INFO)
+    });
 
-    // Error file layer: warnings and errors
-    let error_layer = tracing_subscriber::fmt::layer()
-        .with_writer(error_appender)
-        .with_ansi(false)
-        .with_filter(tracing_subscriber::filter::LevelFilter::WARN);
+    let error_layer = log_dir_ready.then(|| {
+        let error_appender = tracing_appender::rolling::daily(&log_dir, "app.error.log");
+        tracing_subscriber::fmt::layer()
+            .with_writer(error_appender)
+            .with_ansi(false)
+            .with_filter(tracing_subscriber::filter::LevelFilter::WARN)
+    });
 
-    tracing_subscriber::registry()
+    if let Err(err) = tracing_subscriber::registry()
         .with(console_layer)
         .with(file_layer)
         .with(error_layer)
-        .init();
+        .try_init()
+    {
+        eprintln!("Tracing subscriber already initialized or unavailable: {err}");
+    }
 
-    tauri::Builder::default()
+    if let Err(err) = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -112,5 +130,7 @@ pub fn run() {
         })
         .invoke_handler(commands::handler())
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+    {
+        eprintln!("error while running tauri application: {err}");
+    }
 }
