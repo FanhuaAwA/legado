@@ -674,6 +674,8 @@ const customThemeVariableNames = [
   "--color-hover",
   "--color-sidebar-bg",
   "--color-sidebar-border",
+  "--color-sidebar-text",
+  "--color-sidebar-text-muted",
   "--color-sidebar-hover",
   "--color-sidebar-active-bg",
   "--color-sidebar-active-text",
@@ -693,10 +695,16 @@ function applyCustomThemeVariables(themeColor: string, isDark: boolean) {
   const softAccent = isDark ? rgbaFromHex(themeColor, 0.16) : mixHex(themeColor, "#ffffff", 0.9);
   const sidebarBg = isDark
     ? mixHex("#141418", themeColor, 0.08)
-    : mixHex(themeColor, "#ffffff", 0.9);
+    : mixHex(themeColor, "#ffffff", 0.88);
   const sidebarBorder = isDark
     ? rgbaFromHex(themeColor, 0.18)
     : mixHex(themeColor, "#ffffff", 0.76);
+  const sidebarText = isDark
+    ? mixHex("#e4e4e7", themeColor, 0.08)
+    : mixHex("#27272a", themeColor, 0.12);
+  const sidebarTextMuted = isDark
+    ? mixHex("#8b8b95", themeColor, 0.1)
+    : mixHex("#71717a", themeColor, 0.16);
   const sidebarHover = isDark ? rgbaFromHex(themeColor, 0.14) : mixHex(themeColor, "#ffffff", 0.82);
   const sidebarActiveBg = isDark
     ? rgbaFromHex(themeColor, 0.24)
@@ -717,6 +725,8 @@ function applyCustomThemeVariables(themeColor: string, isDark: boolean) {
   rootStyle.setProperty("--color-hover", rgbaFromHex(themeColor, isDark ? 0.12 : 0.08));
   rootStyle.setProperty("--color-sidebar-bg", sidebarBg);
   rootStyle.setProperty("--color-sidebar-border", sidebarBorder);
+  rootStyle.setProperty("--color-sidebar-text", sidebarText);
+  rootStyle.setProperty("--color-sidebar-text-muted", sidebarTextMuted);
   rootStyle.setProperty("--color-sidebar-hover", sidebarHover);
   rootStyle.setProperty("--color-sidebar-active-bg", sidebarActiveBg);
   rootStyle.setProperty("--color-sidebar-active-text", sidebarActiveText);

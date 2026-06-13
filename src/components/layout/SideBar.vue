@@ -84,8 +84,12 @@ const ICON_COMPONENTS: Record<string, Component> = {
   display: flex;
   flex-direction: column;
   width: var(--sidebar-w);
-  background: transparent;
+  background: var(--color-sidebar-bg);
+  border-right: 1px solid var(--color-sidebar-border);
   overflow: hidden;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease;
 }
 
 /* ── 导航列表 ─────────────────────────────────────────────── */
