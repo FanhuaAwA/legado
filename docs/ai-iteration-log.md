@@ -2238,3 +2238,50 @@ GitHub 说明：
 - `vendor-vue-naive` 仍被首屏 preload，进一步优化要么做路由级 Naive 分块，要么继续减少 App shell 全局 Provider/全局组件依赖。
 
 下一轮第一件事：提交推送并观察 GitHub Actions；若 CI 通过，继续评估 `useFrontendPlugins` 异步大 chunk 拆分，或做 Naive 注册清单自动校验脚本，降低手工维护风险。
+
+## 2026-06-13 PERF-FRONTEND-PLUGIN-BARREL-CUT
+
+任务 ID：`PERF-2026-06-13-FRONTEND-PLUGIN-BARREL-CUT`
+
+本轮目标：继续前端性能边界收口，处理 `useFrontendPlugins` 通过通用 `stores/index.ts` 桶和书架 feature store 间接进入共享 `stores` chunk 的问题。目标不是改插件语义，而是让插件运行时只沿插件/书架需要的路径出现。
+
+范围声明：
+
+- 允许修改：书架 View、书架 UI store、书架 action service、插件管理页的 store/type 导入，`src/stores/index.ts` 桶出口，状态文档与本轮 gate 报告。
+- 不触碰：插件运行时逻辑、插件菜单语义、后端命令契约、reader-core 解析逻辑、依赖版本、用户数据目录、第三方书源样本、Windows/Android 发布产物。
+
+关键修改：
+
+- `src/stores/index.ts` 移除 `useFrontendPluginsStore` 值出口和插件配置类型透传。
+- `src/stores/index.ts` 同时移除 `useBookshelfUiStore` 与 `useBookshelfReaderStore` 出口，因为 `bookshelfUi` 需要插件 store，继续 re-export 会让通用 `stores` chunk 重新带入插件桥接。
+- `BookshelfView.vue` 改为直接导入书架 reader/UI store、bookshelf/bookSource/frontendPlugins/navigation/privacyMode/scriptBridge store 和 `ShelfBook` 类型。
+- `bookshelfUi.ts` 与 `bookshelfActions.ts` 改为直接导入 bookshelf、frontendPlugins、privacy/preferences、scriptBridge 类型，不再依赖 `@/stores` 桶。
+- `ExtensionsView.vue` 保留插件页对 frontend plugin store 的直接依赖，插件配置类型改从 `pluginTypes` 直接导入。
+
+构建观察：
+
+- 移除书架 feature store re-export 前，本轮中间构建 `stores-Due8udog.js` 为 21.49 kB，gzip 7.16 kB，并仍能看到 `frontendPlugins` 引用。
+- 最终构建 `stores-BWZGu8_n.js` 为 16.63 kB，gzip 5.30 kB；`stores-*.js` 中不再出现 `frontendPlugins`、`useFrontendPlugins`、`plugin-action` 或 `plugin-cover`。
+- `frontendPlugins-DlRZ9-mS.js` 现在是 0.14 kB / gzip 0.12 kB 的独立桥接 chunk。
+- `useFrontendPlugins-BtFZi8GG.js` 仍为 1.17 MB / gzip 509.87 kB，说明插件运行时本体尚未拆分。
+- `BookshelfView-D0k5JHUI.js` 变为 130.55 kB / gzip 40.28 kB；这是把书架专属 UI store 从共享桶移回书架路由边界后的预期代价。
+- 入口 `index-CWlWnTQx.js` 为 57.05 kB / gzip 20.14 kB，`dist/index.html` 首屏 `modulepreload` 仍为 4 条。
+
+门禁结果：
+
+- `cmd /c pnpm.cmd lint`：PASS，0 warnings / 0 errors。
+- `cmd /c pnpm.cmd build`：PASS；保留既有 warning：`vconsole` direct eval、大 chunk、plugin timing。
+- `cargo fmt --all -- --check`：PASS。
+- `node scripts\ci\check-command-contract.mjs --json`：PASS，`frontendTotal=162`、`registeredTotal=161`、`bothCount=161`、`onlyFrontend=["js_eval"]`、`onlyBackend=[]`、`frontend_unsupported_stub_count=39`、`frontend_implemented_count=122`。
+- `git diff --check`：PASS，仅 Windows 工作区 LF/CRLF 提示。
+- `cargo check -p reader-core`：PASS。
+- `cargo test -p reader-core`：PASS，reader-core 全部非 ignored 测试通过。
+- `cargo check -p legado-tauri`：PASS。
+
+剩余风险：
+
+- 这轮是依赖边界清理，不直接缩小 `useFrontendPlugins` 运行时本体。
+- 书架仍需要插件封面生成和插件右键菜单动作，所以书架路由仍会依赖插件桥接。
+- 若继续拆分，优先看 `useFrontendPlugins` 内部是否能把 TTS、reader slots、bookshelf actions、plugin dialog、plugin evaluator 分成按能力加载的子模块。
+
+下一轮第一件事：提交推送并观察 GitHub Actions；若 CI 通过，继续审计 `useFrontendPlugins` 内部可拆点，或添加桶边界/Naive 注册清单自动校验脚本。

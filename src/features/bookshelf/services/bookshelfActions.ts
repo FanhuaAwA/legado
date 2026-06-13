@@ -1,14 +1,12 @@
 ﻿import type { MessageApi } from "naive-ui";
 import type { WholeBookSwitchedPayload } from "@/components/reader/types";
+import type { ShelfBook } from "@/composables/useBookshelf";
 import { invokeWithTimeout } from "@/composables/useInvoke";
 import { useShelfGroups } from "@/composables/useShelfGroups";
-import {
-  useBookshelfStore,
-  useFrontendPluginsStore,
-  type ChapterItem,
-  type ShelfBook,
-} from "@/stores";
+import { useBookshelfStore } from "@/stores/bookshelf";
+import { useFrontendPluginsStore } from "@/stores/frontendPlugins";
 import { usePreferencesStore } from "@/stores/preferences";
+import type { ChapterItem } from "@/stores/scriptBridge";
 import { useBookshelfReaderStore } from "../stores/bookshelfReader";
 import { useBookshelfUiStore } from "../stores/bookshelfUi";
 

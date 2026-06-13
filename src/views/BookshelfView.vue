@@ -19,17 +19,15 @@ import BookshelfGrid from "@/features/bookshelf/components/BookshelfGrid.vue";
 import BookshelfHeader from "@/features/bookshelf/components/BookshelfHeader.vue";
 import { useBookshelfActions } from "@/features/bookshelf/services/bookshelfActions";
 import { useBookshelfReaderLauncher } from "@/features/bookshelf/services/bookshelfReaderLauncher";
-import {
-  useBookshelfReaderStore,
-  useBookshelfStore,
-  useBookshelfUiStore,
-  useBookSourceStore,
-  useFrontendPluginsStore,
-  useNavigationStore,
-  usePrivacyModeStore,
-  useScriptBridgeStore,
-  type ShelfBook,
-} from "@/stores";
+import { useBookshelfReaderStore } from "@/features/bookshelf/stores/bookshelfReader";
+import { useBookshelfUiStore } from "@/features/bookshelf/stores/bookshelfUi";
+import type { ShelfBook } from "@/composables/useBookshelf";
+import { useBookSourceStore } from "@/stores/bookSource";
+import { useBookshelfStore } from "@/stores/bookshelf";
+import { useFrontendPluginsStore } from "@/stores/frontendPlugins";
+import { useNavigationStore } from "@/stores/navigation";
+import { usePrivacyModeStore } from "@/stores/privacyMode";
+import { useScriptBridgeStore } from "@/stores/scriptBridge";
 
 const message = useMessage();
 const bookshelfStore = useBookshelfStore();

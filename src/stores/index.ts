@@ -15,11 +15,8 @@ export { usePrivacyModeStore } from "./privacyMode";
 export { usePrefetchStore } from "./prefetch";
 export { useAiSessionsStore } from "./aiSessions";
 export { useScriptBridgeStore } from "./scriptBridge";
-export { useFrontendPluginsStore } from "./frontendPlugins";
 export { useShellStatusStore } from "./shellStatus";
 export { useBackStackStore } from "./backStack";
-export { useBookshelfUiStore } from "@/features/bookshelf/stores/bookshelfUi";
-export { useBookshelfReaderStore } from "@/features/bookshelf/stores/bookshelfReader";
 export { useReaderSessionStore } from "@/features/reader/stores/readerSession";
 export { useReaderUiStore } from "@/features/reader/stores/readerUi";
 export { useReaderSettingsStore } from "@/features/reader/stores/readerSettings";
@@ -62,9 +59,3 @@ export type {
   UpdateShelfBookPayload,
   PatchShelfBookPayload,
 } from "../composables/useBookshelf";
-// useFrontendPlugins 的类型（通过 frontendPlugins store 透传）
-export type {
-  PluginSettingImageItem,
-  PluginSettingValue,
-  ResolvedPluginSettingField,
-} from "../composables/useFrontendPlugins";

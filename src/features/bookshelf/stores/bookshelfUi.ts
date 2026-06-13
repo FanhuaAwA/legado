@@ -5,10 +5,13 @@ import type { DropdownOption } from "naive-ui";
 import { defineStore } from "pinia";
 import { computed, h, nextTick, ref } from "vue";
 import { Lock, Unlock } from "lucide-vue-next";
-import type { CachedChapter, ChapterItem, ShelfBook } from "@/stores";
+import type { CachedChapter, ShelfBook } from "@/composables/useBookshelf";
 import { isTauri } from "@/composables/useEnv";
-import { useBookshelfStore, useFrontendPluginsStore, usePrivacyModeStore } from "@/stores";
+import { useBookshelfStore } from "@/stores/bookshelf";
+import { useFrontendPluginsStore } from "@/stores/frontendPlugins";
 import { usePreferencesStore } from "@/stores/preferences";
+import { usePrivacyModeStore } from "@/stores/privacyMode";
+import type { ChapterItem } from "@/stores/scriptBridge";
 
 export const useBookshelfUiStore = defineStore("bookshelfUi", () => {
   const bookshelfStore = useBookshelfStore();

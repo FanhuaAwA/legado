@@ -15,12 +15,12 @@ import { isMobile } from "@/composables/useEnv";
 import { eventListen } from "@/composables/useEventBus";
 import { invokeWithTimeout } from "@/composables/useInvoke";
 import { useOverlay } from "@/composables/useOverlay";
-import {
-  useFrontendPluginsStore,
-  useNavigationStore,
-  type PluginSettingValue,
-  type ResolvedPluginSettingField,
-} from "@/stores";
+import type {
+  PluginSettingValue,
+  ResolvedPluginSettingField,
+} from "@/features/frontendPlugins/pluginTypes";
+import { useFrontendPluginsStore } from "@/stores/frontendPlugins";
+import { useNavigationStore } from "@/stores/navigation";
 import {
   type ExtensionMeta,
   listExtensions,
