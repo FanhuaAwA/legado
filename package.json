@@ -18,6 +18,7 @@
     "preview": "vite preview",
     "booksource:node:lint": "node scripts/booksource-node-runtime.mjs test",
     "booksource:node:eval": "node scripts/booksource-node-runtime.mjs eval -- ⚠️ Node.js 环境缺少 legado.* API，仅支持词法分析。完整测试请使用 Tauri 环境中的 booksource_eval / booksource_run_tests 命令",
+    "plugin-examples:check": "node scripts/ci/check-plugin-examples.mjs",
     "skills:install": "pnpm dlx skills experimental_install",
     "cache:show": "sccache --show-stats",
     "cache:stop": "sccache --stop-server",

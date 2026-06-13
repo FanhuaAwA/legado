@@ -79,15 +79,15 @@ async function openSourceDirInExplorer() {
 // 防止 loadSources 并发执行：正在加载时跳过后续调用
 let _loadSourcesInFlight = false;
 
-async function loadSources() {
+async function loadSources(options: { force?: boolean } = {}) {
   if (_loadSourcesInFlight) {
     return;
   }
   _loadSourcesInFlight = true;
   try {
-    // bookSourceStore.loadSources() 内部流式追加 sources，目录信息单独取
-    const [, dir] = await Promise.all([bookSourceStore.loadSources(), getBookSourceDir()]);
-    sourceDir.value = dir;
+    await bookSourceStore.loadSources(options);
+    const cachedDir = storeDirs.value[0];
+    sourceDir.value = cachedDir || sourceDir.value || (await getBookSourceDir());
     // sourceDirs 通过 storeToRefs 已响应式绑定，无需手动同步
   } catch (e: unknown) {
     message.error(`加载失败: ${e instanceof Error ? e.message : String(e)}`);
@@ -311,7 +311,7 @@ async function handleForceReload() {
     await installedRef.value.reloadAllSources();
     return;
   }
-  await loadSources();
+  await loadSources({ force: true });
   await eventEmit("app:booksource-reload", { scope: "all" });
 }
 
@@ -320,7 +320,8 @@ async function handleForceReload() {
  * 还广播 app:booksource-reload，让搜索/发现/书架页即时同步，无需重启应用。
  */
 async function handleInstalledReload() {
-  await loadSources();
+  bookSourceStore.markSourcesStale();
+  await loadSources({ force: true });
   await eventEmit("app:booksource-reload", { scope: "all" });
 }
 
@@ -353,7 +354,8 @@ onMounted(async () => {
         // 批量变更（如同步后），使所有能力缓存失效
         bookSourceStore.invalidateAllCapabilities();
       }
-      await loadSources();
+      bookSourceStore.markSourcesStale();
+      await loadSources({ force: true });
     },
   );
 

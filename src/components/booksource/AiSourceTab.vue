@@ -38,6 +38,7 @@ import {
   type AgentActivity,
 } from "../../composables/useAiAgent";
 import {
+  newBookSourceTemplate,
   readBookSource,
   saveBookSource,
   type BookSourceMeta,
@@ -140,6 +141,9 @@ function applyProviderPreset(preset: AiProviderPreset) {
 
 onMounted(async () => {
   config.value = await ensureAiConfigLoaded();
+  if (!currentSession.value && sessions.value.length === 0) {
+    createDraftSession();
+  }
 });
 
 // ── 侧边栏 ────────────────────────────────────────────────────────────────
@@ -170,6 +174,24 @@ const filteredSources = computed(() => {
     const haystack = `${source.name} ${source.fileName}`.toLowerCase();
     return haystack.includes(keyword);
   });
+});
+
+const AI_SOURCE_LIST_LIMIT = 80;
+const showAllInstalledSources = ref(false);
+const visibleFilteredSources = computed(() =>
+  showAllInstalledSources.value
+    ? filteredSources.value
+    : filteredSources.value.slice(0, AI_SOURCE_LIST_LIMIT),
+);
+const hiddenInstalledSourceCount = computed(() =>
+  Math.max(0, filteredSources.value.length - visibleFilteredSources.value.length),
+);
+const canToggleInstalledSources = computed(
+  () => filteredSources.value.length > AI_SOURCE_LIST_LIMIT || showAllInstalledSources.value,
+);
+
+watch(sourceSearch, () => {
+  showAllInstalledSources.value = false;
 });
 
 // ── 用户输入 ──────────────────────────────────────────────────────────────
@@ -332,13 +354,38 @@ function onSelectSession(id: string) {
 }
 
 // ── 新建会话 ──────────────────────────────────────────────────────────────
+function createDraftSession() {
+  const now = Date.now();
+  const fileName = `ai-draft-${now}.js`;
+  const content = newBookSourceTemplate("AI 草稿书源", "https://example.com");
+  const session = createSession("new");
+  clearAgentState();
+  state.currentFileName = fileName;
+  state.currentSourceCode = content;
+  updateSession(session.id, {
+    name: "AI 草稿书源",
+    currentFileName: fileName,
+    currentSourceCode: content,
+    drafts: [
+      {
+        version: 1,
+        createdAt: now,
+        fileName,
+        content,
+        testResults: [],
+      },
+    ],
+    status: "idle",
+  });
+  activePane.value = "source";
+  return session;
+}
+
 async function onNewSession() {
   if (workMode.value === "modify" && selectedBaseSource.value) {
     await createModifySession();
   } else {
-    const session = createSession("new");
-    clearAgentState();
-    activePane.value = "source";
+    const session = createDraftSession();
     message.success(`已创建新草稿：${session.name}`);
   }
 }
@@ -388,7 +435,7 @@ async function startAgent(continueConversation = false) {
         return;
       }
     } else {
-      createSession("new");
+      createDraftSession();
     }
   }
 
@@ -731,7 +778,13 @@ function getToolStatus(activity: AgentActivity): string {
           <section class="sidebar-section sidebar-section--sources">
             <div class="sidebar-section-hd">
               <span>已安装书源</span>
-              <span class="sidebar-count">{{ filteredSources.length }}</span>
+              <span class="sidebar-count">
+                {{
+                  visibleFilteredSources.length === filteredSources.length
+                    ? filteredSources.length
+                    : `${visibleFilteredSources.length}/${filteredSources.length}`
+                }}
+              </span>
             </div>
             <n-input
               v-model:value="sourceSearch"
@@ -742,7 +795,7 @@ function getToolStatus(activity: AgentActivity): string {
             />
             <div class="source-list">
               <button
-                v-for="source in filteredSources"
+                v-for="source in visibleFilteredSources"
                 :key="source.fileName"
                 type="button"
                 class="source-item"
@@ -752,6 +805,16 @@ function getToolStatus(activity: AgentActivity): string {
               >
                 <span class="source-item-name">{{ source.name || source.fileName }}</span>
                 <span class="source-item-file">{{ source.fileName }}</span>
+              </button>
+              <button
+                v-if="canToggleInstalledSources"
+                type="button"
+                class="source-list-toggle"
+                @click="showAllInstalledSources = !showAllInstalledSources"
+              >
+                {{
+                  showAllInstalledSources ? "收起列表" : `展开剩余 ${hiddenInstalledSourceCount} 个`
+                }}
               </button>
               <div v-if="filteredSources.length === 0" class="session-empty">
                 <p>没有匹配书源</p>
@@ -2624,6 +2687,20 @@ function getToolStatus(activity: AgentActivity): string {
   color: var(--color-text-muted);
   font-family: "Consolas", "Menlo", monospace;
   font-size: 10px;
+}
+.source-list-toggle {
+  width: 100%;
+  min-height: 30px;
+  margin: 4px 0 2px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 11px;
+}
+.source-list-toggle:hover {
+  color: var(--color-accent);
 }
 .workspace-panel,
 .chat-panel {

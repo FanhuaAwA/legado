@@ -503,7 +503,8 @@ onMounted(async () => {
       } else {
         bookSourceStore.invalidateAllCapabilities();
       }
-      void bookSourceStore.loadSources();
+      bookSourceStore.markSourcesStale();
+      void bookSourceStore.loadSources({ force: true });
     }),
   );
   unlisteners.push(
@@ -513,7 +514,8 @@ onMounted(async () => {
       } else if (event.payload.scope === "single" && event.payload.fileName) {
         bookSourceStore.invalidateCapability(event.payload.fileName);
       }
-      void bookSourceStore.loadSources();
+      bookSourceStore.markSourcesStale();
+      void bookSourceStore.loadSources({ force: true });
     }),
   );
   unlisteners.push(

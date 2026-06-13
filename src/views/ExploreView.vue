@@ -195,6 +195,38 @@ const sortedSources = computed<BookSourceMeta[]>(() => {
 });
 
 // 所有书源都预加载分类列表（GETALL 轻量），切换时再按需加载具体书籍内容
+const EXPLORE_SOURCE_TAB_LIMIT = 96;
+const sourceTabsExpanded = ref(false);
+const visibleSourceTabs = computed<BookSourceMeta[]>(() => {
+  if (!isMultiLineTabs.value || sourceTabsExpanded.value) {
+    return sortedSources.value;
+  }
+  const base = sortedSources.value.slice(0, EXPLORE_SOURCE_TAB_LIMIT);
+  const active = sortedSources.value.find((src) => sourceKeyOf(src) === activeSourceTab.value);
+  if (active && !base.some((src) => sourceKeyOf(src) === activeSourceTab.value)) {
+    return [active, ...base.slice(0, Math.max(0, EXPLORE_SOURCE_TAB_LIMIT - 1))];
+  }
+  return base;
+});
+const hiddenSourceTabCount = computed(() =>
+  Math.max(0, sortedSources.value.length - visibleSourceTabs.value.length),
+);
+const canToggleSourceTabs = computed(
+  () =>
+    isMultiLineTabs.value &&
+    (sortedSources.value.length > EXPLORE_SOURCE_TAB_LIMIT || sourceTabsExpanded.value),
+);
+
+watch(isMultiLineTabs, (multi) => {
+  if (!multi) {
+    sourceTabsExpanded.value = false;
+  }
+});
+
+watch(sortedSources, () => {
+  sourceTabsExpanded.value = false;
+});
+
 const prefetchedSourceTabs = computed(
   () => new Set(sortedSources.value.map((s) => sourceKeyOf(s))),
 );
@@ -554,7 +586,8 @@ async function refreshSingleSource(fileName: string) {
   );
   bookSourceStore.invalidateCapability(fileName);
   await clearExploreCache(fileName);
-  await bookSourceStore.loadSources();
+  bookSourceStore.markSourcesStale();
+  await bookSourceStore.loadSources({ force: true });
   // 只有"内容变更但仍可发现"时才 bump（新挂载的 Section 会在 onMounted 中自动加载）
   for (const source of bookSourceStore.explorableSources) {
     const key = sourceKeyOf(source);
@@ -569,7 +602,8 @@ async function refreshAllSources() {
   bookSourceStore.invalidateAllCapabilities();
   bumpAllSourceRefreshVersions();
   await clearExploreCache();
-  await bookSourceStore.loadSources();
+  bookSourceStore.markSourcesStale();
+  await bookSourceStore.loadSources({ force: true });
 }
 
 onMounted(async () => {
@@ -934,9 +968,18 @@ watch(
               </template>
               {{ isMultiLineTabs ? "切换为单行标签" : "切换为多行标签" }}
             </n-tooltip>
+            <n-button
+              v-if="canToggleSourceTabs"
+              size="small"
+              quaternary
+              class="ev-tabs-expand-btn"
+              @click.stop="sourceTabsExpanded = !sourceTabsExpanded"
+            >
+              {{ sourceTabsExpanded ? "收起" : `展开 ${hiddenSourceTabCount}` }}
+            </n-button>
           </template>
           <n-tab-pane
-            v-for="src in sortedSources"
+            v-for="src in visibleSourceTabs"
             :key="sourceKeyOf(src)"
             :name="sourceKeyOf(src)"
             display-directive="show"
@@ -1114,6 +1157,12 @@ watch(
 }
 .ev-tabs-layout-btn--active {
   color: var(--color-accent) !important;
+}
+.ev-tabs-expand-btn {
+  flex-shrink: 0;
+  min-width: 54px;
+  padding-inline: 8px !important;
+  font-size: var(--fs-12) !important;
 }
 .ev-source-tab {
   display: inline-flex;

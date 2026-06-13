@@ -37,6 +37,7 @@ const UPDATE_NS = "source.updates";
 const LAST_CHECK_KEY = "lastCheckedAt";
 /** 最短检查间隔：1 小时 */
 const MIN_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const SOURCE_LIST_CACHE_TTL_MS = 30 * 60 * 1000;
 const LS_EXPLORE_KEY = "source-explore-disabled";
 const LS_SEARCH_KEY = "source-search-disabled";
 const EXPLORE_KEY = "exploreDisabled";
@@ -115,6 +116,9 @@ export const useBookSourceStore = defineStore("bookSource", () => {
   const streamingLoaded = ref(0);
   let _loadInFlight: Promise<void> | null = null;
   let _detectAllInFlight: Promise<void> | null = null;
+  let _sourcesLoadedOnce = false;
+  let _sourcesLoadedAt = 0;
+  let _sourcesDirty = true;
   /** 当前活跃的流式加载请求 ID，用于过滤过期事件 */
   let _streamRequestId = "";
   // ── 更新检查结果 ─────────────────────────────────────────────────────────
@@ -189,7 +193,15 @@ export const useBookSourceStore = defineStore("bookSource", () => {
   }
 
   /** 统一书源加载（去重保护，三个视图共用此接口），流式分批推送到 sources */
-  async function loadSources(): Promise<void> {
+  async function loadSources(options: { force?: boolean } = {}): Promise<void> {
+    const force = options.force === true;
+    const cacheFresh =
+      _sourcesLoadedOnce &&
+      !_sourcesDirty &&
+      Date.now() - _sourcesLoadedAt < SOURCE_LIST_CACHE_TTL_MS;
+    if (!force && cacheFresh) {
+      return;
+    }
     if (_loadInFlight) {
       return _loadInFlight;
     }
@@ -267,6 +279,10 @@ export const useBookSourceStore = defineStore("bookSource", () => {
         });
 
         // 加载完书源列表后自动触发能力检测与更新检查（非阻塞，后台跑）
+        _sourcesLoadedOnce = true;
+        _sourcesLoadedAt = Date.now();
+        _sourcesDirty = false;
+
         void detectAllCapabilities();
         void ensureFrontendNamespaceLoaded(UPDATE_NS).then(() => checkUpdatesIfStale());
       } finally {
@@ -279,8 +295,15 @@ export const useBookSourceStore = defineStore("bookSource", () => {
 
   /** 强制刷新书源列表 */
   async function reloadSources(): Promise<void> {
+    _sourcesDirty = true;
+    _sourcesLoadedAt = 0;
     _loadInFlight = null;
-    await loadSources();
+    await loadSources({ force: true });
+  }
+
+  function markSourcesStale(): void {
+    _sourcesDirty = true;
+    _sourcesLoadedAt = 0;
   }
 
   /**
@@ -634,6 +657,7 @@ export const useBookSourceStore = defineStore("bookSource", () => {
     // actions
     loadSources,
     reloadSources,
+    markSourcesStale,
     ensureCapsLoaded,
     detectCapabilities,
     detectAllCapabilities,

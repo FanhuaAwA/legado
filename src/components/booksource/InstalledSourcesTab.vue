@@ -3,7 +3,7 @@
 import { Search } from "lucide-vue-next";
 import { useMessage } from "naive-ui";
 import { storeToRefs } from "pinia";
-import { ref, computed, onMounted, onUnmounted } from "vue";
+import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useBackAwareDialog as useDialog } from "@/composables/useBackAwareDialog";
 import { isTauri } from "@/composables/useEnv";
 import { eventEmit } from "@/composables/useEventBus";
@@ -103,6 +103,7 @@ async function openExternalUrl(url: string) {
 
 // ---- 搜索过滤 ----
 const searchQuery = ref("");
+const INSTALLED_SOURCE_RENDER_LIMIT = 160;
 const filtered = computed(() => {
   const q = searchQuery.value.trim();
   if (!q) {
@@ -111,6 +112,20 @@ const filtered = computed(() => {
   return props.sources.filter(
     (s) => s.name.includes(q) || s.url.includes(q) || s.tags.some((t) => t.includes(q)),
   );
+});
+const showAllSources = ref(false);
+const visibleSources = computed(() =>
+  showAllSources.value ? filtered.value : filtered.value.slice(0, INSTALLED_SOURCE_RENDER_LIMIT),
+);
+const hiddenSourceCount = computed(() =>
+  Math.max(0, filtered.value.length - visibleSources.value.length),
+);
+const canToggleSourceList = computed(
+  () => filtered.value.length > INSTALLED_SOURCE_RENDER_LIMIT || showAllSources.value,
+);
+
+watch(searchQuery, () => {
+  showAllSources.value = false;
 });
 
 // ---- 批量管理 ----
@@ -1289,7 +1304,7 @@ defineExpose({
     <n-spin :show="loading" class="bv-source-list-wrap">
       <div class="bv-source-list app-scrollbar">
         <SourceCard
-          v-for="src in filtered"
+          v-for="src in visibleSources"
           :key="src.sourceKey"
           :src="src"
           :source-dir="sourceDir"
@@ -1319,6 +1334,18 @@ defineExpose({
           @save-delay="saveDelayOverride(src, $event)"
           @apply-update="applySourceUpdate(src)"
         />
+        <div v-if="canToggleSourceList" class="bv-source-list-limit">
+          <span>
+            {{
+              showAllSources
+                ? `已展开全部 ${filtered.length} 个书源`
+                : `已显示 ${visibleSources.length} / ${filtered.length} 个书源`
+            }}
+          </span>
+          <n-button size="tiny" quaternary @click="showAllSources = !showAllSources">
+            {{ showAllSources ? "收起列表" : `展开剩余 ${hiddenSourceCount} 个` }}
+          </n-button>
+        </div>
         <n-empty
           v-if="!filtered.length && !loading"
           description="暂无书源，可导入 .js 文件或从在线仓库安装"
@@ -1584,6 +1611,17 @@ defineExpose({
 }
 
 /* ---- 目录管理弹窗 ---- */
+.bv-source-list-limit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 8px 4px 10px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
 .dir-mgr {
   display: flex;
   flex-direction: column;
