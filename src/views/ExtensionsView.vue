@@ -33,7 +33,7 @@ import {
   toExtSafeFileName,
   newExtensionTemplate,
 } from "../composables/useExtension";
-import { EXAMPLE_SCRIPTS, type ExampleScript } from "../data/extensionExamples";
+import { loadExampleScripts, type ExampleScript } from "../data/extensionExamples";
 import { saveExportFile } from "../utils/exportFile";
 
 type ExtensionListItem = ExtensionMeta & { builtin?: boolean };
@@ -195,14 +195,17 @@ const categories = computed(() => {
 
 const examplesSearchQuery = ref("");
 const examplesCategoryFilter = ref("");
+const exampleScripts = ref<ExampleScript[]>([]);
+const examplesLoading = ref(false);
+let examplesLoadPromise: Promise<void> | null = null;
 
 const exampleCategories = computed(() => {
-  const cats = new Set(EXAMPLE_SCRIPTS.map((e) => e.meta.category || "其他"));
+  const cats = new Set(exampleScripts.value.map((e) => e.meta.category || "其他"));
   return [{ label: "全部", value: "" }, ...[...cats].map((c) => ({ label: c, value: c }))];
 });
 
 const filteredExamples = computed(() =>
-  EXAMPLE_SCRIPTS.filter((ex) => {
+  exampleScripts.value.filter((ex) => {
     const byCategory =
       !examplesCategoryFilter.value ||
       (ex.meta.category || "其他") === examplesCategoryFilter.value;
@@ -216,6 +219,28 @@ const filteredExamples = computed(() =>
     return byCategory && bySearch;
   }),
 );
+
+async function ensureExamplesLoaded() {
+  if (exampleScripts.value.length) {
+    return;
+  }
+  if (examplesLoadPromise) {
+    return examplesLoadPromise;
+  }
+  examplesLoading.value = true;
+  examplesLoadPromise = loadExampleScripts()
+    .then((items) => {
+      exampleScripts.value = items;
+    })
+    .catch((e: unknown) => {
+      message.error(`加载示例失败: ${e instanceof Error ? e.message : String(e)}`);
+    })
+    .finally(() => {
+      examplesLoading.value = false;
+      examplesLoadPromise = null;
+    });
+  return examplesLoadPromise;
+}
 
 const filtered = computed(() =>
   extensions.value.filter((e) => {
@@ -405,6 +430,14 @@ function isExampleInstalled(example: ExampleScript): boolean {
   return installedFileNames.value.has(toExtSafeFileName(example.meta.name ?? example.id));
 }
 
+const previewExample = computed(
+  () => exampleScripts.value.find((item) => item.id === previewExampleId.value) ?? null,
+);
+
+const canInstallPreviewExample = computed(
+  () => !!previewExample.value && !isExampleInstalled(previewExample.value),
+);
+
 async function installExample(example: ExampleScript) {
   const fileName = toExtSafeFileName(example.meta.name ?? example.id);
   installLoading.value = true;
@@ -420,7 +453,7 @@ async function installExample(example: ExampleScript) {
 }
 
 async function installFromPreview() {
-  const example = EXAMPLE_SCRIPTS.find((e) => e.id === previewExampleId.value);
+  const example = previewExample.value;
   if (!example) {
     return;
   }
@@ -668,6 +701,12 @@ watch(
   { flush: "post", immediate: true },
 );
 
+watch(activeTab, (tab) => {
+  if (tab === "examples") {
+    void ensureExamplesLoaded();
+  }
+});
+
 onMounted(async () => {
   await loadExtensions();
   window.addEventListener("app:install-plugin", handleInstallPluginEvent);
@@ -829,17 +868,24 @@ onUnmounted(() => {
             以下为内置示例脚本，展示 UserScript 格式与 Legado 扩展 API 的使用方式。
             点击「查看代码」预览完整源码，点击「安装」写入扩展目录即可启用。
           </p>
-          <div class="examples-grid">
-            <ExampleCard
-              v-for="ex in filteredExamples"
-              :key="ex.id"
-              :ex="ex"
-              :installed="isExampleInstalled(ex)"
-              :install-loading="installLoading"
-              @view-code="viewExampleCode(ex)"
-              @install="installExample(ex)"
+          <n-spin :show="examplesLoading">
+            <div v-if="filteredExamples.length" class="examples-grid">
+              <ExampleCard
+                v-for="ex in filteredExamples"
+                :key="ex.id"
+                :ex="ex"
+                :installed="isExampleInstalled(ex)"
+                :install-loading="installLoading"
+                @view-code="viewExampleCode(ex)"
+                @install="installExample(ex)"
+              />
+            </div>
+            <n-empty
+              v-else-if="!examplesLoading"
+              description="暂无内置示例"
+              style="padding: 48px 0"
             />
-          </div>
+          </n-spin>
         </div>
       </n-tab-pane>
     </n-tabs>
@@ -906,10 +952,7 @@ onUnmounted(() => {
         <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px">
           <n-button @click="closePreview">关闭</n-button>
           <n-button
-            v-if="
-              previewExampleId &&
-              !isExampleInstalled(EXAMPLE_SCRIPTS.find((e) => e.id === previewExampleId)!)
-            "
+            v-if="canInstallPreviewExample"
             type="primary"
             :loading="installLoading"
             @click="installFromPreview"

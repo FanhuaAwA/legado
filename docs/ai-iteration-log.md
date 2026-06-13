@@ -1,5 +1,51 @@
 # AI Iteration Log
 
+## 2026-06-13 PERF-EXTENSION-EXAMPLES-LAZY
+
+任务 ID：`PERF-2026-06-13-EXTENSION-EXAMPLES-LAZY`
+
+本轮目标：继续前端性能收口，处理 `ExtensionsView` 静态包含全部内置示例源码的问题。范围限定在扩展示例库的加载边界，不改动扩展目录读写、安装、启停语义，不改动前端插件运行时和后端命令契约。
+
+关键判断：
+
+- 上轮已经把插件运行时重依赖移出 `useFrontendPlugins`，但扩展管理页仍静态导入 23 个 `pluginExamples/*.js?raw`，导致即使用户只看已安装扩展，也会携带示例库源码成本。
+- 示例脚本只在“示例库”页签和代码预览/安装时需要；用动态导入延后到页签激活更符合实际使用路径。
+- 这些示例脚本需要保留完整源码字符串用于预览和写入扩展目录，因此本轮只调整加载时机，不修改示例内容。
+
+实现：
+
+- `src/data/extensionExamples.ts` 将 `EXAMPLE_SCRIPTS` 静态数组改为 `EXAMPLE_SCRIPT_LOADERS` 动态加载表，并导出带缓存的 `loadExampleScripts()`。
+- `src/views/ExtensionsView.vue` 新增 `exampleScripts`、`examplesLoading` 与 `ensureExamplesLoaded()`；当 `activeTab === "examples"` 时触发加载。
+- 分类筛选、搜索、代码预览、预览弹窗安装按钮全部改为基于已加载的示例状态，避免继续引用旧的静态常量。
+- 示例加载时显示 `n-spin`，加载完成但无匹配结果时再显示空状态。
+
+构建观察：
+
+- `ExtensionsView-BDO7O7EC.js` 为 `33.35 kB`，gzip `10.42 kB`；较上轮 `137.93 kB` / gzip `34.64 kB` 明显下降。
+- 23 个 `pluginExamples` raw 源码文件被拆到独立动态 chunk，只有打开示例库后才加载。
+- `dist/index.html` 首屏 `modulepreload` 仍为 4 条：`_plugin-vue_export-helper`、`rolldown-runtime`、`vendor-vue-naive`、`useInvoke`。
+- `useFrontendPlugins` 仍保持约 `36.12 kB` / gzip `10.35 kB`，`pluginChineseConverter` 仍是独立按需大 chunk。
+
+验证：
+
+- `cmd /c node_modules\.bin\oxfmt.cmd src\data\extensionExamples.ts src\views\ExtensionsView.vue src\components\extensions\ExampleCard.vue`：PASS。
+- `rg -n "EXAMPLE_SCRIPTS" src`：无剩余引用。
+- `cmd /c pnpm.cmd lint`：PASS。
+- `cmd /c pnpm.cmd build`：PASS，保留既有 vconsole direct eval、chunk size 与 plugin timing warning。
+- `node scripts\ci\check-command-contract.mjs --json`：PASS，`frontendTotal=162`、`registeredTotal=161`、`bothCount=161`、`onlyFrontend=["js_eval"]`、`onlyBackend=[]`、`frontend_unsupported_stub_count=39`、`frontend_implemented_count=122`。
+- `git diff --check`：PASS，仅 Windows LF/CRLF 工作区提示。
+- `cargo fmt --all -- --check`：PASS。
+- `cargo check -p reader-core`：PASS。
+- `cargo test -p reader-core`：PASS，全部非 ignored 测试通过。
+- `cargo check -p legado-tauri`：PASS。
+
+Gate 报告：`reports/gates/2026-06-13-PERF-EXTENSION-EXAMPLES-LAZY/summary.md`。
+
+剩余风险：
+
+- 示例源码总量没有减少，只是从扩展页入口移动到示例库页签按需加载。
+- 首次打开示例库时会并发请求 23 个小 chunk；如果后续关注请求数，可评估将示例源码合并为单个懒加载包。
+
 ## 2026-06-13 PERF-FRONTEND-PLUGIN-RUNTIME-SPLIT
 
 任务 ID：`PERF-2026-06-13-FRONTEND-PLUGIN-RUNTIME-SPLIT`

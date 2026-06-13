@@ -1,5 +1,39 @@
 # AI Task Status
 
+## 2026-06-13 PERF-EXTENSION-EXAMPLES-LAZY 状态更新
+
+本轮状态：`local-gate-pass`；提交、推送与远程 CI 状态以 git history 和 GitHub Actions 为准。
+本轮继续收口前端按需加载体积，范围限定在扩展管理页的内置示例库加载边界；不改变扩展安装、保存、启停命令，不改变插件运行时 API、后端命令契约或第三方私有书源样本。
+
+关键修改：
+
+- `src/data/extensionExamples.ts` 移除 23 个 `pluginExamples/*.js?raw` 静态导入，改为 `loadExampleScripts()` 缓存式动态导入。
+- `src/views/ExtensionsView.vue` 仅在切到“示例库”页签时加载示例脚本；筛选、分类、预览安装都改为基于已加载的 `exampleScripts` 状态。
+- 示例库加载期间使用 `n-spin` 表示等待，加载失败通过现有 `message.error` 报错，避免空状态误判为无示例。
+
+构建观察：
+
+- 上轮基线 `ExtensionsView-BgBpIuYE.js` 为 `137.93 kB`，gzip `34.64 kB`。
+- 本轮 `ExtensionsView-BDO7O7EC.js` 降为 `33.35 kB`，gzip `10.42 kB`。
+- 23 个示例脚本被拆为独立动态 chunk，例如 `reader-ad-cleaner-CKCGe1gc.js`、`tts-edge-read-aloud-CML0VQWv.js`。
+- `dist/index.html` 首屏 `modulepreload` 仍为 4 条，未包含示例脚本 chunk。
+- 上轮拆出的 `useFrontendPlugins` 与 `pluginChineseConverter` chunk 体积保持稳定。
+
+已通过 gate：
+
+- `cmd /c node_modules\.bin\oxfmt.cmd src\data\extensionExamples.ts src\views\ExtensionsView.vue src\components\extensions\ExampleCard.vue`
+- `rg -n "EXAMPLE_SCRIPTS" src`
+- `cmd /c pnpm.cmd lint`
+- `cmd /c pnpm.cmd build`
+- `node scripts\ci\check-command-contract.mjs --json`
+- `git diff --check`
+- `cargo fmt --all -- --check`
+- `cargo check -p reader-core`
+- `cargo test -p reader-core`
+- `cargo check -p legado-tauri`
+
+剩余风险：示例库首次打开时会一次性并发加载 23 个较小 raw chunk，降低了首屏和扩展页入口体积，但没有减少示例总源码体积；后续如果更关注请求数，可再评估合并为单个按需示例包。
+
 ## 2026-06-13 PERF-FRONTEND-PLUGIN-RUNTIME-SPLIT 状态更新
 
 本轮状态：`gate-pass`；提交与推送状态以 git history 和远程状态为准。
