@@ -1978,3 +1978,36 @@ GitHub 说明：
 - 本轮推送后需要观察 GitHub Actions 新一轮 `Quality Gate`，重点确认新增的 `Fetch Cargo dependencies` 与 Cargo registry cache 是否生效。
 
 下一轮第一件事：观察 `Quality Gate` 实跑结果；若 CI 仍因 registry 下载失败，则继续把 Rust 步骤封装成可复用 retry wrapper，或改用镜像/私有 registry 缓存策略。若 CI 通过，则回到 UI 体系化回归或前端大 chunk 拆分。
+
+## 2026-06-13 SOURCE-WIKISOURCE-CLASSICS
+
+任务 ID：`SOURCE-2026-06-13-WIKISOURCE-CLASSICS`
+
+本轮目标：在不绕过登录、付费、试看、验证码、设备绑定或访问控制的前提下，新增一个真实可用、可回归的公开书源样本。选用中文维基文库公开页面，当前收录公有领域《三國演義》，用于补充项目在 JS 书源路线上的实网验证覆盖。
+
+范围声明：
+
+- 允许修改：`crates/reader-core/tests/fixtures/book_sources/wikisource_classics.js`、`crates/reader-core/tests/source_compat_import.rs`、`docs/source-compat-matrix.md`、`docs/ai-task-status.md`、`docs/ai-iteration-log.md`、本轮 gate 报告。
+- 不触碰：用户本地已安装书源、`E:\Book\书旗书源`/`E:\Book\七猫书源`/`E:\Book\番茄书源` 等私有样本、前端 UI、后端生产逻辑、依赖版本、Windows/Android 发布产物。
+
+关键实现：
+
+- 新增 `wikisource_classics.js` JS 书源 fixture，元信息标注为中文维基文库经典小说源，当前 catalog 包含《三國演義》。
+- `search` 走本地公有领域 catalog，支持简繁关键字归一；`bookInfo`、`chapterList`、`chapterContent` 走 Wikisource 公共页面。
+- 统一 `fetchWiki()` 请求头：设置可识别 `User-Agent` 与 `Accept`。初次实网诊断确认 Wikimedia 对无 UA 请求返回 robot policy 提示，因此该头是必要兼容，不是站点规避。
+- `chapterList` 解析 `/wiki/三國演義/第001回` 到 `/第120回` 链接，去重后返回 120 章。
+- `chapterContent` 提取 `mw-parser-output` 正文区域，剔除表格、编辑链接与脚注标记。
+- `source_compat_import.rs` 新增 ignored live test `wikisource_classics_public_domain_full_chain`，覆盖 search → bookInfo → toc → first content → final content。
+
+专项实网验证：
+
+- `cargo test -p reader-core wikisource_classics_public_domain_full_chain -- --ignored --nocapture`：PASS。
+- 2026-06-13 实测输出：`Wikisource 三國演義 full chain: chapters=120, first_len=14153, latest_len=19775`。
+- 测试断言首章包含 `話說天下大勢`，最终章正文长度大于 1000，并排除 `此页面目前没有内容` 与 `试看`。
+
+后续边界：
+
+- 该源是可导入 JS 文件与测试 fixture，尚未作为远端书源仓库 manifest 发布；如需让 UI 在线仓库直接展示，需要单独新增/配置远端 repository manifest。
+- 不得把本轮结果扩展为付费站、登录站或试看内容的绕过方案；后续新增站点必须先确认授权边界与站点访问规则。
+
+下一轮第一件事：本轮提交推送后观察 GitHub Actions；若 CI 通过，则继续按队列处理 UI 体系化回归或前端大 chunk 拆分。

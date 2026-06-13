@@ -2,7 +2,7 @@
 
 记录各本地测试书源在 Tauri 项目中的兼容状态。
 
-最后实测：2026-06-11（Windows 端本地导入 + 网络导入专项验证；番茄 search → bookInfo → toc → content 全链路复测）。
+最后实测：2026-06-13（新增中文维基文库经典小说 JS 源；公有领域《三國演義》search → bookInfo → toc → first/final content 全链路实网复测）。
 
 实测命令：
 
@@ -15,9 +15,29 @@ cargo test -p reader-core --test source_compat_import network_import -- --ignore
 cargo test -p reader-core --test source_compat_import full_chain -- --ignored --nocapture --test-threads=1
 # 番茄搜索链路专项复测
 cargo test -p reader-core --test source_compat_import fanqie_source_search_and_book_info -- --ignored --nocapture
+# 公有领域 Wikisource JS 源全链路
+cargo test -p reader-core wikisource_classics_public_domain_full_chain -- --ignored --nocapture
 ```
 
 状态枚举：`strict_pass`（mock/fixture）/ `live_network_pass`（实网通过）/ `live_network_ignored`（默认跳过）/ `partial` / `blocked_by_source_rule` / `blocked_by_platform` / `blocked_by_js_api` / `not_verified`。
+
+## 2026-06-13 中文维基文库经典小说 JS 源（SOURCE-WIKISOURCE-CLASSICS）
+
+新增仓库内 JS 书源 fixture：`crates/reader-core/tests/fixtures/book_sources/wikisource_classics.js`。当前目录包含《三國演義》，目标站点为中文维基文库公开页面。该源只抓取公有领域文本，不用于绕过登录、付费、试看、验证码、设备绑定或访问控制。
+
+关键边界：
+
+1. Wikisource/Wikimedia 会拒绝缺少 `User-Agent` 的机器人请求。书源统一通过 `fetchWiki()` 带 `User-Agent` 与 `Accept` 请求头，并保留 `@minDelayMs 800`，避免高频抓取。
+2. `chapterList` 解析 Wikisource 目录页的 `/第001回` 到 `/第120回` 链接，不依赖第三方中转站。
+3. `chapterContent` 只提取 `mw-parser-output` 正文区域，并剔除表格、编辑链接、脚注标记等页面噪声。
+
+实网验证：
+
+```powershell
+cargo test -p reader-core wikisource_classics_public_domain_full_chain -- --ignored --nocapture
+```
+
+结果：`live_network_pass`。2026-06-13 实测《三國演義》返回 `chapters=120`，首章正文 `first_len=14153`，最终章正文 `latest_len=19775`。测试同时断言首章包含 `話說天下大勢`，最终章可读取非空正文，并排除 `此页面目前没有内容` 与 `试看`。
 
 ## 2026-06-12 番茄 bookInfo 字段完整性 + 引擎字段管线两处修复（SRC-FANQIE-LIVE）
 

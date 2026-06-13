@@ -1,5 +1,27 @@
 # AI Task Status
 
+## 2026-06-13 SOURCE-WIKISOURCE-CLASSICS 状态更新
+
+本轮状态：`gate-pass`，待提交并推送；提交推送状态以 git history 为准。
+
+本轮新增一个可导入的 JS 书源 fixture：`crates/reader-core/tests/fixtures/book_sources/wikisource_classics.js`。该源面向中文维基文库公开页面，当前收录公有领域《三國演義》，用于补充一个不依赖第三方聚合站、不会触碰付费/登录/试看绕过的真实书源样本。
+
+关键结果：
+
+- `search("三国演义")` 返回《三國演義》，作者 `羅貫中`。
+- `bookInfo` 返回 Wikisource 目录 URL 与 `完本` 状态。
+- `chapterList` 实网解析 120 章目录。
+- `chapterContent` 实网读取首章与最终章正文，2026-06-13 实测 `first_len=14153`、`latest_len=19775`。
+- Wikimedia 缺少 `User-Agent` 时会返回 robot policy 提示；书源已统一通过 `fetchWiki()` 带可识别 `User-Agent` 与 `Accept` 头，并保留 `@minDelayMs 800`。
+
+已通过专项实网验证：
+
+```powershell
+cargo test -p reader-core wikisource_classics_public_domain_full_chain -- --ignored --nocapture
+```
+
+边界声明：本轮不处理付费、登录、试看、验证码、设备绑定、加密绕过或访问控制规避；此源只抓取公开可访问的公有领域文本。
+
 ## 2026-06-13 CI-CARGO-FETCH-RETRY 状态更新
 
 本轮状态：`closed-local`，待提交推送。

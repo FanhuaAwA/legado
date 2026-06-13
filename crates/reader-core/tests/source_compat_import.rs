@@ -12,6 +12,8 @@ fn read_source_fixture(path: &str) -> String {
         .unwrap_or_else(|err| panic!("fixture file must be readable: {path}: {err}"))
 }
 
+const WIKISOURCE_CLASSICS_JS: &str = include_str!("fixtures/book_sources/wikisource_classics.js");
+
 fn migrated_source_probe_fields(content: &str) -> (Option<String>, Option<String>, String, String) {
     let raw: serde_json::Value = serde_json::from_str(content).unwrap();
     let source = raw
@@ -39,6 +41,125 @@ fn migrated_source_probe_fields(content: &str) -> (Option<String>, Option<String
         .unwrap_or_default()
         .to_string();
     (js_lib, login_url, name, url)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "live network against zh.wikisource.org"]
+async fn wikisource_classics_public_domain_full_chain() {
+    let temp = tempfile::tempdir().unwrap();
+    let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
+        .await
+        .unwrap();
+    let file_name = "wikisource_classics.js";
+    core.save_js_source(file_name, WIKISOURCE_CLASSICS_JS, None)
+        .await
+        .expect("Wikisource JS source should be saved");
+
+    let books = core
+        .search(file_name, "三国演义", 1, None)
+        .await
+        .expect("Wikisource source should search local public-domain catalog");
+    assert!(
+        !books.is_empty(),
+        "Wikisource search should return 三國演義"
+    );
+    let book = books
+        .iter()
+        .find(|book| book.name.contains("三國演義"))
+        .unwrap_or(&books[0]);
+    assert_eq!(book.author, "羅貫中");
+    assert!(
+        book.book_url.contains("zh.wikisource.org"),
+        "bookUrl should target Wikisource"
+    );
+
+    let detail = core
+        .book_info(file_name, &book.book_url, None)
+        .await
+        .expect("Wikisource bookInfo should fetch public work page");
+    let toc_url = detail
+        .toc_url
+        .as_deref()
+        .expect("Wikisource bookInfo should expose tocUrl");
+    assert!(
+        toc_url.contains("三國演義") || toc_url.contains("%E4%B8%89%E5%9C%8B"),
+        "tocUrl should point to 三國演義, got {toc_url}"
+    );
+    assert_eq!(detail.status.as_deref(), Some("完本"));
+
+    let chapters = core
+        .chapter_list(file_name, toc_url, None)
+        .await
+        .expect("Wikisource chapterList should parse public directory");
+    if chapters.len() < 120 {
+        let diag = core
+            .eval_source_entry(
+                file_name,
+                r#"
+const html = await fetchWiki(wikiPageUrl("三國演義"));
+const first = html.indexOf("第001回");
+return JSON.stringify({
+  len: html.length,
+  liCount: (html.match(/<li/gi) || []).length,
+  hasParserOutput: html.includes("mw-parser-output"),
+  hasFirstChapter: first >= 0,
+  firstSnippet: first >= 0 ? html.slice(Math.max(0, first - 120), first + 180) : html.slice(0, 300)
+});
+"#,
+                None,
+            )
+            .await
+            .unwrap_or_else(|err| format!("diagnostic failed: {err:?}"));
+        eprintln!("Wikisource chapterList diagnostic: {diag}");
+    }
+    assert!(
+        chapters.len() >= 120,
+        "Wikisource 三國演義 should expose the complete 120 chapters, got {}",
+        chapters.len()
+    );
+    let first = chapters.first().expect("first chapter should exist");
+    let latest = chapters.last().expect("latest/final chapter should exist");
+    assert!(
+        first.name.contains("第一回") && first.name.contains("宴桃園"),
+        "unexpected first chapter name: {}",
+        first.name
+    );
+    assert!(
+        latest.name.contains("第一百二十回") || latest.url.contains("%E7%AC%AC120"),
+        "unexpected latest chapter: {} {}",
+        latest.name,
+        latest.url
+    );
+
+    let first_body = core
+        .chapter_content(file_name, &first.url, None)
+        .await
+        .expect("Wikisource first chapter content should load");
+    assert!(
+        first_body.contains("話說天下大勢") && first_body.len() > 1000,
+        "first chapter should contain full public text, len={}",
+        first_body.len()
+    );
+    assert!(!first_body.contains("此页面目前没有内容"));
+    assert!(!first_body.contains("试看"));
+
+    let latest_body = core
+        .chapter_content(file_name, &latest.url, None)
+        .await
+        .expect("Wikisource latest/final chapter content should load");
+    assert!(
+        latest_body.len() > 1000,
+        "latest/final chapter should contain full public text, len={}",
+        latest_body.len()
+    );
+    assert!(!latest_body.contains("此页面目前没有内容"));
+    assert!(!latest_body.contains("试看"));
+    eprintln!(
+        "Wikisource 三國演義 full chain: chapters={}, first_len={}, latest_len={}",
+        chapters.len(),
+        first_body.len(),
+        latest_body.len()
+    );
 }
 
 #[tokio::test]
