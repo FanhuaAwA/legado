@@ -1,5 +1,4 @@
 import { parseUserScriptMeta, type ExtensionMeta } from "@/composables/useExtension";
-import mimoTtsSource from "./pluginExamples/tts-xiaomi-mimo-v25.js?raw";
 
 export interface BuiltinPluginDefinition {
   id: string;
@@ -30,6 +29,9 @@ function makeBuiltinPlugin(id: string, fileName: string, source: string): Builti
   };
 }
 
-export const BUILTIN_FRONTEND_PLUGINS: BuiltinPluginDefinition[] = [
-  makeBuiltinPlugin("tts-xiaomi-mimo-v25", "builtin-tts-xiaomi-mimo-v25.js", mimoTtsSource),
-];
+export async function loadBuiltinFrontendPlugins(): Promise<BuiltinPluginDefinition[]> {
+  const mimoTtsSource = (await import("./pluginExamples/tts-xiaomi-mimo-v25.js?raw")).default;
+  return [
+    makeBuiltinPlugin("tts-xiaomi-mimo-v25", "builtin-tts-xiaomi-mimo-v25.js", mimoTtsSource),
+  ];
+}

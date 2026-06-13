@@ -27,8 +27,9 @@ import type {
   PluginSettingsContext,
   FrontendPluginRecord,
   FrontendPluginApi,
+  ChineseConvertMode,
 } from "@/features/frontendPlugins/pluginTypes";
-import { BUILTIN_FRONTEND_PLUGINS } from "@/data/builtinPlugins";
+import { loadBuiltinFrontendPlugins } from "@/data/builtinPlugins";
 import {
   computePublicThemeState,
   computePublicBackgroundState,
@@ -64,11 +65,7 @@ import {
   PLUGIN_STORAGE_KEYS,
   type PluginStorageApi,
 } from "@/features/frontendPlugins/pluginStorage";
-import {
-  resolveExtensionAssetUrl,
-  cloneValue,
-  getChineseConverter,
-} from "@/features/frontendPlugins/pluginTextUtils";
+import { resolveExtensionAssetUrl, cloneValue } from "@/features/frontendPlugins/pluginTextUtils";
 import { createEmptyHookMap } from "@/features/frontendPlugins/readerHooks";
 import { createEmptySlotMap } from "@/features/frontendPlugins/readerSlots";
 import { useAppConfigStore } from "@/stores/appConfig";
@@ -175,6 +172,9 @@ let externalListenersReady = false;
 let extensionRootDir = "";
 let activePluginDialogResolve: ((value: Record<string, PluginSettingValue> | null) => void) | null =
   null;
+type ChineseConverterModule = typeof import("@/features/frontendPlugins/pluginChineseConverter");
+let chineseConverterModule: ChineseConverterModule | null = null;
+let chineseConverterModulePromise: Promise<ChineseConverterModule> | null = null;
 
 const slotManager = createSlotManager({
   getRuntimePlugins: () => runtimePlugins,
@@ -202,6 +202,41 @@ function writePluginSettings(
   values: Record<string, PluginSettingValue>,
 ): void {
   getSettingsStorage(record).writeJson(SETTINGS_STORAGE_KEY, values);
+}
+
+function pluginSourceUsesChineseConverter(source: string): boolean {
+  return source.includes("convertChinese");
+}
+
+async function ensureChineseConverterModule(): Promise<ChineseConverterModule> {
+  if (chineseConverterModule) {
+    return chineseConverterModule;
+  }
+  if (!chineseConverterModulePromise) {
+    chineseConverterModulePromise = import("@/features/frontendPlugins/pluginChineseConverter")
+      .then((module) => {
+        chineseConverterModule = module;
+        return module;
+      })
+      .finally(() => {
+        chineseConverterModulePromise = null;
+      });
+  }
+  return chineseConverterModulePromise;
+}
+
+async function preloadPluginRuntimeDeps(source: string): Promise<void> {
+  if (pluginSourceUsesChineseConverter(source)) {
+    await ensureChineseConverterModule();
+  }
+}
+
+function convertChineseText(text: string, mode: ChineseConvertMode): string {
+  if (!chineseConverterModule) {
+    void ensureChineseConverterModule();
+    return text;
+  }
+  return chineseConverterModule.getChineseConverter(mode)(text);
 }
 
 async function refreshRuntimeBackgroundDefinitions(
@@ -473,7 +508,7 @@ function createPluginApi(record: RuntimePluginRecord): FrontendPluginApi {
       patchBook: patchShelfBook,
     },
     text: {
-      convertChinese: (text, mode) => getChineseConverter(mode)(text),
+      convertChinese: convertChineseText,
     },
     ui: {
       toast: async (message, type) => emitPluginToast(record.pluginId, message, type),
@@ -604,9 +639,10 @@ async function loadPlugins(options: { force?: boolean } = {}): Promise<void> {
         resolvePluginDialog(null);
       }
 
-      const [extensionList, extensionDir] = await Promise.all([
+      const [extensionList, extensionDir, builtinPlugins] = await Promise.all([
         listExtensions(),
         getExtensionDir(),
+        loadBuiltinFrontendPlugins(),
       ]);
       extensionRootDir = extensionDir;
       const extensions = sortExtensionsByPluginOrder(extensionList);
@@ -615,6 +651,7 @@ async function loadPlugins(options: { force?: boolean } = {}): Promise<void> {
       for (const meta of extensions) {
         const source = await readExtension(meta.fileName);
         try {
+          await preloadPluginRuntimeDeps(source);
           const record = await evaluatePlugin(meta, source, createPluginApi);
           if (!meta.enabled) {
             record.enabled = false;
@@ -626,8 +663,9 @@ async function loadPlugins(options: { force?: boolean } = {}): Promise<void> {
         }
       }
 
-      for (const builtin of BUILTIN_FRONTEND_PLUGINS) {
+      for (const builtin of builtinPlugins) {
         try {
+          await preloadPluginRuntimeDeps(builtin.source);
           const record = await evaluatePlugin(builtin.meta, builtin.source, createPluginApi);
           if (!builtin.meta.enabled) {
             record.enabled = false;

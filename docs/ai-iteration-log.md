@@ -1,5 +1,53 @@
 # AI Iteration Log
 
+## 2026-06-13 PERF-FRONTEND-PLUGIN-RUNTIME-SPLIT
+
+任务 ID：`PERF-2026-06-13-FRONTEND-PLUGIN-RUNTIME-SPLIT`
+
+本轮目标：继续前端性能收口，拆分 `useFrontendPlugins` 内部运行时的静态重依赖。范围限定在前端插件运行时加载边界，不改变插件 API 形态、不改变后端命令契约、不触碰第三方/私有书源样本。
+
+关键判断：
+
+- 上轮 `PERF-FRONTEND-PLUGIN-BARREL-CUT` 已把插件 store 从通用 stores chunk 中隔离，但 `useFrontendPlugins-BtFZi8GG.js` 仍为 `1.17 MB`，gzip `509.87 kB`。
+- 构建产物扫描显示大头来自 `pluginTextUtils.ts` 顶层静态导入 `opencc-js`，其简繁转换词典被直接打进 `useFrontendPlugins`。
+- `api.text.convertChinese()` 在插件 API 类型中是同步函数，因此不能直接改成 `Promise<string>`；需要在插件求值前按需预加载，以保持常规插件的同步语义。
+
+实现：
+
+- 新增 `src/features/frontendPlugins/pluginChineseConverter.ts`，把 `opencc-js` 与转换器缓存从通用文本工具中拆出。
+- `src/features/frontendPlugins/pluginTextUtils.ts` 只保留路径规范化、资源 URL、clone 与默认阅读器外观状态等轻量工具。
+- `src/composables/useFrontendPlugins.ts` 新增 `ensureChineseConverterModule()` 与 `preloadPluginRuntimeDeps()`；当插件源码包含 `convertChinese` 时，先动态加载转换器，再执行 `evaluatePlugin()`。
+- `createPluginApi()` 保留同步 `text.convertChinese`。若极端插件代码未包含字面量 `convertChinese` 却动态调用该 API，兜底逻辑会触发后台加载并返回原文，避免同步 API 阻塞或崩溃。
+- `src/data/builtinPlugins.ts` 将内置 MiMo TTS 插件 raw 源码改为 `loadBuiltinFrontendPlugins()` 动态导入，避免内置插件源码静态嵌入运行时块。
+
+构建观测：
+
+- `useFrontendPlugins-BsTr7j8q.js`：`36.12 kB`，gzip `10.36 kB`；较上轮 `1.17 MB` / gzip `509.87 kB` 明显下降。
+- `pluginChineseConverter-BFpjUyv2.js`：`1,122.13 kB`，gzip `494.29 kB`，仅经动态导入加载。
+- `tts-xiaomi-mimo-v25-2bfbZ9OA.js`：`13.90 kB`，gzip `3.96 kB`，仅经动态导入加载。
+- `dist/index.html` 首屏 `modulepreload` 仍为 4 条：`_plugin-vue_export-helper`、`rolldown-runtime`、`vendor-vue-naive`、`useInvoke`。
+- 入口 `index-BsSSkfpI.js` 为 `57.05 kB`，gzip `20.14 kB`，与上轮基本持平。
+
+验证：
+
+- `cmd /c node_modules\.bin\oxfmt.cmd src\data\builtinPlugins.ts src\composables\useFrontendPlugins.ts src\features\frontendPlugins\pluginChineseConverter.ts src\features\frontendPlugins\pluginTextUtils.ts`：PASS。
+- `cmd /c pnpm.cmd lint`：PASS，0 warnings / 0 errors。
+- `cmd /c pnpm.cmd build`：PASS；保留既有 `vconsole` direct eval、large chunk 与 plugin timing warning。
+- `node scripts\ci\check-command-contract.mjs --json`：PASS，`frontendTotal=162`、`registeredTotal=161`、`bothCount=161`、`onlyFrontend=["js_eval"]`、`onlyBackend=[]`、`frontend_unsupported_stub_count=39`、`frontend_implemented_count=122`。
+- `cargo fmt --all -- --check`：PASS。
+- `git diff --check`：PASS，仅 Windows LF/CRLF 工作区提示。
+- `cargo check -p reader-core`：PASS。
+- `cargo test -p reader-core`：PASS，全部非 ignored 测试通过。
+- `cargo check -p legado-tauri`：PASS。
+
+Gate 报告：`reports/gates/2026-06-13-PERF-FRONTEND-PLUGIN-RUNTIME-SPLIT/summary.md`。
+
+剩余风险：
+
+- OpenCC 词典仍是约 1.1 MB 的独立块；本轮解决的是错误静态归属，不是词典压缩。
+- `vendor-vue-naive` 仍是首屏最大 preload。
+- 插件管理页 `ExtensionsView` 仍包含示例库展示成本，后续如继续前端性能优化，可单独审计示例库/文档展示的懒加载。
+
 ## 记录标题：2026-06-12 DeepSeek AI 写书源与喵公子订阅源接入（AI-DEEPSEEK-MGZ）
 
 任务 ID：`AI-DEEPSEEK-MGZ-001`

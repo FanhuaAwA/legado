@@ -1,5 +1,40 @@
 # AI Task Status
 
+## 2026-06-13 PERF-FRONTEND-PLUGIN-RUNTIME-SPLIT 状态更新
+
+本轮状态：`gate-pass`；提交与推送状态以 git history 和远程状态为准。
+
+本轮继续收口前端插件运行时体积，目标是不改变插件 API 语义、不改变后端命令契约，只把 `useFrontendPlugins` 静态图里按能力才需要的重依赖移到按需块。
+
+关键修改：
+
+- `opencc-js` 从 `pluginTextUtils.ts` 拆到新的 `pluginChineseConverter.ts`，避免简繁转换词典随通用插件运行时一起进入 `useFrontendPlugins` chunk。
+- `useFrontendPlugins.ts` 新增缓存动态导入与插件源码预判：插件源码包含 `convertChinese` 时，在插件求值前预加载转换器，从而保留 `api.text.convertChinese(text, mode) => string` 的同步 API。
+- `builtinPlugins.ts` 将内置 MiMo TTS raw 源码改为 `loadBuiltinFrontendPlugins()` 动态加载，避免内置插件源码静态嵌入插件运行时 chunk。
+
+构建观测：
+
+- 上轮基线 `useFrontendPlugins-BtFZi8GG.js` 为 `1.17 MB`，gzip `509.87 kB`。
+- 本轮 `useFrontendPlugins-BsTr7j8q.js` 降为 `36.12 kB`，gzip `10.36 kB`。
+- `pluginChineseConverter-BFpjUyv2.js` 独立为按需 chunk：`1,122.13 kB`，gzip `494.29 kB`。
+- `tts-xiaomi-mimo-v25-2bfbZ9OA.js` 独立为按需 chunk：`13.90 kB`，gzip `3.96 kB`。
+- `dist/index.html` 首屏 `modulepreload` 仍为 4 条，未包含 `pluginChineseConverter`、`tts-xiaomi` 或 `useFrontendPlugins`。
+- 入口 `index-BsSSkfpI.js` 保持 `57.05 kB`，gzip `20.14 kB`。
+
+已通过 gate：
+
+- `cmd /c node_modules\.bin\oxfmt.cmd src\data\builtinPlugins.ts src\composables\useFrontendPlugins.ts src\features\frontendPlugins\pluginChineseConverter.ts src\features\frontendPlugins\pluginTextUtils.ts`
+- `cmd /c pnpm.cmd lint`
+- `cmd /c pnpm.cmd build`
+- `node scripts\ci\check-command-contract.mjs --json`
+- `cargo fmt --all -- --check`
+- `git diff --check`
+- `cargo check -p reader-core`
+- `cargo test -p reader-core`
+- `cargo check -p legado-tauri`
+
+剩余风险：OpenCC 词典本身仍然很大，本轮只是把它移到能力触发的动态块；非常规插件若通过拼接字符串调用 `api.text["convert" + "Chinese"](...)`，第一次同步调用会走兜底返回原文并触发后台加载。后续可继续处理 `vendor-vue-naive` 首屏 preload 或 `ExtensionsView` 示例库体积。
+
 ## 2026-06-13 PERF-LAZY-FRONTEND-CHUNKS 状态更新
 
 本轮状态：`gate-pass`；提交与推送状态以 git history 和远程状态为准。
