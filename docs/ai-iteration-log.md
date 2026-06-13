@@ -2193,3 +2193,48 @@ GitHub 说明：
 - `vendor-vue-naive` 仍是最大首屏依赖，下一轮应继续审计 Naive UI 注册与全局组件依赖。
 
 下一轮第一件事：提交推送并观察 GitHub Actions；若 CI 通过，继续做 `vendor-vue-naive` 首屏来源审计和 Naive UI/全局组件拆分。
+
+## 2026-06-13 PERF-NAIVE-PARTIAL-REGISTER
+
+任务 ID：`PERF-2026-06-13-NAIVE-PARTIAL-REGISTER`
+
+本轮目标：继续前端性能收口，处理上一轮剩余的 `vendor-vue-naive` 首屏大 chunk。优先使用不引入新依赖、不改变业务语义的路径，移除 `main.ts` 对 Naive UI 默认插件的全量注册，改为项目实际全局模板需要的显式组件注册。
+
+范围声明：
+
+- 允许修改：`src/main.ts`、`src/plugins/*`、状态文档与本轮 gate 报告。
+- 不触碰：后端命令契约、reader-core 解析逻辑、业务组件语义、依赖版本、`package.json`/lockfile、用户数据目录、第三方书源样本、Windows/Android 发布产物。
+
+关键修改：
+
+- `src/main.ts` 移除 `import naive from "naive-ui"` 和 `app.use(naive)`。
+- 新增 `src/plugins/naiveComponents.ts`，使用 Naive UI 官方 `create({ components })` 方式注册局部组件集。
+- 通过脚本扫描 Vue 模板中的 `<n-*>` 和 `<N*>` 标签，登记 39 个唯一 Naive 组件：`NAlert`、`NAvatar`、`NButton`、`NButtonGroup`、`NCard`、`NCheckbox`、`NCheckboxGroup`、`NColorPicker`、`NConfigProvider`、`NDialogProvider`、`NDivider`、`NDrawer`、`NDrawerContent`、`NDropdown`、`NEmpty`、`NForm`、`NFormItem`、`NIcon`、`NInput`、`NInputNumber`、`NMessageProvider`、`NModal`、`NNotificationProvider`、`NPopconfirm`、`NPopover`、`NProgress`、`NRadio`、`NRadioButton`、`NRadioGroup`、`NResult`、`NSelect`、`NSlider`、`NSpace`、`NSpin`、`NSwitch`、`NTabPane`、`NTabs`、`NTag`、`NTooltip`。
+- 未引入 `unplugin-vue-components` / `unplugin-auto-import`，避免扩大依赖面和 CI 缓存面。
+
+构建观察：
+
+- `vendor-vue-naive-P8C4MHM6.js` 为 697.89 kB，gzip 197.04 kB；上一轮约 1,396 kB，gzip 378.84 kB，体积约减半。
+- 入口 `index-fjOpBFyM.js` 为 57.02 kB，gzip 20.12 kB；相比上一轮入口 56.55 kB / gzip 19.82 kB 有小幅增加，代价来自显式注册表本身。
+- 入口 CSS 仍为 `index-bSHetTZa.css`，59.71 kB / gzip 12.43 kB。
+- `dist/index.html` 仍保留 4 条首屏 `modulepreload`：`_plugin-vue_export-helper`、`rolldown-runtime`、`vendor-vue-naive`、`useInvoke`。
+- 剩余大 chunk：`useFrontendPlugins-CUUnhuCV.js` 仍为 1.17 MB / gzip 509.87 kB；`vendor-vue-naive` 仍超过 500 kB，但已明显收口。
+
+门禁结果：
+
+- `cmd /c pnpm.cmd lint`：PASS，0 warnings / 0 errors。
+- `cmd /c pnpm.cmd build`：PASS；保留既有 warning：`vconsole` direct eval、大 chunk、plugin timing。
+- `cargo fmt --all -- --check`：PASS。
+- `node scripts\ci\check-command-contract.mjs --json`：PASS，`frontendTotal=162`、`registeredTotal=161`、`bothCount=161`、`onlyFrontend=["js_eval"]`、`onlyBackend=[]`、`frontend_unsupported_stub_count=39`、`frontend_implemented_count=122`。
+- `git diff --check`：PASS，仅 Windows 工作区 LF/CRLF 提示。
+- `cargo check -p reader-core`：PASS。
+- `cargo test -p reader-core`：PASS，reader-core 全部非 ignored 测试通过。
+- `cargo check -p legado-tauri`：PASS。
+
+剩余风险：
+
+- `naiveComponents.ts` 现在是维护清单；后续新增全局 `<n-*>` 标签时必须同步登记，否则可能出现运行期组件解析警告。
+- 本轮没有跑浏览器 UI smoke；构建与类型检查能证明导出和类型成立，但不能完全覆盖所有动态可见页面的运行期组件解析。
+- `vendor-vue-naive` 仍被首屏 preload，进一步优化要么做路由级 Naive 分块，要么继续减少 App shell 全局 Provider/全局组件依赖。
+
+下一轮第一件事：提交推送并观察 GitHub Actions；若 CI 通过，继续评估 `useFrontendPlugins` 异步大 chunk 拆分，或做 Naive 注册清单自动校验脚本，降低手工维护风险。

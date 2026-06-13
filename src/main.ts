@@ -3,7 +3,6 @@ const _bootT0 = Date.now();
 log.info("App", "main.ts 开始执行", { bootT0: _bootT0 });
 window.__LEGADO_SET_BOOT_STAGE?.("main-ts-started");
 
-import naive from "naive-ui";
 import { createPinia } from "pinia";
 import { createApp } from "vue";
 import App from "./App.vue";
@@ -18,9 +17,10 @@ import "./styles/remote.css";
 import "./styles/components.css";
 import { initFrontendStorage } from "./composables/useFrontendStorage";
 import { analyticsPlugin } from "./plugins/analytics";
+import { legadoNaive } from "./plugins/naiveComponents";
 import { log } from "@/utils/logger";
 
-// 当前保留 Naive UI 全量注册；若后续恢复 unplugin 按需导入，再同步移除此处。
+// Register only the Naive UI components that are used by global templates.
 const app = createApp(App);
 app.use(createPinia());
 app.use(analyticsPlugin);
@@ -30,7 +30,7 @@ app.config.errorHandler = (err, instance, info) => {
   window.__LEGADO_SHOW_BOOT_ERROR?.(`Vue 渲染异常 (${info}):\n${details}`);
 };
 // 挂载后记录首屏到达时间，并移除骨架屏
-app.use(naive);
+app.use(legadoNaive);
 
 // 在挂载前从后端预取所有持久化数据，确保 useDynamicConfig 的 ready 可立即 resolve，
 // 不再依赖 localStorage 作为同步备份，彻底消除脏数据干扰。
