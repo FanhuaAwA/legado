@@ -1940,3 +1940,41 @@ GitHub/CI 备注：
 
 下一轮第一件事：
 `CI-2026-06-13-CARGO-FETCH-RETRY`，修复 GitHub Actions 因 crates.io 瞬断导致的门禁失败；完成后继续 UI 体系化回归或前端大 chunk 拆分。
+
+## 2026-06-13 CI-CARGO-FETCH-RETRY
+
+任务 ID：`CI-2026-06-13-CARGO-FETCH-RETRY`
+
+本轮目标：处理用户报告的 GitHub Actions 门禁失败。失败发生在 2026-06-13 01:00 左右，`cargo check -p reader-core` 下载 `aes -> cipher` 依赖时 crates.io 连接 reset。该日志指向 registry 下载网络瞬断，不是本地代码编译错误，因此本轮只加固 CI 依赖获取链路，不改业务代码。
+
+范围声明：
+
+- 允许修改：`.github/workflows/quality-gate.yml`、`docs/ai-task-status.md`、`docs/ai-iteration-log.md`、本轮 gate 报告。
+- 不触碰：Rust 业务代码、前端业务代码、依赖版本、Cargo.lock、书源解析、Windows/Android 发布产物。
+
+关键修改：
+
+- `quality-gate.yml` 增加全局 Cargo 网络环境变量：`CARGO_NET_RETRY=10`、`CARGO_HTTP_TIMEOUT=120`、`CARGO_HTTP_MULTIPLEXING=false`、`CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse`。
+- 增加 `actions/cache@v4` 缓存 `~/.cargo/registry` 与 `~/.cargo/git`，降低每轮 CI 对 crates.io 的重复下载压力。
+- 在 Rust check/test 前增加 `Fetch Cargo dependencies` 步骤，执行 `cargo fetch --locked`，最多 3 次；失败后按 20s/40s 递增等待重试，使网络型失败集中在依赖获取步骤，而不是混入 `cargo check` 编译日志。
+
+验证结果：
+
+- `cmd /c node_modules\.bin\oxfmt.cmd --check .`：PASS。
+- `git diff --check`：PASS，仅 Windows LF/CRLF 工作区提示。
+- `node scripts/ci/check-command-contract.mjs --json`：PASS，`frontendTotal=162`、`registeredTotal=161`、`bothCount=161`、`onlyFrontend=["js_eval"]`、`onlyBackend=[]`、`frontend_unsupported_stub_count=39`、`frontend_implemented_count=122`。
+- `cargo fetch --locked`：PASS，按 lockfile 下载缺失依赖成功。
+- `cmd /c pnpm.cmd lint`：PASS，0 warnings / 0 errors。
+- `cmd /c pnpm.cmd build`：PASS；保留既有 Vite warning：`vconsole` direct eval、大 chunk、`useTransport` ineffective dynamic import。
+- `cargo fmt --all -- --check`：PASS。
+- `cargo check -p reader-core`：PASS。
+- `cargo check -p legado-tauri`：PASS。
+- `cargo test -p reader-core`：PASS，reader-core 全部非 ignored 测试通过。
+
+GitHub 说明：
+
+- 已重新完成 GitHub CLI device 授权，token scopes 包含 `repo` 与 `workflow`。
+- 本轮前已把 `ab514a1 Stabilize source UI layout and headless streaming` 和上一提交推送到 `origin/master`。
+- 本轮推送后需要观察 GitHub Actions 新一轮 `Quality Gate`，重点确认新增的 `Fetch Cargo dependencies` 与 Cargo registry cache 是否生效。
+
+下一轮第一件事：观察 `Quality Gate` 实跑结果；若 CI 仍因 registry 下载失败，则继续把 Rust 步骤封装成可复用 retry wrapper，或改用镜像/私有 registry 缓存策略。若 CI 通过，则回到 UI 体系化回归或前端大 chunk 拆分。

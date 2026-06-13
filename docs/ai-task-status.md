@@ -1,8 +1,35 @@
 # AI Task Status
 
-## 2026-06-13 UI-SOURCE-AI-COMMENT-LAYOUT 状态更新
+## 2026-06-13 CI-CARGO-FETCH-RETRY 状态更新
 
 本轮状态：`closed-local`，待提交推送。
+
+本轮处理用户报告的 GitHub Actions 失败：2026-06-13 01:00 左右，`cargo check -p reader-core` 在 crates.io 下载 `cipher` 依赖时连接 reset。该日志属于 registry 下载链路抖动，不是 reader-core 编译错误。
+
+已修改 `quality-gate.yml`：
+
+- 全局增加 `CARGO_NET_RETRY=10`、`CARGO_HTTP_TIMEOUT=120`、`CARGO_HTTP_MULTIPLEXING=false`、`CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse`。
+- 增加 `actions/cache@v4` 缓存 `~/.cargo/registry` 和 `~/.cargo/git`，降低重复下载 crates.io 依赖的概率。
+- 在 Rust check/test 前增加 `cargo fetch --locked` 三次重试，失败间隔 20s/40s，把依赖下载问题提前隔离到 Fetch Cargo dependencies 步骤。
+
+已通过 gate：
+
+- `cmd /c node_modules\.bin\oxfmt.cmd --check .`
+- `git diff --check`
+- `node scripts/ci/check-command-contract.mjs --json`
+- `cargo fetch --locked`
+- `cmd /c pnpm.cmd lint`
+- `cmd /c pnpm.cmd build`
+- `cargo fmt --all -- --check`
+- `cargo check -p reader-core`
+- `cargo check -p legado-tauri`
+- `cargo test -p reader-core`
+
+推送后应观察 GitHub Actions 新一轮 `Quality Gate`，确认 `Fetch Cargo dependencies` 步骤生效。
+
+## 2026-06-13 UI-SOURCE-AI-COMMENT-LAYOUT 状态更新
+
+本轮状态：`closed-pushed`，提交 `ab514a1` 已推送到 `origin/master`。
 
 实测命令契约基线：
 

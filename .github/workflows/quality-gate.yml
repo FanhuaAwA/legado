@@ -7,6 +7,12 @@ on:
     branches: [master]
   workflow_dispatch:
 
+env:
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_NET_RETRY: "10"
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+
 jobs:
   quality-gate:
     runs-on: windows-latest
@@ -23,6 +29,40 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Fetch Cargo dependencies
+        shell: pwsh
+        run: |
+          $attempts = 3
+          $lastExitCode = 0
+
+          for ($attempt = 1; $attempt -le $attempts; $attempt++) {
+            Write-Host "cargo fetch attempt $attempt of $attempts"
+            cargo fetch --locked
+            $lastExitCode = $LASTEXITCODE
+
+            if ($lastExitCode -eq 0) {
+              exit 0
+            }
+
+            if ($attempt -lt $attempts) {
+              $delay = 20 * $attempt
+              Write-Warning "cargo fetch failed with exit code $lastExitCode; retrying in $delay seconds"
+              Start-Sleep -Seconds $delay
+            }
+          }
+
+          exit $lastExitCode
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
