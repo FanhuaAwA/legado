@@ -1225,16 +1225,30 @@ watch(
 }
 .ev-tabs--multi :deep(.n-tabs-nav) {
   align-items: flex-start;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  column-gap: 6px;
 }
 .ev-tabs--multi :deep(.n-tabs-nav-scroll-wrapper),
 .ev-tabs--multi :deep(.v-x-scroll) {
   overflow: visible;
+  min-width: 0;
+  max-width: 100%;
 }
 .ev-tabs--multi :deep(.n-tabs-nav-scroll-content) {
   width: 100% !important;
   min-width: 0;
   min-height: auto;
   padding-bottom: 2px;
+}
+.ev-tabs--multi :deep(.n-tabs-nav__suffix) {
+  min-width: max-content;
+  align-self: flex-start;
+  justify-self: end;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding-left: 0;
 }
 .ev-tabs--multi :deep(.n-tabs-wrapper) {
   width: 100%;
@@ -1321,6 +1335,10 @@ watch(
   }
   .ev-tabs--multi :deep(.n-tabs-nav__suffix) {
     padding-left: 4px;
+  }
+  .ev-tabs-expand-btn {
+    min-width: 48px;
+    padding-inline: 6px !important;
   }
   .ev-tabs--multi :deep(.n-tabs-tab) {
     max-width: min(42vw, 180px);
