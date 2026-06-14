@@ -47,6 +47,7 @@ const SOURCE_DIRS_CONFIG_KEY: &str = "external";
 const LEGADO_BROWSER_ACTION_FN: &str = "__legado_browser_action";
 const SOURCE_LIST_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
 const SOURCE_TEXT_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
+const LEGADO_SOURCE_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
 const SYNC_SUPPORTED_DOMAINS: &[&str] = &[
     "bookshelf",
     "reading_progress",
@@ -72,6 +73,14 @@ struct SourceTextCacheEntry {
 }
 
 #[derive(Clone)]
+struct LegadoSourceCacheEntry {
+    source: BookSource,
+    modified: Option<SystemTime>,
+    len: u64,
+    loaded_at: Instant,
+}
+
+#[derive(Clone)]
 pub struct ReaderCore {
     reader_dir: PathBuf,
     js_source_dir: PathBuf,
@@ -83,6 +92,7 @@ pub struct ReaderCore {
     sync_runtime: Arc<SyncRuntime>,
     source_list_cache: Arc<tokio::sync::RwLock<Option<SourceListCache>>>,
     source_text_cache: Arc<tokio::sync::RwLock<HashMap<PathBuf, SourceTextCacheEntry>>>,
+    legado_source_cache: Arc<tokio::sync::RwLock<HashMap<String, LegadoSourceCacheEntry>>>,
     /// 每本书在跑的缓存任务取消令牌：同书新任务自动取消旧任务，
     /// 防止前端调用超时重发导致任务堆积、对书源高频请求。
     prefetch_tasks: Arc<tokio::sync::Mutex<HashMap<String, Arc<AtomicBool>>>>,
@@ -143,6 +153,7 @@ impl ReaderCore {
             sync_runtime: Arc::new(SyncRuntime::new()),
             source_list_cache: Arc::new(tokio::sync::RwLock::new(None)),
             source_text_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            legado_source_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             prefetch_tasks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         })
     }
@@ -335,6 +346,46 @@ impl ReaderCore {
 
     async fn clear_source_text_cache(&self) {
         self.source_text_cache.write().await.clear();
+    }
+
+    async fn cached_legado_source(
+        &self,
+        file_name: &str,
+        metadata: Option<&std::fs::Metadata>,
+    ) -> Option<BookSource> {
+        let modified = metadata.and_then(|value| value.modified().ok());
+        let len = metadata.map(|value| value.len()).unwrap_or(0);
+        self.legado_source_cache
+            .read()
+            .await
+            .get(file_name)
+            .filter(|entry| {
+                entry.loaded_at.elapsed() < LEGADO_SOURCE_CACHE_TTL
+                    && entry.len == len
+                    && entry.modified == modified
+            })
+            .map(|entry| entry.source.clone())
+    }
+
+    async fn store_legado_source_cache(
+        &self,
+        file_name: &str,
+        source: &BookSource,
+        metadata: Option<&std::fs::Metadata>,
+    ) {
+        self.legado_source_cache.write().await.insert(
+            file_name.to_string(),
+            LegadoSourceCacheEntry {
+                source: source.clone(),
+                modified: metadata.and_then(|value| value.modified().ok()),
+                len: metadata.map(|value| value.len()).unwrap_or(0),
+                loaded_at: Instant::now(),
+            },
+        );
+    }
+
+    async fn remove_legado_source_cache(&self, file_name: &str) {
+        self.legado_source_cache.write().await.remove(file_name);
     }
 
     async fn list_article_sources(&self) -> Result<Vec<BookSourceMeta>, ReaderCoreError> {
@@ -618,11 +669,13 @@ impl ReaderCore {
         match fs::remove_file(&path).await {
             Ok(()) => {
                 self.remove_source_text_cache(&path).await;
+                self.remove_legado_source_cache(file_name).await;
                 self.invalidate_source_list_cache().await;
                 Ok(())
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 self.remove_source_text_cache(&path).await;
+                self.remove_legado_source_cache(file_name).await;
                 self.invalidate_source_list_cache().await;
                 Ok(())
             }
@@ -2706,6 +2759,9 @@ impl ReaderCore {
         let json = serde_json::to_string_pretty(source)?;
         fs::write(&path, &json).await?;
         self.remove_source_text_cache(&path).await;
+        let metadata = fs::metadata(&path).await.ok();
+        self.store_legado_source_cache(file_name, source, metadata.as_ref())
+            .await;
         Ok(())
     }
 
@@ -2729,16 +2785,33 @@ impl ReaderCore {
         file_name: &str,
     ) -> Result<Option<BookSource>, ReaderCoreError> {
         let path = self.legado_source_dir.join(file_name);
-        if path.exists() {
-            let content = fs::read_to_string(path).await?;
+        let metadata = fs::metadata(&path).await.ok();
+        if let Some(source) = self
+            .cached_legado_source(file_name, metadata.as_ref())
+            .await
+        {
+            return Ok(Some(source));
+        }
+        if metadata.is_some() {
+            let content = fs::read_to_string(&path).await?;
             let value = serde_json::from_str::<Value>(&content)?;
-            return Ok(Some(book_source_from_value(value)?));
+            let source = book_source_from_value(value)?;
+            self.store_legado_source_cache(file_name, &source, metadata.as_ref())
+                .await;
+            return Ok(Some(source));
         }
 
         let sources = self.source_service.list(USER_NS).await?;
-        Ok(sources
+        let source = sources
             .into_iter()
-            .find(|source| legado_file_name(source) == file_name))
+            .find(|source| legado_file_name(source) == file_name);
+        if let Some(source) = source.as_ref() {
+            self.store_legado_source_cache(file_name, source, None)
+                .await;
+        } else {
+            self.remove_legado_source_cache(file_name).await;
+        }
+        Ok(source)
     }
 
     async fn sync_now_inner(

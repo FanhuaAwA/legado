@@ -1,5 +1,45 @@
 # AI Iteration Log
 
+## 2026-06-14 PERF-LEGADO-SOURCE-OBJECT-CACHE
+
+任务 ID：`PERF-2026-06-14-LEGADO-SOURCE-OBJECT-CACHE`
+
+本轮目标：继续沿“大量书源加载/导入/搜索卡顿”主线压缩重复成本。前一轮已经减少 JS 书源文本重复读盘，本轮处理 Legado 源在导入后马上搜索、详情、目录、正文时重复读取 `.legado.json` 并反序列化 `BookSource` 的问题。
+
+关键判断：
+
+- `import_legacy_json_text_with_progress()` 在导入阶段已经把每个 Legado JSON 条目解析成 `BookSource`，并写入文件和 DB。
+- `ReaderCore::search()`、`book_info()`、`chapter_list()`、`chapter_content()` 等 Legado 路径每次都会调用 `require_legado_source()`。
+- 原先 `get_legado_source_by_file()` 在文件存在时优先重新读取 `.legado.json` 并反序列化；大量源刚导入后立即搜索会把刚解析过的一批源重新处理一遍。
+- 缓存不能破坏外部手动编辑 `.legado.json` 的调试/维护路径，因此必须用文件 metadata 校验，而不能盲按 fileName 命中。
+
+实现：
+
+- `ReaderCore` 新增 `legado_source_cache`，缓存项保存 `BookSource`、`modified`、`len` 和 `loaded_at`，TTL 为 30 分钟。
+- `write_legado_source_file()` 写盘后读取 metadata，并调用 `store_legado_source_cache()` 保存刚解析过的对象。
+- `get_legado_source_by_file()` 改为先读取 metadata 并调用 `cached_legado_source()`；命中则直接返回，未命中再读文件/DB 并刷新缓存。
+- `delete_source()` 在文件删除成功或文件已不存在时同步移除对应 Legado 源对象缓存。
+- 新增 `legado_source_cache_refreshes_after_external_file_change`，用本地 axum fixture 验证导入后第一次搜索返回旧 URL 结果，外部改写 `.legado.json` 后第二次搜索返回新 URL 结果。
+
+验证：
+
+- `cargo test -p reader-core legado_source_cache_refreshes_after_external_file_change -- --nocapture`：PASS。
+- `cargo fmt --all -- --check`：PASS。
+- `cmd /c pnpm.cmd lint`：PASS。
+- `cargo check -p reader-core`：PASS。
+- `cargo check -p legado-tauri`：PASS。
+- `cargo test -p reader-core`：PASS。
+- `node scripts/ci/check-command-contract.mjs --json`：PASS。
+- `git diff --check`：PASS，仅 Windows LF/CRLF 工作区提示。
+
+Gate 报告：`reports/gates/2026-06-14-PERF-LEGADO-SOURCE-OBJECT-CACHE/summary.md`。
+
+剩余风险：
+
+- 本轮降低的是 Legado 源解析和读盘重复成本，不会缩短真实上游网络请求本身。
+- 冷启动后第一次搜索某个文件仍需一次 metadata/读取/解析；后续调用与同运行期导入后的调用可复用缓存。
+- 真实安卓设备的大包导入/搜索压测仍未完成，后续需要在真机上记录首批列表时间、导入总时长和多源搜索响应曲线。
+
 ## 2026-06-14 PERF-JS-SOURCE-TEXT-CACHE
 
 任务 ID：`PERF-2026-06-14-JS-SOURCE-TEXT-CACHE`

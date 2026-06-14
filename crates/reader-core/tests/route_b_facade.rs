@@ -17,6 +17,30 @@ async fn search() -> Html<&'static str> {
     )
 }
 
+async fn cached_old_search() -> Html<&'static str> {
+    Html(
+        r#"
+        <html><body>
+          <div class="item">
+            <a class="title" href="/cache/book/old">Old cached source result</a>
+          </div>
+        </body></html>
+        "#,
+    )
+}
+
+async fn cached_new_search() -> Html<&'static str> {
+    Html(
+        r#"
+        <html><body>
+          <div class="item">
+            <a class="title" href="/cache/book/fresh">Fresh cached source result</a>
+          </div>
+        </body></html>
+        "#,
+    )
+}
+
 async fn book() -> Html<&'static str> {
     Html(
         r#"
@@ -141,6 +165,79 @@ async fn import_legacy_json_text_reports_progress_batches() {
     assert_eq!(final_event.total, 30);
     assert_eq!(final_event.imported, 30);
     assert!(final_event.done);
+}
+
+#[tokio::test]
+async fn legado_source_cache_refreshes_after_external_file_change() {
+    let app = Router::new()
+        .route("/cache-old", get(cached_old_search))
+        .route("/cache-new", get(cached_new_search));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let base = format!("http://{}", addr);
+
+    let temp = tempfile::tempdir().unwrap();
+    let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
+        .await
+        .unwrap();
+    let source_url = format!("{base}/cache-source");
+    let old_search_url = format!("{base}/cache-old?key={{{{key}}}}");
+    let new_search_url = format!("{base}/cache-new?key={{{{key}}}}");
+
+    let import = core
+        .import_legacy_json_text(
+            &json!({
+                "bookSourceName": "Legado Cache Fixture",
+                "bookSourceUrl": source_url,
+                "enabled": true,
+                "searchUrl": old_search_url,
+                "ruleSearch": {
+                    "bookList": ".item",
+                    "name": ".title@text",
+                    "bookUrl": ".title@href"
+                }
+            })
+            .to_string(),
+            false,
+        )
+        .await
+        .unwrap();
+    let file_name = import.files[0].clone();
+
+    let old_books = core.search(&file_name, "cache", 1, None).await.unwrap();
+    assert_eq!(old_books[0].name, "Old cached source result");
+
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let path = core
+        .reader_dir()
+        .join("sources")
+        .join("legado-json")
+        .join(&file_name);
+    tokio::fs::write(
+        path,
+        json!({
+            "bookSourceName": "Legado Cache Fixture",
+            "bookSourceUrl": format!("{base}/cache-source"),
+            "enabled": true,
+            "searchUrl": new_search_url,
+            "ruleSearch": {
+                "bookList": ".item",
+                "name": ".title@text",
+                "bookUrl": ".title@href"
+            }
+        })
+        .to_string(),
+    )
+    .await
+    .unwrap();
+
+    let fresh_books = core.search(&file_name, "cache", 1, None).await.unwrap();
+    assert_eq!(fresh_books[0].name, "Fresh cached source result");
+
+    server.abort();
 }
 
 #[tokio::test]

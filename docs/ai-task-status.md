@@ -1,5 +1,34 @@
 # AI Task Status
 
+## 2026-06-14 PERF-LEGADO-SOURCE-OBJECT-CACHE 状态更新
+
+本轮状态：`local-gate-pass`；将追加到 `master`，远端 Quality Gate 和自动发布状态以 GitHub Actions 为准。
+
+任务 ID：`PERF-2026-06-14-LEGADO-SOURCE-OBJECT-CACHE`。本轮继续优化“大量书源导入/加载后，依赖书源的搜索、详情、目录、正文链路仍等待”的公共成本，范围限定在 reader-core 的 Legado 源对象缓存；不改变 Legado 规则执行语义、搜索结果结构、文件命名、DB upsert 语义、网络请求策略或第三方/私有书源样本。
+
+关键修改：
+
+- `ReaderCore` 新增 30 分钟 TTL 的 Legado 源对象缓存，缓存项保存已解析的 `BookSource`、文件 mtime、size 和加载时间。
+- Legado 源写入路径在保存 `.legado.json` 后同步缓存已解析对象，大量导入后立即搜索/详情/目录/正文时可复用刚解析过的源对象，避免逐源重复读盘和 JSON 反序列化。
+- `require_legado_source()` 路径会先用 `.legado.json` 当前 mtime/size 校验缓存，命中后直接返回 `BookSource`；文件被外部手动修改时自动重读并刷新缓存。
+- 删除 Legado 源时同步移除对象缓存，避免同一运行期读到已删除源。
+- 新增 `legado_source_cache_refreshes_after_external_file_change` 回归测试，覆盖“导入后命中缓存，再外部改 `.legado.json`，下一次搜索读取新规则”的正确性。
+
+已通过本地 gate：
+
+- `cargo test -p reader-core legado_source_cache_refreshes_after_external_file_change -- --nocapture`
+- `cargo fmt --all -- --check`
+- `cmd /c pnpm.cmd lint`
+- `cargo check -p reader-core`
+- `cargo check -p legado-tauri`
+- `cargo test -p reader-core`
+- `node scripts/ci/check-command-contract.mjs --json`
+- `git diff --check`
+
+Gate 报告：`reports/gates/2026-06-14-PERF-LEGADO-SOURCE-OBJECT-CACHE/summary.md`。
+
+剩余风险：该轮减少的是 Legado 源对象重复读盘和反序列化开销；真实网络搜索仍受上游站点速度、规则复杂度、HTTP 并发/限速和设备性能影响。真实安卓设备大包导入/搜索压测仍未完成。
+
 ## 2026-06-14 PERF-JS-SOURCE-TEXT-CACHE 状态更新
 
 本轮状态：`local-gate-pass`；将追加到 `master`，远端 Quality Gate 和自动发布状态以 GitHub Actions 为准。
