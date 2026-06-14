@@ -1,5 +1,28 @@
 # AI Task Status
 
+## 2026-06-14 PERF-SEARCH-STREAM-QUEUE 状态更新
+
+本轮状态：`local-gate-pass`；已追加到 `codex/perf-booksource-lazy-list` 分支，PR 状态以 GitHub 为准。
+
+任务 ID：`PERF-2026-06-14-SEARCH-STREAM-QUEUE`。本轮承接大量书源加载优化，处理搜索页在书源列表流式加载期间仍容易等待完整列表的问题。范围限定在前端搜索页调度；不改变后端 `booksource_search` 语义，不改变用户配置的搜索并发和超时，不触碰第三方/私有书源样本。
+
+关键修改：
+
+- `SearchView.vue` 将固定快照搜索改为动态队列：点击搜索后先搜索当前已到达的可搜索书源，后续流式批次进入 `activeSources` 时继续入队。
+- 搜索队列继续遵循 `prefsStore.search.searchConcurrency` 并发上限；停止搜索通过 token 失效当前 run，旧请求返回后不再写入 UI。
+- 当用户限定单一书源时，搜完该书源即可结束；只有“全部书源”搜索会在书源列表仍在加载时继续等待后续批次。
+- 搜索页 loading 状态会覆盖“正在等待更多书源”的阶段，避免首批搜索完成但列表仍在加载时误显示搜索已结束。
+
+已通过 gate：
+
+- `cmd /c node_modules\.bin\oxfmt.cmd src\views\SearchView.vue`
+- `cmd /c pnpm.cmd lint`
+- `cmd /c pnpm.cmd build`
+- `node scripts/ci/check-command-contract.mjs --json`
+- `git diff --check`
+
+剩余风险：本轮仍没有实现后端任务级取消或搜索进度事件；停止搜索只阻止旧结果回写 UI，已进入后端/网络的单源请求仍按原超时结束。下一轮应继续把搜索任务进度、取消和按源 timeout/失败聚合下沉到后端。
+
 ## 2026-06-14 PERF-BOOKSOURCE-LAZY-LIST 状态更新
 
 本轮状态：`local-gate-pass`；提交、推送与远程 CI 状态以 git history 和 GitHub Actions 为准。

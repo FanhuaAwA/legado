@@ -1,5 +1,41 @@
 # AI Iteration Log
 
+## 2026-06-14 PERF-SEARCH-STREAM-QUEUE
+
+任务 ID：`PERF-2026-06-14-SEARCH-STREAM-QUEUE`
+
+本轮目标：承接 `PERF-2026-06-14-BOOKSOURCE-LAZY-LIST`，继续优化大量书源场景下搜索页的等待体验。第一轮已经让书源列表在扫描阶段分批进入前端，本轮让搜索页能消费这些批次，而不是只搜索某一刻的固定快照或等完整列表结束。
+
+关键判断：
+
+- `SearchView.vue` 原先 `doSearch()` 会复制当前 `activeSources`，然后用固定列表跑 `mapWithConcurrencyLimit()`；如果用户在书源仍在流式加载时搜索，后续批次不会自动参与。
+- 如果搜索页在初始挂载后才收到可搜索源，用户点击搜索可能仍被“没有可用的搜索书源”挡住。
+- 后端搜索语义和单源超时不应在本轮改变，先把前端调度改为能消费流式列表。
+
+实现：
+
+- 新增 `SearchRun` 动态队列，记录 pending、queued、searched 和 active worker 数。
+- `doSearch()` 创建当前 run 后立即入队已有 `activeSources`；如果书源列表仍在 loading，即使当前没有可搜索源也允许保持搜索 run。
+- 监听 `activeSources` 变化，将后续流式到达且具备 search 能力的书源追加入队。
+- 监听 `bookSourceStore.loading` 结束，补扫一次当前 `activeSources` 并在队列耗尽后结束搜索。
+- 停止搜索时令 token 失效并清空当前 run，旧请求返回后不会回写结果。
+- 单一书源限定模式不等待完整列表加载，搜完限定源即可结束。
+
+验证：
+
+- `cmd /c node_modules\.bin\oxfmt.cmd src\views\SearchView.vue`：PASS。
+- `cmd /c pnpm.cmd lint`：PASS。
+- `cmd /c pnpm.cmd build`：PASS，保留既有 vconsole direct eval、chunk size 与 plugin timing warning。
+- `node scripts/ci/check-command-contract.mjs --json`：PASS，`frontendTotal=162`、`registeredTotal=161`、`bothCount=161`、`onlyFrontend=["js_eval"]`、`onlyBackend=[]`、`frontend_unsupported_stub_count=39`、`frontend_implemented_count=122`。
+- `git diff --check`：PASS，仅 Windows LF/CRLF 工作区提示。
+
+Gate 报告：`reports/gates/2026-06-14-PERF-SEARCH-STREAM-QUEUE/summary.md`。
+
+剩余风险：
+
+- 停止搜索仍是前端 token 失效，不会抢占已经进入后端/网络的单源搜索请求。
+- 后端尚未提供搜索进度事件、任务级取消、源级超时统计和失败聚合；这些是下一轮性能收口重点。
+
 ## 2026-06-14 PERF-BOOKSOURCE-LAZY-LIST
 
 任务 ID：`PERF-2026-06-14-BOOKSOURCE-LAZY-LIST`

@@ -18,7 +18,6 @@ import {
   usePrivacyModeStore,
   useScriptBridgeStore,
 } from "@/stores";
-import { mapWithConcurrencyLimit } from "@/utils/async";
 import AppEmpty from "../components/base/AppEmpty.vue";
 import AggregatedSearchResults from "../components/explore/AggregatedSearchResults.vue";
 import BookDetailDrawer from "../components/explore/BookDetailDrawer.vue";
@@ -271,8 +270,18 @@ interface SourceSearchState {
   results: BookItem[];
   error: string;
 }
+interface SearchRun {
+  token: number;
+  keyword: string;
+  page: number;
+  pending: BookSourceMeta[];
+  queuedKeys: Set<string>;
+  searchedKeys: Set<string>;
+  activeWorkers: number;
+}
 const searchStates = reactive<Record<string, SourceSearchState>>({});
 const activeSearchToken = ref(0);
+let currentSearchRun: SearchRun | null = null;
 
 /** 聚合模式下的扁平结果列表（带书源标记） */
 const aggregatedTaggedResults = computed<TaggedBookItem[]>(() => {
@@ -297,12 +306,16 @@ const aggregatedTaggedResults = computed<TaggedBookItem[]>(() => {
 
 /** 聚合模式下是否仍有书源在搜索中 */
 const aggregatedLoading = computed(() =>
-  activeSources.value.some((s) => searchStates[sourceKeyOf(s)]?.loading),
+  bookSourceStore.loading && searchRunning.value
+    ? true
+    : activeSources.value.some((s) => searchStates[sourceKeyOf(s)]?.loading),
 );
 
 /** 是否已触发过搜索 */
-const hasSearched = computed(() =>
-  activeSources.value.some((source) => Boolean(searchStates[sourceKeyOf(source)])),
+const hasSearched = computed(
+  () =>
+    searchRunning.value ||
+    activeSources.value.some((source) => Boolean(searchStates[sourceKeyOf(source)])),
 );
 
 /** 已完成（不再 loading）的书源数 */
@@ -332,6 +345,7 @@ const sourcesWithResultCount = computed(
 /** 立即终止当前搜索，清除所有进行中状态 */
 function stopSearch() {
   activeSearchToken.value += 1;
+  currentSearchRun = null;
   searchRunning.value = false;
   for (const src of activeSources.value) {
     const key = sourceKeyOf(src);
@@ -339,6 +353,82 @@ function stopSearch() {
       searchStates[key].loading = false;
     }
   }
+}
+
+function searchConcurrencyLimit(): number {
+  return Math.max(1, prefsStore.search.searchConcurrency || 5);
+}
+
+function finishSearchIfIdle(run: SearchRun) {
+  if (currentSearchRun !== run || run.token !== activeSearchToken.value) {
+    return;
+  }
+  if (run.pending.length > 0 || run.activeWorkers > 0) {
+    return;
+  }
+  if (bookSourceStore.loading && !limitedSource.value) {
+    return;
+  }
+  searchRunning.value = false;
+  currentSearchRun = null;
+}
+
+async function searchOneSource(run: SearchRun, src: BookSourceMeta) {
+  const key = sourceKeyOf(src);
+  try {
+    const raw = await runSearch(src.fileName, run.keyword, run.page, src.sourceDir);
+    if (currentSearchRun !== run || run.token !== activeSearchToken.value) {
+      return;
+    }
+    searchStates[key].results = Array.isArray(raw) ? (raw as BookItem[]) : [];
+  } catch (e: unknown) {
+    if (currentSearchRun !== run || run.token !== activeSearchToken.value) {
+      return;
+    }
+    searchStates[key].error = e instanceof Error ? e.message : String(e);
+  } finally {
+    run.activeWorkers = Math.max(0, run.activeWorkers - 1);
+    if (currentSearchRun === run && run.token === activeSearchToken.value) {
+      searchStates[key].loading = false;
+      pumpSearchQueue(run);
+      finishSearchIfIdle(run);
+    }
+  }
+}
+
+function pumpSearchQueue(run: SearchRun) {
+  if (currentSearchRun !== run || run.token !== activeSearchToken.value) {
+    return;
+  }
+  const limit = searchConcurrencyLimit();
+  while (run.activeWorkers < limit && run.pending.length > 0) {
+    const src = run.pending.shift();
+    if (!src) {
+      continue;
+    }
+    const key = sourceKeyOf(src);
+    run.queuedKeys.delete(key);
+    run.searchedKeys.add(key);
+    run.activeWorkers += 1;
+    void searchOneSource(run, src);
+  }
+}
+
+function enqueueSearchSources(run: SearchRun, nextSources: readonly BookSourceMeta[]) {
+  if (currentSearchRun !== run || run.token !== activeSearchToken.value) {
+    return;
+  }
+  for (const src of nextSources) {
+    const key = sourceKeyOf(src);
+    if (run.searchedKeys.has(key) || run.queuedKeys.has(key)) {
+      continue;
+    }
+    run.queuedKeys.add(key);
+    run.pending.push(src);
+    searchStates[key] = { loading: true, results: [], error: "" };
+  }
+  pumpSearchQueue(run);
+  finishSearchIfIdle(run);
 }
 
 async function doSearch(page = 1) {
@@ -351,7 +441,7 @@ async function doSearch(page = 1) {
     message.warning('搜索进行中，请先点击"停止搜索"再发起新搜索');
     return;
   }
-  if (!activeSources.value.length) {
+  if (!activeSources.value.length && !bookSourceStore.loading) {
     message.warning("没有可用的搜索书源");
     return;
   }
@@ -361,42 +451,36 @@ async function doSearch(page = 1) {
   searchPage.value = page;
   searchRunning.value = true;
 
-  const sourcesToSearch = [...activeSources.value];
-
-  for (const src of sourcesToSearch) {
-    searchStates[sourceKeyOf(src)] = { loading: true, results: [], error: "" };
-  }
-
-  try {
-    await mapWithConcurrencyLimit(
-      sourcesToSearch,
-      prefsStore.search.searchConcurrency || 5,
-      async (src) => {
-        const key = sourceKeyOf(src);
-        try {
-          const raw = await runSearch(src.fileName, kw, page, src.sourceDir);
-          if (requestToken !== activeSearchToken.value) {
-            return;
-          }
-          searchStates[key].results = Array.isArray(raw) ? (raw as BookItem[]) : [];
-        } catch (e: unknown) {
-          if (requestToken !== activeSearchToken.value) {
-            return;
-          }
-          searchStates[key].error = e instanceof Error ? e.message : String(e);
-        } finally {
-          if (requestToken === activeSearchToken.value) {
-            searchStates[key].loading = false;
-          }
-        }
-      },
-    );
-  } finally {
-    if (requestToken === activeSearchToken.value) {
-      searchRunning.value = false;
-    }
-  }
+  const run: SearchRun = {
+    token: requestToken,
+    keyword: kw,
+    page,
+    pending: [],
+    queuedKeys: new Set(),
+    searchedKeys: new Set(),
+    activeWorkers: 0,
+  };
+  currentSearchRun = run;
+  enqueueSearchSources(run, activeSources.value);
 }
+
+watch(activeSources, (nextSources) => {
+  if (!currentSearchRun || !searchRunning.value) {
+    return;
+  }
+  enqueueSearchSources(currentSearchRun, nextSources);
+});
+
+watch(
+  () => bookSourceStore.loading,
+  (loading) => {
+    if (loading || !currentSearchRun || !searchRunning.value) {
+      return;
+    }
+    enqueueSearchSources(currentSearchRun, activeSources.value);
+    finishSearchIfIdle(currentSearchRun);
+  },
+);
 
 async function handleForceReload() {
   if (reloadingSources.value || searchRunning.value) {
