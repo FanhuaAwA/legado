@@ -6,18 +6,20 @@ import { storeToRefs } from "pinia";
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useBackAwareDialog as useDialog } from "@/composables/useBackAwareDialog";
 import { isTauri } from "@/composables/useEnv";
-import { eventEmit } from "@/composables/useEventBus";
+import { eventEmit, eventListen } from "@/composables/useEventBus";
 import { invokeWithTimeout } from "@/composables/useInvoke";
 import { classifyLegadoInstallTarget } from "@/composables/useLegadoDeepLink";
 import { useOverlay } from "@/composables/useOverlay";
 import { useBookSourceStore, useNavigationStore } from "@/stores";
 import { saveExportFile } from "@/utils/exportFile";
+import { safeRandomUUID } from "@/utils/uuid";
 import defaultLogoUrl from "../../assets/booksource-default.svg";
 import {
   type BookSourceMeta,
   readBookSource,
   saveBookSource,
   importLegacyJsonText,
+  type LegacyJsonImportProgress,
   type LegacyJsonImportResult,
   deleteBookSource,
   deleteBookSources,
@@ -352,7 +354,30 @@ const showLegacyUrlInputModal = ref(false);
 const legacyUrlInputValue = ref("");
 const legacySmartSubCategories = ref(false);
 const legacyImporting = ref(false);
+const legacyImportRequestId = ref("");
+const legacyImportProgress = ref<LegacyJsonImportProgress | null>(null);
 const LEGACY_IMPORT_RESOLVE_CONCURRENCY = 4;
+let unlistenLegacyImportProgress: (() => void) | null = null;
+let legacyImportProgressListenerDisposed = false;
+
+const legacyImportProgressPercentage = computed(() => {
+  const progress = legacyImportProgress.value;
+  if (!progress?.total) {
+    return 0;
+  }
+  return Math.min(100, Math.round((progress.processed / progress.total) * 100));
+});
+
+const legacyImportProgressLabel = computed(() => {
+  const progress = legacyImportProgress.value;
+  if (!progress) {
+    return legacyImporting.value ? "正在准备导入..." : "";
+  }
+  if (!progress.total) {
+    return "正在准备导入...";
+  }
+  return `已处理 ${progress.processed}/${progress.total}，已导入 ${progress.imported}，跳过 ${progress.skipped}，错误 ${progress.errors}`;
+});
 
 interface ResolvedLegacyImport {
   url: string;
@@ -682,6 +707,31 @@ function mergeLegacyImportResult(target: LegacyJsonImportResult, next: LegacyJso
   target.errors.push(...next.errors);
 }
 
+function beginLegacyImportProgress(): string {
+  const requestId = `legacy-import-${safeRandomUUID()}`;
+  legacyImportRequestId.value = requestId;
+  legacyImportProgress.value = {
+    requestId,
+    processed: 0,
+    total: 0,
+    imported: 0,
+    skipped: 0,
+    errors: 0,
+    fileName: null,
+    done: false,
+  };
+  return requestId;
+}
+
+function finishLegacyImportProgress() {
+  legacyImportRequestId.value = "";
+  window.setTimeout(() => {
+    if (!legacyImporting.value) {
+      legacyImportProgress.value = null;
+    }
+  }, 1200);
+}
+
 function showLegacyImportResult(result: LegacyJsonImportResult) {
   if (result.imported > 0) {
     message.success(`已导入 ${result.imported} 个开源阅读书源`);
@@ -704,6 +754,7 @@ async function runLegacyUrlImport(rawUrl: string) {
     return;
   }
   legacyImporting.value = true;
+  const requestId = beginLegacyImportProgress();
   message.info("正在解析并导入开源阅读书源...");
   try {
     const imports = await resolveLegacyImports(rawUrl);
@@ -721,7 +772,11 @@ async function runLegacyUrlImport(rawUrl: string) {
     }
     for (const item of imports) {
       try {
-        const result = await importLegacyJsonText(item.content, legacySmartSubCategories.value);
+        const result = await importLegacyJsonText(
+          item.content,
+          legacySmartSubCategories.value,
+          requestId,
+        );
         mergeLegacyImportResult(merged, result);
       } catch (e: unknown) {
         merged.skipped += 1;
@@ -733,6 +788,7 @@ async function runLegacyUrlImport(rawUrl: string) {
     message.error(`导入失败: ${formatBookSourceError(e)}`);
   } finally {
     legacyImporting.value = false;
+    finishLegacyImportProgress();
   }
 }
 
@@ -765,11 +821,16 @@ function confirmLegacyFileImport() {
       errors: [],
     };
     legacyImporting.value = true;
+    const requestId = beginLegacyImportProgress();
     message.info(`正在导入 ${files.length} 个开源阅读书源文件...`);
     try {
       for (const file of files) {
         try {
-          const result = await importLegacyJsonText(await file.text(), smartExploreSubCategories);
+          const result = await importLegacyJsonText(
+            await file.text(),
+            smartExploreSubCategories,
+            requestId,
+          );
           mergeLegacyImportResult(merged, result);
         } catch (e: unknown) {
           merged.skipped += 1;
@@ -779,6 +840,7 @@ function confirmLegacyFileImport() {
       showLegacyImportResult(merged);
     } finally {
       legacyImporting.value = false;
+      finishLegacyImportProgress();
     }
   });
   input.click();
@@ -1213,10 +1275,27 @@ async function onVisibilityChange() {
 
 onMounted(() => {
   document.addEventListener("visibilitychange", onVisibilityChange);
+  legacyImportProgressListenerDisposed = false;
+  void eventListen<LegacyJsonImportProgress>("booksource:import-progress", (event) => {
+    const progress = event.payload;
+    if (!progress?.requestId || progress.requestId !== legacyImportRequestId.value) {
+      return;
+    }
+    legacyImportProgress.value = progress;
+  }).then((unlisten) => {
+    if (legacyImportProgressListenerDisposed) {
+      unlisten();
+      return;
+    }
+    unlistenLegacyImportProgress = unlisten;
+  });
 });
 
 onUnmounted(() => {
   document.removeEventListener("visibilitychange", onVisibilityChange);
+  legacyImportProgressListenerDisposed = true;
+  unlistenLegacyImportProgress?.();
+  unlistenLegacyImportProgress = null;
 });
 
 defineExpose({
@@ -1265,6 +1344,24 @@ defineExpose({
         >批量管理</n-button
       >
     </div>
+    <n-alert
+      v-if="legacyImporting && legacyImportProgressLabel"
+      class="bv-import-progress"
+      type="info"
+      :show-icon="false"
+    >
+      <div class="bv-import-progress__row">
+        <span>{{ legacyImportProgressLabel }}</span>
+        <span v-if="legacyImportProgress?.fileName" class="bv-import-progress__file">
+          {{ legacyImportProgress.fileName }}
+        </span>
+      </div>
+      <n-progress
+        type="line"
+        :percentage="legacyImportProgressPercentage"
+        :show-indicator="false"
+      />
+    </n-alert>
     <!-- 批量操作栏 -->
     <div v-if="batchMode" class="bv-batch-bar">
       <n-checkbox
@@ -1517,6 +1614,29 @@ defineExpose({
   flex: 1 1 180px;
   min-width: 0;
   font-size: 0.75rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bv-import-progress {
+  flex-shrink: 0;
+  margin-bottom: 8px;
+}
+
+.bv-import-progress__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  font-size: 0.78rem;
+}
+
+.bv-import-progress__file {
+  min-width: 0;
+  max-width: 45%;
   color: var(--color-text-muted);
   white-space: nowrap;
   overflow: hidden;

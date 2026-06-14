@@ -379,7 +379,7 @@ booksource_save(fileName, content, sourceDir?) -> void
 booksource_delete(fileName, sourceDir?) -> void
 booksource_delete_batch(items) -> BookSourceBatchDeleteResult
 booksource_toggle(fileName, enabled, sourceDir?) -> void
-booksource_import_legacy_json_text(content, smartExploreSubCategories) -> LegacyJsonImportResult
+booksource_import_legacy_json_text(content, smartExploreSubCategories, requestId?) -> LegacyJsonImportResult
 booksource_import_legacy_json_url(url, smartExploreSubCategories) -> LegacyJsonImportResult
 ```
 

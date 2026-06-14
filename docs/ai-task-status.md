@@ -1,17 +1,49 @@
 # AI Task Status
 
+## 2026-06-14 PERF-IMPORT-PROGRESS-EVENTS 状态更新
+
+本轮状态：`local-gate-pass`；将追加到 `codex/perf-booksource-lazy-list` 分支，PR 状态以 GitHub 为准。
+
+任务 ID：`PERF-2026-06-14-IMPORT-PROGRESS-EVENTS`。本轮继续处理“大量书源导入长时间等待”的体验和调度问题，范围限定在开源阅读 Legado JSON 导入进度事件、批次让步和前端进度展示；不改变导入格式、文件命名、DB upsert 语义或第三方/私有书源样本。
+
+关键修改：
+
+- `ReaderCore::import_legacy_json_text_with_progress()` 新增批次进度回调，默认导入方法仍复用同一路径。
+- 大 JSON 每处理 25 项或完成时上报进度并 `yield_now()`，避免长导入期间完全不可观测。
+- Tauri IPC `booksource_import_legacy_json_text` 支持可选 `requestId`，通过 `booksource:import-progress` 事件向前端发送进度；Route B/Headless 仍走无进度兼容路径。
+- `InstalledSourcesTab.vue` 在开源阅读书源 URL/文件导入时显示进度条和已处理/已导入/跳过/错误计数。
+- 新增 reader-core 回归测试 `import_legacy_json_text_reports_progress_batches`。
+
+已通过 gate：
+
+- `cargo test -p reader-core import_legacy_json_text_reports_progress_batches -- --nocapture`
+- `cmd /c pnpm.cmd lint`
+- `cargo fmt --all -- --check`
+- `node scripts/ci/check-command-contract.mjs --json`
+- `cmd /c pnpm.cmd build`
+- `cargo check -p reader-core`
+- `cargo check -p legado-tauri`
+- `git diff --check`
+
+Gate 报告：`reports/gates/2026-06-14-PERF-IMPORT-PROGRESS-EVENTS/summary.md`。
+
+剩余风险：本轮让导入过程可见并在批次间让步，但仍不是 DB 批量事务写入；超大订阅包进一步提速可继续做 reader-core 批量 upsert/事务化和前端总包级进度聚合。真实安卓设备导入压测仍未完成。
+
 ## 2026-06-14 PERF-BACKGROUND-SOURCE-MAINTENANCE 状态更新
+
 本轮状态：`local-gate-pass`；将追加到 `codex/perf-booksource-lazy-list` 分支，PR 状态以 GitHub 为准。
 
 任务 ID：`PERF-2026-06-14-BACKGROUND-SOURCE-MAINTENANCE`。本轮继续处理“大量书源加载完成后仍卡顿”的后续链路，范围限定在前端书源 store 的自动能力检测和在线更新检查调度；不改变书源规则执行语义，不触碰第三方/私有书源样本，不写喵/猫公子等书源名特判。
 
 关键修改：
+
 - `loadSources()` 完成后不再同时触发能力检测和更新检查，改为延迟 250ms 启动可失效的后台维护流程。
 - 后台维护先加载持久化能力缓存，再分批执行缺失能力检测；能力检测和更新检查每批之间让出 UI 线程，避免大列表加载后出现第二段尖峰。
 - `checkUpdatesIfStale()` 增加 in-flight 去重；修正“上次检查 1 小时内但没有 pending 更新时仍重复扫全部 updateUrl”的问题。
 - 更新检查/应用更新向后端透传 `sourceDir`，并在书源管理事件里保留目录上下文，降低多目录/同名书源下的歧义。
 
 已通过 gate：
+
 - `cmd /c pnpm.cmd lint`
 - `cargo fmt --all -- --check`
 - `cmd /c pnpm.cmd build`

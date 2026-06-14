@@ -70,6 +70,17 @@ export interface LegacyJsonImportResult {
   errors: string[];
 }
 
+export interface LegacyJsonImportProgress {
+  requestId: string;
+  processed: number;
+  total: number;
+  imported: number;
+  skipped: number;
+  errors: number;
+  fileName?: string | null;
+  done: boolean;
+}
+
 export interface BookSourceDeleteItem {
   fileName: string;
   sourceDir?: string | null;
@@ -379,10 +390,11 @@ export async function saveBookSource(
 export async function importLegacyJsonText(
   content: string,
   smartExploreSubCategories = false,
+  requestId?: string | null,
 ): Promise<LegacyJsonImportResult> {
   return invokeWithTimeout<LegacyJsonImportResult>(
     "booksource_import_legacy_json_text",
-    { content, smartExploreSubCategories },
+    { content, smartExploreSubCategories, requestId: requestId ?? null },
     70000,
   );
 }

@@ -188,14 +188,12 @@ pub async fn dispatch<R: tauri::Runtime>(
         "booksource_import_legacy_json_text" => {
             let (content, smart_explore_sub_categories) =
                 parsed!(raw, { content: String, smart_explore_sub_categories: bool });
-            reply(
-                source::booksource_import_legacy_json_text(
-                    state,
-                    content,
-                    smart_explore_sub_categories,
-                )
-                .await,
-            )
+            let result = state
+                .core
+                .import_legacy_json_text(&content, smart_explore_sub_categories)
+                .await
+                .map_err(|err| err.into_command_error());
+            reply(result)
         }
         "booksource_import_legacy_json_url" => {
             let (url, smart_explore_sub_categories) =

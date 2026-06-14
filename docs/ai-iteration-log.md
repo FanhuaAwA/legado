@@ -1,5 +1,46 @@
 # AI Iteration Log
 
+## 2026-06-14 PERF-IMPORT-PROGRESS-EVENTS
+
+任务 ID：`PERF-2026-06-14-IMPORT-PROGRESS-EVENTS`
+
+本轮目标：继续收口“大量书源导入长时间等待”的体验问题。前几轮已经把列表加载、搜索消费流式列表、搜索取消、导入缓存失效和列表加载后的后台维护尖峰做了拆分优化；本轮聚焦开源阅读 Legado JSON 导入过程，让大订阅包导入期间可见进度、批次间让出调度机会，并保持 Route B/headless 兼容路径不被破坏。
+
+关键判断：
+
+- `import_legacy_json_text()` 原先是单个长 async 调用，前端只能看到最终结果；遇到上千个源时，用户容易以为导入卡死。
+- 上一轮已经减少批量导入中的重复列表缓存失效，但 DB upsert 和文件处理仍然逐项执行，因此需要先把长任务变成可观察、可让步的流程。
+- Tauri IPC 可以通过事件给桌面/WebView 前端发送导入进度；Route B WebSocket router 保持原命令返回值，避免改变 headless 调用语义。
+
+实现：
+
+- `crates/reader-core/src/dto.rs` 新增 `LegacyJsonImportProgress`，记录 processed、total、imported、skipped、errors、fileName 和 done。
+- `ReaderCore::import_legacy_json_text_with_progress()` 新增进度回调版本；原 `import_legacy_json_text()` 复用同一路径，保持既有调用兼容。
+- 大 JSON 每处理 25 项或完成时上报进度，并在批次边界 `yield_now()`，降低长导入期间完全不可观察的等待感。
+- Tauri IPC `booksource_import_legacy_json_text` 支持可选 `requestId`，通过 `booksource:import-progress` 事件回传进度；WS router 仍使用无进度兼容路径。
+- `InstalledSourcesTab.vue` 在开源阅读书源 URL/文件导入时生成 requestId、监听导入进度事件，并显示已处理、总数、导入、跳过和错误计数。
+- `src/composables/useBookSource.ts` 更新导入调用签名和进度事件类型。
+- `crates/reader-core/tests/route_b_facade.rs` 新增 `import_legacy_json_text_reports_progress_batches`，覆盖批次进度和最终 done 事件。
+
+验证：
+
+- `cargo test -p reader-core import_legacy_json_text_reports_progress_batches -- --nocapture`：PASS。
+- `cmd /c pnpm.cmd lint`：PASS。
+- `cargo fmt --all -- --check`：PASS。
+- `node scripts/ci/check-command-contract.mjs --json`：PASS，`frontendTotal=162`、`registeredTotal=161`、`bothCount=161`、`onlyFrontend=["js_eval"]`、`onlyBackend=[]`。
+- `cmd /c pnpm.cmd build`：PASS，保留既有 `vconsole` direct eval、large chunk 和 plugin timing warning。
+- `cargo check -p reader-core`：PASS。
+- `cargo check -p legado-tauri`：PASS。
+- `git diff --check`：PASS，仅 Windows LF/CRLF 工作区提示。
+
+Gate 报告：`reports/gates/2026-06-14-PERF-IMPORT-PROGRESS-EVENTS/summary.md`。
+
+剩余风险：
+
+- 本轮提升了长导入的可见性和批次让步，但还没有把 reader-core 的逐源 upsert 改成批量事务写入；超大订阅包导入耗时仍可能主要由存储写入决定。
+- Android 真机大包导入和 WebView 事件吞吐还未验证。
+- 后续可继续推进批量 upsert/事务化，以及导入后列表刷新与搜索入口的整体进度聚合。
+
 ## 2026-06-14 PERF-BACKGROUND-SOURCE-MAINTENANCE
 
 任务 ID：`PERF-2026-06-14-BACKGROUND-SOURCE-MAINTENANCE`
@@ -7,12 +48,14 @@
 本轮目标：承接大量书源列表流式加载、搜索流式队列和搜索取消三轮优化，继续处理列表加载完成后自动维护任务带来的 UI 卡顿。用户反馈的是“只要依赖书源加载的功能都会卡”，因此本轮重点看 `loadSources()` 完成后的能力检测和更新检查，而不是再扩展书源格式或单个源特判。
 
 关键判断：
+
 - `loadSources()` 原先在列表完成后同时后台触发 `detectAllCapabilities()` 和 `checkUpdatesIfStale()`；首屏列表虽然已经流式出来，但大列表随后仍可能进入能力 eval 与 updateUrl 检查的后台尖峰。
 - `detectAllCapabilities()` 已能跳过 metadata/capability 缓存命中的源，但没有先主动加载持久化能力缓存，也没有在批次之间让出 UI。
 - `checkUpdatesIfStale()` 的注释语义是 1 小时内跳过，但旧条件只有在 `pendingUpdates` 非空时才跳过；如果上次检查没有发现更新，后续加载仍会重复扫描所有带 `updateUrl` 的启用源。
 - 后端 `booksource_check_update` / `booksource_apply_update` 已支持 `sourceDir`，前端只传 `fileName` 会在多目录或同名书源场景下保留歧义。
 
 实现：
+
 - `src/stores/bookSource.ts` 新增后台维护调度：列表加载完成后延迟 250ms，使用 `_maintenanceRunId` 过滤过期 run。
 - 后台维护顺序调整为 `ensureCapsLoaded()` -> `detectAllCapabilities()` -> `checkUpdatesIfStale()`，避免能力检测和更新检查并发抢资源。
 - 能力检测保留 5 并发，更新检查保留 3 并发，但每个批次后暂停 25ms，把控制权还给 UI。
@@ -21,6 +64,7 @@
 - `InstalledSourcesTab.vue` 的重载/升级事件保留 `sourceDir`，`SearchView.vue` / `ExploreView.vue` 同步事件类型。
 
 验证：
+
 - `cmd /c pnpm.cmd lint`：PASS，0 warnings / 0 errors。
 - `cargo fmt --all -- --check`：PASS。
 - `cmd /c pnpm.cmd build`：PASS；仍保留既有 `vconsole` direct eval、大 chunk 和 plugin timing warning。
@@ -32,6 +76,7 @@
 Gate 报告：`reports/gates/2026-06-14-PERF-BACKGROUND-SOURCE-MAINTENANCE/summary.md`。
 
 剩余风险：
+
 - 本轮没有改变 JS 搜索 blocking worker 的不可抢占特性，搜索取消仍只能让命令/UI 提前返回。
 - 未使用真实安卓设备导入超大书源包做端到端压测；当前验证覆盖构建、类型、命令契约和核心 crate 编译。
 - 后续继续优化可以转向 JS 运行时中断、搜索/导入进度事件、以及 reader-core 批量导入事务化。

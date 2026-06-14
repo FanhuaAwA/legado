@@ -77,6 +77,18 @@ pub struct LegacyJsonImportResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LegacyJsonImportProgress {
+    pub processed: usize,
+    pub total: usize,
+    pub imported: usize,
+    pub skipped: usize,
+    pub errors: usize,
+    pub file_name: Option<String>,
+    pub done: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BookItem {
     pub name: String,
     pub author: String,

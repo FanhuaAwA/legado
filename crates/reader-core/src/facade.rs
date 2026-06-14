@@ -3,10 +3,10 @@ use crate::crawler::http_client::{HttpClient, HttpClientConfig};
 use crate::dto::{
     AddBookPayload, BookDetail, BookItem, BookSourceMeta, CachedChapter, ChapterItem,
     EpisodeProgress, EpisodeProgressMap, FrontendStorageEntry, FrontendStorageNamespaceSummary,
-    LegacyJsonImportResult, ReaderSessionPayload, RemoteSourcePreview, RepoManifest,
-    RepoSourceSync, ShelfBook, SourceRuntimeKind, SourceSwitchRestoreResult, SourceUpdateCheck,
-    SyncClientState, SyncConflict, SyncConnectionTestResult, SyncCredentials, SyncRunSummary,
-    SyncStatus, SyncV2ProgressResult, UpdateShelfBookPayload,
+    LegacyJsonImportProgress, LegacyJsonImportResult, ReaderSessionPayload, RemoteSourcePreview,
+    RepoManifest, RepoSourceSync, ShelfBook, SourceRuntimeKind, SourceSwitchRestoreResult,
+    SourceUpdateCheck, SyncClientState, SyncConflict, SyncConnectionTestResult, SyncCredentials,
+    SyncRunSummary, SyncStatus, SyncV2ProgressResult, UpdateShelfBookPayload,
 };
 use crate::error::ReaderCoreError;
 use crate::model::ai_proxy::{ai_proxy_timeout, validate_ai_proxy_url, AiHttpProxyResponse};
@@ -38,6 +38,7 @@ use std::time::{Duration, Instant};
 use tokio::fs;
 
 const USER_NS: &str = "local";
+const LEGACY_IMPORT_PROGRESS_INTERVAL: usize = 25;
 const LEGADO_SOURCE_DIR_LABEL: &str = "legado-json";
 const FRONTEND_STORAGE_PREFIX: &str = "frontend:";
 const APP_CONFIG_SCOPE: &str = "app.config";
@@ -575,13 +576,32 @@ impl ReaderCore {
     pub async fn import_legacy_json_text(
         &self,
         content: &str,
-        _smart_explore_sub_categories: bool,
+        smart_explore_sub_categories: bool,
     ) -> Result<LegacyJsonImportResult, ReaderCoreError> {
+        self.import_legacy_json_text_with_progress(
+            content,
+            smart_explore_sub_categories,
+            |_| async {},
+        )
+        .await
+    }
+
+    pub async fn import_legacy_json_text_with_progress<F, Fut>(
+        &self,
+        content: &str,
+        _smart_explore_sub_categories: bool,
+        mut on_progress: F,
+    ) -> Result<LegacyJsonImportResult, ReaderCoreError>
+    where
+        F: FnMut(LegacyJsonImportProgress) -> Fut,
+        Fut: Future<Output = ()>,
+    {
         let value: Value = serde_json::from_str(content)?;
         let values = match value {
             Value::Array(items) => items,
             other => vec![other],
         };
+        let total = values.len();
 
         let mut result = LegacyJsonImportResult {
             imported: 0,
@@ -592,7 +612,24 @@ impl ReaderCore {
         let mut seen = HashSet::new();
         self.invalidate_source_list_cache().await;
 
-        for value in values {
+        if total == 0 {
+            on_progress(LegacyJsonImportProgress {
+                processed: 0,
+                total,
+                imported: 0,
+                skipped: 0,
+                errors: 0,
+                file_name: None,
+                done: true,
+            })
+            .await;
+            return Ok(result);
+        }
+
+        for (index, value) in values.into_iter().enumerate() {
+            let mut progress_file_name = None;
+            let mut handled = false;
+
             // Try as article source first (sourceName + ruleArticles)
             if let (Some(name), Some(_rules)) = (
                 value.get("sourceName").and_then(|v| v.as_str()),
@@ -610,37 +647,56 @@ impl ReaderCore {
                     fs::create_dir_all(&article_dir).await?;
                     let article_path = article_dir.join(&file_name);
                     fs::write(&article_path, serde_json::to_string_pretty(&article)?).await?;
+                    progress_file_name = Some(file_name.clone());
                     result.imported += 1;
                     result.files.push(file_name);
-                    continue;
+                    handled = true;
                 }
             }
 
-            match book_source_from_value(value) {
-                Ok(source) => {
-                    if source.book_source_name.trim().is_empty()
-                        || source.book_source_url.trim().is_empty()
-                    {
-                        result.skipped += 1;
-                        result
-                            .errors
-                            .push("缺少 bookSourceName 或 bookSourceUrl".to_string());
-                        continue;
+            if !handled {
+                match book_source_from_value(value) {
+                    Ok(source) => {
+                        if source.book_source_name.trim().is_empty()
+                            || source.book_source_url.trim().is_empty()
+                        {
+                            result.skipped += 1;
+                            result
+                                .errors
+                                .push("缺少 bookSourceName 或 bookSourceUrl".to_string());
+                        } else if !seen.insert(source.book_source_url.clone()) {
+                            result.skipped += 1;
+                        } else {
+                            let file_name = legado_file_name(&source);
+                            self.persist_legado_source_without_cache_invalidation(
+                                &file_name, &source,
+                            )
+                            .await?;
+                            progress_file_name = Some(file_name.clone());
+                            result.imported += 1;
+                            result.files.push(file_name);
+                        }
                     }
-                    if !seen.insert(source.book_source_url.clone()) {
+                    Err(err) => {
                         result.skipped += 1;
-                        continue;
+                        result.errors.push(err.to_string());
                     }
-                    let file_name = legado_file_name(&source);
-                    self.persist_legado_source_without_cache_invalidation(&file_name, &source)
-                        .await?;
-                    result.imported += 1;
-                    result.files.push(file_name);
                 }
-                Err(err) => {
-                    result.skipped += 1;
-                    result.errors.push(err.to_string());
-                }
+            }
+
+            let processed = index + 1;
+            if processed % LEGACY_IMPORT_PROGRESS_INTERVAL == 0 || processed == total {
+                on_progress(LegacyJsonImportProgress {
+                    processed,
+                    total,
+                    imported: result.imported,
+                    skipped: result.skipped,
+                    errors: result.errors.len(),
+                    file_name: progress_file_name,
+                    done: processed == total,
+                })
+                .await;
+                tokio::task::yield_now().await;
             }
         }
 

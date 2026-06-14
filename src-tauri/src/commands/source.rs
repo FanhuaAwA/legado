@@ -1,7 +1,8 @@
 use crate::state::AppState;
 use reader_core::model::ai_proxy::AiHttpProxyResponse;
 use reader_core::{
-    BookDetail, BookItem, BookSourceMeta, ChapterItem, CommandError, LegacyJsonImportResult,
+    BookDetail, BookItem, BookSourceMeta, ChapterItem, CommandError, LegacyJsonImportProgress,
+    LegacyJsonImportResult,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -227,13 +228,32 @@ pub async fn booksource_toggle(
 
 #[tauri::command]
 pub async fn booksource_import_legacy_json_text(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     content: String,
     smart_explore_sub_categories: bool,
+    request_id: Option<String>,
 ) -> CommandResult<LegacyJsonImportResult> {
+    let request_id = request_id.unwrap_or_default();
+    let app_for_progress = app.clone();
     state
         .core
-        .import_legacy_json_text(&content, smart_explore_sub_categories)
+        .import_legacy_json_text_with_progress(
+            &content,
+            smart_explore_sub_categories,
+            move |progress: LegacyJsonImportProgress| {
+                let app = app_for_progress.clone();
+                let request_id = request_id.clone();
+                async move {
+                    let mut payload =
+                        serde_json::to_value(progress).unwrap_or_else(|_| serde_json::json!({}));
+                    if let Some(object) = payload.as_object_mut() {
+                        object.insert("requestId".to_string(), serde_json::json!(request_id));
+                    }
+                    let _ = app.emit("booksource:import-progress", payload);
+                }
+            },
+        )
         .await
         .map_err(map_err)
 }

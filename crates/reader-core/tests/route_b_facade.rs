@@ -1,6 +1,7 @@
 use axum::{response::Html, routing::get, Router};
 use reader_core::{AddBookPayload, CachedChapter, ReaderCore, ReaderCoreOptions};
 use serde_json::json;
+use std::sync::{Arc, Mutex};
 
 async fn search() -> Html<&'static str> {
     Html(
@@ -88,6 +89,55 @@ async fn prefetch_content_two() -> Html<&'static str> {
         </body></html>
         "#,
     )
+}
+
+#[tokio::test]
+async fn import_legacy_json_text_reports_progress_batches() {
+    let temp = tempfile::tempdir().unwrap();
+    let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
+        .await
+        .unwrap();
+
+    let sources: Vec<_> = (0..30)
+        .map(|index| {
+            json!({
+                "bookSourceName": format!("Progress Fixture {index}"),
+                "bookSourceUrl": format!("https://progress.example/{index}"),
+                "enabled": true,
+                "searchUrl": "/search?key={{key}}",
+                "ruleSearch": {
+                    "bookList": ".item",
+                    "name": ".title@text",
+                    "bookUrl": ".title@href"
+                }
+            })
+        })
+        .collect();
+    let content = serde_json::to_string(&sources).unwrap();
+    let progress_events = Arc::new(Mutex::new(Vec::new()));
+    let progress_for_callback = progress_events.clone();
+
+    let result = core
+        .import_legacy_json_text_with_progress(&content, false, move |progress| {
+            let progress_for_callback = progress_for_callback.clone();
+            async move {
+                progress_for_callback.lock().unwrap().push(progress);
+            }
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(result.imported, 30);
+    let events = progress_events.lock().unwrap();
+    assert!(
+        events.iter().any(|event| event.processed == 25),
+        "expected a progress event at the batch interval"
+    );
+    let final_event = events.last().expect("expected final progress event");
+    assert_eq!(final_event.processed, 30);
+    assert_eq!(final_event.total, 30);
+    assert_eq!(final_event.imported, 30);
+    assert!(final_event.done);
 }
 
 #[tokio::test]
