@@ -1144,6 +1144,7 @@ async function reloadSingleSource(src: BookSourceMeta) {
     await eventEmit("app:booksource-reload", {
       scope: "single",
       fileName: src.fileName,
+      sourceDir: src.sourceDir,
     });
     message.success(`已重载「${src.name}」`);
   } catch (e: unknown) {
@@ -1157,11 +1158,12 @@ async function applySourceUpdate(src: BookSourceMeta) {
   }
   updatingSourceSet.value.add(src.uuid);
   try {
-    await bookSourceStore.applyUpdate(src.fileName);
+    await bookSourceStore.applyUpdate(src.fileName, src.sourceDir);
     emits("reload");
     await eventEmit("app:booksource-reload", {
       scope: "single",
       fileName: src.fileName,
+      sourceDir: src.sourceDir,
     });
     message.success(`已升级「${src.name}」`);
   } catch (e: unknown) {

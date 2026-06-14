@@ -1,5 +1,41 @@
 # AI Iteration Log
 
+## 2026-06-14 PERF-BACKGROUND-SOURCE-MAINTENANCE
+
+任务 ID：`PERF-2026-06-14-BACKGROUND-SOURCE-MAINTENANCE`
+
+本轮目标：承接大量书源列表流式加载、搜索流式队列和搜索取消三轮优化，继续处理列表加载完成后自动维护任务带来的 UI 卡顿。用户反馈的是“只要依赖书源加载的功能都会卡”，因此本轮重点看 `loadSources()` 完成后的能力检测和更新检查，而不是再扩展书源格式或单个源特判。
+
+关键判断：
+- `loadSources()` 原先在列表完成后同时后台触发 `detectAllCapabilities()` 和 `checkUpdatesIfStale()`；首屏列表虽然已经流式出来，但大列表随后仍可能进入能力 eval 与 updateUrl 检查的后台尖峰。
+- `detectAllCapabilities()` 已能跳过 metadata/capability 缓存命中的源，但没有先主动加载持久化能力缓存，也没有在批次之间让出 UI。
+- `checkUpdatesIfStale()` 的注释语义是 1 小时内跳过，但旧条件只有在 `pendingUpdates` 非空时才跳过；如果上次检查没有发现更新，后续加载仍会重复扫描所有带 `updateUrl` 的启用源。
+- 后端 `booksource_check_update` / `booksource_apply_update` 已支持 `sourceDir`，前端只传 `fileName` 会在多目录或同名书源场景下保留歧义。
+
+实现：
+- `src/stores/bookSource.ts` 新增后台维护调度：列表加载完成后延迟 250ms，使用 `_maintenanceRunId` 过滤过期 run。
+- 后台维护顺序调整为 `ensureCapsLoaded()` -> `detectAllCapabilities()` -> `checkUpdatesIfStale()`，避免能力检测和更新检查并发抢资源。
+- 能力检测保留 5 并发，更新检查保留 3 并发，但每个批次后暂停 25ms，把控制权还给 UI。
+- `checkUpdatesIfStale()` 增加 `_updateCheckInFlight` 去重，并修正 1 小时内重复检查的条件。
+- `src/composables/useBookSource.ts` 的 `checkBookSourceUpdate()` / `applyBookSourceUpdate()` 增加可选 `sourceDir` 参数。
+- `InstalledSourcesTab.vue` 的重载/升级事件保留 `sourceDir`，`SearchView.vue` / `ExploreView.vue` 同步事件类型。
+
+验证：
+- `cmd /c pnpm.cmd lint`：PASS，0 warnings / 0 errors。
+- `cargo fmt --all -- --check`：PASS。
+- `cmd /c pnpm.cmd build`：PASS；仍保留既有 `vconsole` direct eval、大 chunk 和 plugin timing warning。
+- `node scripts/ci/check-command-contract.mjs --json`：PASS，`frontendTotal=162`、`registeredTotal=161`、`bothCount=161`、`onlyFrontend=["js_eval"]`、`onlyBackend=[]`、`frontend_unsupported_stub_count=39`、`frontend_implemented_count=122`。
+- `git diff --check`：PASS，仅 Windows LF/CRLF 工作区提示。
+- `cargo check -p legado-tauri`：PASS。
+- `cargo check -p reader-core`：PASS。
+
+Gate 报告：`reports/gates/2026-06-14-PERF-BACKGROUND-SOURCE-MAINTENANCE/summary.md`。
+
+剩余风险：
+- 本轮没有改变 JS 搜索 blocking worker 的不可抢占特性，搜索取消仍只能让命令/UI 提前返回。
+- 未使用真实安卓设备导入超大书源包做端到端压测；当前验证覆盖构建、类型、命令契约和核心 crate 编译。
+- 后续继续优化可以转向 JS 运行时中断、搜索/导入进度事件、以及 reader-core 批量导入事务化。
+
 ## 2026-06-14 PERF-SEARCH-CANCEL-TASKS
 
 任务 ID：`PERF-2026-06-14-SEARCH-CANCEL-TASKS`

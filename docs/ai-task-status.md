@@ -1,5 +1,27 @@
 # AI Task Status
 
+## 2026-06-14 PERF-BACKGROUND-SOURCE-MAINTENANCE 状态更新
+本轮状态：`local-gate-pass`；将追加到 `codex/perf-booksource-lazy-list` 分支，PR 状态以 GitHub 为准。
+
+任务 ID：`PERF-2026-06-14-BACKGROUND-SOURCE-MAINTENANCE`。本轮继续处理“大量书源加载完成后仍卡顿”的后续链路，范围限定在前端书源 store 的自动能力检测和在线更新检查调度；不改变书源规则执行语义，不触碰第三方/私有书源样本，不写喵/猫公子等书源名特判。
+
+关键修改：
+- `loadSources()` 完成后不再同时触发能力检测和更新检查，改为延迟 250ms 启动可失效的后台维护流程。
+- 后台维护先加载持久化能力缓存，再分批执行缺失能力检测；能力检测和更新检查每批之间让出 UI 线程，避免大列表加载后出现第二段尖峰。
+- `checkUpdatesIfStale()` 增加 in-flight 去重；修正“上次检查 1 小时内但没有 pending 更新时仍重复扫全部 updateUrl”的问题。
+- 更新检查/应用更新向后端透传 `sourceDir`，并在书源管理事件里保留目录上下文，降低多目录/同名书源下的歧义。
+
+已通过 gate：
+- `cmd /c pnpm.cmd lint`
+- `cargo fmt --all -- --check`
+- `cmd /c pnpm.cmd build`
+- `node scripts/ci/check-command-contract.mjs --json`
+- `git diff --check`
+- `cargo check -p legado-tauri`
+- `cargo check -p reader-core`
+
+剩余风险：本轮降低的是加载完成后的后台维护尖峰，未做真实安卓设备大列表压测；JS 搜索 blocking worker 的不可抢占限制仍沿用上一轮说明，后续还需要继续做 JS 运行时可中断和搜索进度事件。
+
 ## 2026-06-14 PERF-SEARCH-CANCEL-TASKS 状态更新
 
 本轮状态：`local-gate-pass`；将追加到 `codex/perf-booksource-lazy-list` 分支，PR 状态以 GitHub 为准。

@@ -806,19 +806,33 @@ export interface UpdateCheckResult {
 /**
  * 检测单个书源是否有更新（需要书源设置了 @updateUrl）
  */
-export async function checkBookSourceUpdate(fileName: string): Promise<UpdateCheckResult> {
+export async function checkBookSourceUpdate(
+  fileName: string,
+  sourceDir?: string | null,
+): Promise<UpdateCheckResult> {
   await capabilities.requireCapability("repository");
 
-  return invokeWithTimeout<UpdateCheckResult>("booksource_check_update", { fileName }, 20000);
+  return invokeWithTimeout<UpdateCheckResult>(
+    "booksource_check_update",
+    { fileName, sourceDir: sourceDir ?? null },
+    20000,
+  );
 }
 
 /**
  * 从 @updateUrl 拉取最新内容并覆盖本地文件
  */
-export async function applyBookSourceUpdate(fileName: string): Promise<void> {
+export async function applyBookSourceUpdate(
+  fileName: string,
+  sourceDir?: string | null,
+): Promise<void> {
   await capabilities.requireCapability("repository");
 
-  return invokeWithTimeout<void>("booksource_apply_update", { fileName }, 20000);
+  return invokeWithTimeout<void>(
+    "booksource_apply_update",
+    { fileName, sourceDir: sourceDir ?? null },
+    20000,
+  );
 }
 
 /** 将任意字符串转为合法 JS 文件名 */

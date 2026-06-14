@@ -605,15 +605,18 @@ onMounted(async () => {
     }),
   );
   unlisteners.push(
-    await eventListen<{ scope: string; fileName?: string }>("app:booksource-reload", (event) => {
-      if (event.payload.scope === "all") {
-        bookSourceStore.invalidateAllCapabilities();
-      } else if (event.payload.scope === "single" && event.payload.fileName) {
-        bookSourceStore.invalidateCapability(event.payload.fileName);
-      }
-      bookSourceStore.markSourcesStale();
-      void bookSourceStore.loadSources({ force: true });
-    }),
+    await eventListen<{ scope: string; fileName?: string; sourceDir?: string }>(
+      "app:booksource-reload",
+      (event) => {
+        if (event.payload.scope === "all") {
+          bookSourceStore.invalidateAllCapabilities();
+        } else if (event.payload.scope === "single" && event.payload.fileName) {
+          bookSourceStore.invalidateCapability(event.payload.fileName);
+        }
+        bookSourceStore.markSourcesStale();
+        void bookSourceStore.loadSources({ force: true });
+      },
+    ),
   );
   unlisteners.push(
     await eventListen<{ view?: string }>("app:view-reload", async (event) => {

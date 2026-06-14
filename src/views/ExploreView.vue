@@ -658,7 +658,7 @@ onMounted(async () => {
       ),
     );
     unlisteners.push(
-      await eventListen<{ scope?: string; fileName?: string }>(
+      await eventListen<{ scope?: string; fileName?: string; sourceDir?: string }>(
         "app:booksource-reload",
         async (event) => {
           const { scope, fileName } = event.payload ?? {};

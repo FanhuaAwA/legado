@@ -38,6 +38,10 @@ const LAST_CHECK_KEY = "lastCheckedAt";
 /** 最短检查间隔：1 小时 */
 const MIN_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const SOURCE_LIST_CACHE_TTL_MS = 30 * 60 * 1000;
+const BACKGROUND_MAINTENANCE_START_DELAY_MS = 250;
+const BACKGROUND_MAINTENANCE_BATCH_PAUSE_MS = 25;
+const CAPABILITY_DETECT_CONCURRENCY = 5;
+const UPDATE_CHECK_CONCURRENCY = 3;
 const LS_EXPLORE_KEY = "source-explore-disabled";
 const LS_SEARCH_KEY = "source-search-disabled";
 const EXPLORE_KEY = "exploreDisabled";
@@ -106,6 +110,16 @@ function isNovelSource(source: BookSourceMeta): boolean {
   return type === "" || type === "novel" || type === "小说";
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function pauseBetweenBackgroundBatches(nextIndex: number, total: number): Promise<void> {
+  if (nextIndex < total) {
+    await sleep(BACKGROUND_MAINTENANCE_BATCH_PAUSE_MS);
+  }
+}
+
 export const useBookSourceStore = defineStore("bookSource", () => {
   // ── 书源列表状态 ─────────────────────────────────────────────────────
   const sources = ref<BookSourceMeta[]>([]);
@@ -116,9 +130,11 @@ export const useBookSourceStore = defineStore("bookSource", () => {
   const streamingLoaded = ref(0);
   let _loadInFlight: Promise<void> | null = null;
   let _detectAllInFlight: Promise<void> | null = null;
+  let _updateCheckInFlight: Promise<void> | null = null;
   let _sourcesLoadedOnce = false;
   let _sourcesLoadedAt = 0;
   let _sourcesDirty = true;
+  let _maintenanceRunId = 0;
   /** 当前活跃的流式加载请求 ID，用于过滤过期事件 */
   let _streamRequestId = "";
   // ── 更新检查结果 ─────────────────────────────────────────────────────────
@@ -295,8 +311,7 @@ export const useBookSourceStore = defineStore("bookSource", () => {
         _sourcesLoadedAt = Date.now();
         _sourcesDirty = false;
 
-        void detectAllCapabilities();
-        void ensureFrontendNamespaceLoaded(UPDATE_NS).then(() => checkUpdatesIfStale());
+        scheduleBackgroundMaintenance();
       } finally {
         loading.value = false;
         _loadInFlight = null;
@@ -316,6 +331,30 @@ export const useBookSourceStore = defineStore("bookSource", () => {
   function markSourcesStale(): void {
     _sourcesDirty = true;
     _sourcesLoadedAt = 0;
+    _maintenanceRunId += 1;
+  }
+
+  function scheduleBackgroundMaintenance(): void {
+    const runId = ++_maintenanceRunId;
+    void (async () => {
+      await sleep(BACKGROUND_MAINTENANCE_START_DELAY_MS);
+      if (runId !== _maintenanceRunId) {
+        return;
+      }
+      await ensureCapsLoaded();
+      if (runId !== _maintenanceRunId) {
+        return;
+      }
+      await detectAllCapabilities();
+      if (runId !== _maintenanceRunId) {
+        return;
+      }
+      await ensureFrontendNamespaceLoaded(UPDATE_NS);
+      if (runId !== _maintenanceRunId) {
+        return;
+      }
+      await checkUpdatesIfStale();
+    })();
   }
 
   /**
@@ -414,11 +453,10 @@ export const useBookSourceStore = defineStore("bookSource", () => {
     }
     _detectAllInFlight = (async () => {
       capabilityDetecting.value = true;
-      const CONCURRENCY = 5;
       try {
-        for (let i = 0; i < pending.length; i += CONCURRENCY) {
+        for (let i = 0; i < pending.length; i += CAPABILITY_DETECT_CONCURRENCY) {
           await Promise.all(
-            pending.slice(i, i + CONCURRENCY).map(async (src) => {
+            pending.slice(i, i + CAPABILITY_DETECT_CONCURRENCY).map(async (src) => {
               // 并发的单片检测已完成则复用（不重复 eval）
               const cacheKey = getSourceCacheKey(src);
               if (fnsCache[cacheKey]) return;
@@ -447,6 +485,7 @@ export const useBookSourceStore = defineStore("bookSource", () => {
               }
             }),
           );
+          await pauseBetweenBackgroundBatches(i + CAPABILITY_DETECT_CONCURRENCY, pending.length);
         }
       } finally {
         capabilityDetecting.value = false;
@@ -563,56 +602,70 @@ export const useBookSourceStore = defineStore("bookSource", () => {
    * 若距上次检查不足 1 小时，跳过以避免高频请求。
    * 结果写入 `pendingUpdates`（仅含有更新的条目）。
    */
-  async function checkUpdatesIfStale(): Promise<void> {
-    const capabilities = await useCapabilities().loadCapabilities();
-    if (!capabilities.repository.supported) {
-      pendingUpdates.value = [];
-      return;
+  function checkUpdatesIfStale(): Promise<void> {
+    if (_updateCheckInFlight) {
+      return _updateCheckInFlight;
     }
 
-    const now = Date.now();
-    const lastCheckedRaw = getFrontendStorageItem(UPDATE_NS, LAST_CHECK_KEY);
-    const lastChecked = lastCheckedRaw ? parseInt(lastCheckedRaw, 10) : 0;
-    const effectiveLastChecked = Math.max(
-      updatesCheckedAt,
-      Number.isNaN(lastChecked) ? 0 : lastChecked,
-    );
-    if (pendingUpdates.value.length > 0 && now - effectiveLastChecked < MIN_CHECK_INTERVAL_MS) {
-      return;
-    }
-
-    const targets = sources.value.filter((s) => s.enabled && s.updateUrl);
-    if (targets.length === 0) {
-      return;
-    }
-
-    // 记录本次检查时间戳（先写，避免并发重入）
-    updatesCheckedAt = now;
-    setFrontendStorageItem(UPDATE_NS, LAST_CHECK_KEY, String(now));
-
-    const results: UpdateCheckResult[] = [];
-    const CONCURRENCY = 3;
-    for (let i = 0; i < targets.length; i += CONCURRENCY) {
-      const batch = targets.slice(i, i + CONCURRENCY);
-      const batchResults = await Promise.allSettled(
-        batch.map((src) => checkBookSourceUpdate(src.fileName)),
-      );
-      for (const r of batchResults) {
-        if (r.status === "fulfilled" && r.value.hasUpdate) {
-          results.push(r.value);
-        }
+    _updateCheckInFlight = (async () => {
+      const capabilities = await useCapabilities().loadCapabilities();
+      if (!capabilities.repository.supported) {
+        pendingUpdates.value = [];
+        return;
       }
-    }
-    pendingUpdates.value = results;
+
+      const now = Date.now();
+      const lastCheckedRaw = getFrontendStorageItem(UPDATE_NS, LAST_CHECK_KEY);
+      const lastChecked = lastCheckedRaw ? parseInt(lastCheckedRaw, 10) : 0;
+      const effectiveLastChecked = Math.max(
+        updatesCheckedAt,
+        Number.isNaN(lastChecked) ? 0 : lastChecked,
+      );
+      if (now - effectiveLastChecked < MIN_CHECK_INTERVAL_MS) {
+        return;
+      }
+
+      const targets = sources.value.filter((s) => s.enabled && s.updateUrl);
+      if (targets.length === 0) {
+        return;
+      }
+
+      // 记录本次检查时间戳（先写，避免并发重入）
+      updatesCheckedAt = now;
+      setFrontendStorageItem(UPDATE_NS, LAST_CHECK_KEY, String(now));
+
+      const results: UpdateCheckResult[] = [];
+      for (let i = 0; i < targets.length; i += UPDATE_CHECK_CONCURRENCY) {
+        const batch = targets.slice(i, i + UPDATE_CHECK_CONCURRENCY);
+        const batchResults = await Promise.allSettled(
+          batch.map((src) => checkBookSourceUpdate(src.fileName, src.sourceDir)),
+        );
+        for (const r of batchResults) {
+          if (r.status === "fulfilled" && r.value.hasUpdate) {
+            results.push(r.value);
+          }
+        }
+        await pauseBetweenBackgroundBatches(i + UPDATE_CHECK_CONCURRENCY, targets.length);
+      }
+      pendingUpdates.value = results;
+    })();
+
+    void _updateCheckInFlight.finally(() => {
+      _updateCheckInFlight = null;
+    });
+    return _updateCheckInFlight;
   }
 
   function getPendingUpdate(uuid: string): UpdateCheckResult | undefined {
     return pendingUpdates.value.find((item) => item.uuid === uuid);
   }
 
-  async function applyUpdate(fileName: string): Promise<void> {
-    await applyBookSourceUpdate(fileName);
-    const source = sources.value.find((item) => item.fileName === fileName);
+  async function applyUpdate(fileName: string, sourceDir?: string): Promise<void> {
+    const source = sources.value.find(
+      (item) =>
+        item.fileName === fileName && (sourceDir === undefined || item.sourceDir === sourceDir),
+    );
+    await applyBookSourceUpdate(fileName, source?.sourceDir ?? sourceDir);
     if (source) {
       pendingUpdates.value = pendingUpdates.value.filter((item) => item.uuid !== source.uuid);
     } else {
