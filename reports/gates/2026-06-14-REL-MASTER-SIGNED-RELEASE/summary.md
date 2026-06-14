@@ -44,3 +44,10 @@ Notes:
 - `release-signing.p12`, `keystore.properties`, `.release-secrets/`, and APK outputs are git ignored and must stay out of commits.
 - V1 signing required `--min-sdk-version 21`; without it, apksigner skipped V1 because the app manifest minSdk is 24.
 - Workflow syntax still needs remote GitHub Actions validation after push because no local actionlint/YAML parser is available in this environment.
+
+Remote follow-up:
+
+- `Master Release` run `27493455571` started after the gated `master` push.
+- Windows build completed successfully.
+- Android build failed before signing in `rquickjs-sys` bindgen because clang used the host include path instead of the Android NDK sysroot.
+- Follow-up task `REL-2026-06-14-ANDROID-CI-SYSROOT` now sets the aarch64 Android linker, CC/CXX/AR, `LIBCLANG_PATH`, and `BINDGEN_EXTRA_CLANG_ARGS` from the installed NDK.

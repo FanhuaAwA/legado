@@ -1,5 +1,29 @@
 # AI Task Status
 
+## 2026-06-14 REL-ANDROID-CI-SYSROOT 状态更新
+
+本轮状态：`remote-release-fix-pending`；将追加到 `master`，等待 Quality Gate 通过后再次触发 Master Release。
+
+任务 ID：`REL-2026-06-14-ANDROID-CI-SYSROOT`。本轮处理上一次 `Master Release` 远端运行在 Android 编译阶段失败的问题：Ubuntu runner 上 `rquickjs-sys` 的 bindgen/clang 没有使用 Android NDK sysroot，回退到宿主 `/usr/include` 后找不到目标平台头文件。
+
+关键修改：
+
+- `.github/workflows/master-release.yml` 的 Android 环境配置从已安装 NDK 推导 LLVM toolchain、sysroot 和 API level。
+- 为 aarch64 Android build 设置 `CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER`、`CC_aarch64_linux_android`、`CXX_aarch64_linux_android`、`AR_aarch64_linux_android`。
+- 为 bindgen 设置 `LIBCLANG_PATH` 和 `BINDGEN_EXTRA_CLANG_ARGS`，显式传入 `--target`、`--sysroot` 和 Android include 目录。
+- 增加 toolchain、apksigner、target include 目录存在性检查，让 CI 在环境缺失时更早失败。
+
+已通过本地 gate：
+
+- `cmd /c pnpm.cmd lint`
+- `git diff --check`
+
+远端观察：
+
+- `Master Release` run `27493455571` 已确认失败在 Android `rquickjs-sys` bindgen 阶段；Windows build 已通过，publish 因 Android job 失败被跳过。
+
+剩余风险：本轮修复的目标是远端 Ubuntu Android toolchain 环境，必须推送后由 GitHub Actions 真实验证；本地 Windows Android build 和 V1/V2/V3 签名在上一轮已通过。
+
 ## 2026-06-14 REL-MASTER-SIGNED-RELEASE 状态更新
 
 本轮状态：`local-gate-pass`；将追加到 `master`，GitHub Actions 自动发布状态以远端 run 为准。

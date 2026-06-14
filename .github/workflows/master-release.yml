@@ -199,15 +199,29 @@ jobs:
           set -euo pipefail
 
           NDK_PATH="$(find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          TOOLCHAIN="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64"
+          SYSROOT="$TOOLCHAIN/sysroot"
+          API_LEVEL=24
+          CLANG_TARGET="aarch64-linux-android${API_LEVEL}"
+
           echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
           echo "NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
           echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
           echo "BUILD_TOOLS_DIR=$ANDROID_HOME/build-tools/35.0.0" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$TOOLCHAIN/bin/${CLANG_TARGET}-clang" >> "$GITHUB_ENV"
+          echo "CC_aarch64_linux_android=$TOOLCHAIN/bin/${CLANG_TARGET}-clang" >> "$GITHUB_ENV"
+          echo "CXX_aarch64_linux_android=$TOOLCHAIN/bin/${CLANG_TARGET}-clang++" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=$TOOLCHAIN/bin/llvm-ar" >> "$GITHUB_ENV"
+          echo "LIBCLANG_PATH=$TOOLCHAIN/lib" >> "$GITHUB_ENV"
+          echo "BINDGEN_EXTRA_CLANG_ARGS=--target=${CLANG_TARGET} --sysroot=${SYSROOT} -isystem ${SYSROOT}/usr/include -isystem ${SYSROOT}/usr/include/aarch64-linux-android" >> "$GITHUB_ENV"
 
           echo "ANDROID_HOME=$ANDROID_HOME"
           echo "ANDROID_NDK_HOME=$NDK_PATH"
-          test -f "$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          echo "ANDROID_TOOLCHAIN=$TOOLCHAIN"
+          test -x "$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          test -x "$TOOLCHAIN/bin/${CLANG_TARGET}-clang"
+          test -d "$SYSROOT/usr/include/aarch64-linux-android"
           java -version
 
       - name: Cache Cargo registry

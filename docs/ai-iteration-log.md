@@ -1,5 +1,35 @@
 # AI Iteration Log
 
+## 2026-06-14 REL-ANDROID-CI-SYSROOT
+
+任务 ID：`REL-2026-06-14-ANDROID-CI-SYSROOT`
+
+本轮目标：修复 `master` 自动发布链路第一次远端运行时 Android job 在 Ubuntu runner 上的 NDK/bindgen 环境问题，让 Quality Gate 通过后的 Master Release 能继续完成 Android 编译、V1/V2/V3 签名和发布。
+
+关键判断：
+
+- `Master Release` run `27493455571` 已触发，说明 `workflow_run` 串联和 secrets 基本可用；Windows build 通过，publish 被 Android job 失败阻断。
+- Android job 失败在 `rquickjs-sys` build script 的 bindgen 阶段，日志显示 clang 读取宿主 `/usr/include/stdio.h` 后找不到 `bits/libc-header-start.h`，根因是 Android 目标编译没有给 bindgen 明确传入 NDK sysroot/include。
+- 本地 Windows Android build 已通过，不能用本机状态替代 Ubuntu runner 验证；本轮需要把 NDK toolchain 配置写入 workflow，并等待远端 Actions 复跑。
+
+实现：
+
+- `.github/workflows/master-release.yml` 的 `Configure Android environment` 步骤从 `ANDROID_HOME/ndk` 推导最新 NDK、LLVM toolchain、sysroot 和 `aarch64-linux-android24` clang target。
+- 写入 `CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER`、`CC_aarch64_linux_android`、`CXX_aarch64_linux_android` 和 `AR_aarch64_linux_android`，让 cargo/cc crate 明确使用 NDK clang。
+- 写入 `LIBCLANG_PATH` 和 `BINDGEN_EXTRA_CLANG_ARGS`，为 bindgen 传入 `--target`、`--sysroot`、通用 Android include 与 aarch64 target include。
+- 增加 apksigner、clang driver、target include 目录检查，减少后续环境漂移时的模糊失败。
+
+验证：
+
+- `cmd /c pnpm.cmd lint`：PASS。
+- `git diff --check`：PASS，仅 Windows LF/CRLF 工作区提示。
+- 远端验证待推送后由 GitHub Actions 的 Quality Gate 和 Master Release 运行确认。
+
+剩余风险：
+
+- 该修复针对 Ubuntu runner 的 bindgen/sysroot 配置，只有远端 Android build 能最终确认。
+- Android 签名密钥、GitHub Secrets、本地 V1/V2/V3 签名验证已在上一轮完成，本轮不重新生成密钥，也不提交任何 keystore、密码或 APK 产物。
+
 ## 2026-06-14 REL-MASTER-SIGNED-RELEASE
 
 任务 ID：`REL-2026-06-14-MASTER-SIGNED-RELEASE`
