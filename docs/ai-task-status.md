@@ -1,5 +1,27 @@
 # AI Task Status
 
+## 2026-06-14 PERF-IMPORT-CACHE-INVALIDATION 状态更新
+
+本轮状态：`local-gate-pass`；将追加到 `codex/perf-booksource-lazy-list` 分支，PR 状态以 GitHub 为准。
+
+任务 ID：`PERF-2026-06-14-IMPORT-CACHE-INVALIDATION`。本轮继续处理“大量书源导入后卡顿”的公共链路，范围限定在 reader-core 批量 Legado JSON/article JSON 导入过程中的列表缓存失效策略；不改变导入格式、文件命名、DB 保存语义或第三方书源规则。
+
+关键修改：
+
+- `import_legacy_json_text()` 在解析出批量输入后先失效一次书源列表缓存。
+- Legado 批量写入改走不重复失效缓存的内部保存 helper，避免每导入一个源都抢一次列表缓存锁。
+- article JSON 导入同样不再逐项失效缓存。
+- 单源保存、启停、删除等非批量路径仍由原 `persist_legado_source()` / 写入路径负责失效缓存。
+
+已通过 gate：
+
+- `cargo fmt --all -- --check`
+- `cargo test -p reader-core stream_sources_emits_incremental_batches_with_capabilities -- --nocapture`
+- `cargo check -p reader-core`
+- `cargo check -p legado-tauri`
+
+剩余风险：本轮减少的是批量导入中的重复缓存失效开销；DB 仍是逐源 upsert、文件仍是逐源 pretty JSON 写入。若超大订阅包导入仍慢，下一步应评估 reader-core 的批量事务/批量写入接口和前端导入进度事件。
+
 ## 2026-06-14 PERF-SEARCH-STREAM-QUEUE 状态更新
 
 本轮状态：`local-gate-pass`；已追加到 `codex/perf-booksource-lazy-list` 分支，PR 状态以 GitHub 为准。

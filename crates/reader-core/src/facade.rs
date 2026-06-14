@@ -590,6 +590,7 @@ impl ReaderCore {
             errors: Vec::new(),
         };
         let mut seen = HashSet::new();
+        self.invalidate_source_list_cache().await;
 
         for value in values {
             // Try as article source first (sourceName + ruleArticles)
@@ -609,7 +610,6 @@ impl ReaderCore {
                     fs::create_dir_all(&article_dir).await?;
                     let article_path = article_dir.join(&file_name);
                     fs::write(&article_path, serde_json::to_string_pretty(&article)?).await?;
-                    self.invalidate_source_list_cache().await;
                     result.imported += 1;
                     result.files.push(file_name);
                     continue;
@@ -632,7 +632,8 @@ impl ReaderCore {
                         continue;
                     }
                     let file_name = legado_file_name(&source);
-                    self.persist_legado_source(&file_name, &source).await?;
+                    self.persist_legado_source_without_cache_invalidation(&file_name, &source)
+                        .await?;
                     result.imported += 1;
                     result.files.push(file_name);
                 }
@@ -2529,6 +2530,17 @@ impl ReaderCore {
         file_name: &str,
         source: &BookSource,
     ) -> Result<(), ReaderCoreError> {
+        self.persist_legado_source_without_cache_invalidation(file_name, source)
+            .await?;
+        self.invalidate_source_list_cache().await;
+        Ok(())
+    }
+
+    async fn persist_legado_source_without_cache_invalidation(
+        &self,
+        file_name: &str,
+        source: &BookSource,
+    ) -> Result<(), ReaderCoreError> {
         ensure_safe_file_name(file_name)?;
         let path = self.legado_source_dir.join(file_name);
         if let Some(parent) = path.parent() {
@@ -2537,7 +2549,6 @@ impl ReaderCore {
         let json = serde_json::to_string_pretty(source)?;
         fs::write(path, json).await?;
         self.source_service.save(USER_NS, source.clone()).await?;
-        self.invalidate_source_list_cache().await;
         Ok(())
     }
 

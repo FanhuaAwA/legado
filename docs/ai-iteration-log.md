@@ -1,5 +1,37 @@
 # AI Iteration Log
 
+## 2026-06-14 PERF-IMPORT-CACHE-INVALIDATION
+
+任务 ID：`PERF-2026-06-14-IMPORT-CACHE-INVALIDATION`
+
+本轮目标：继续优化大量书源导入链路。上一轮解决了列表加载和搜索页消费流式列表；本轮收口批量导入时每个源都重复失效书源列表缓存的开销。
+
+关键判断：
+
+- `import_legacy_json_text()` 对数组输入逐项写入，Legado 源通过 `persist_legado_source()` 保存，而该函数每次保存后都会失效 `source_list_cache`。
+- article JSON 导入分支也在每个文件写入后失效缓存。
+- 对一个批量导入请求来说，只要在写入前失效一次列表缓存即可保证后续不会复用旧列表；逐项失效只增加锁竞争和重复工作。
+
+实现：
+
+- `import_legacy_json_text()` 在完成 JSON 解析、创建 result/seen 后立即 `invalidate_source_list_cache()`。
+- 新增内部 helper `persist_legado_source_without_cache_invalidation()`，保留原文件写入和 DB save 语义。
+- 原 `persist_legado_source()` 改为调用 helper 后再失效缓存，保证单源保存、启停等路径行为不变。
+- 批量导入 Legado 源改用 helper；article 分支移除逐项失效。
+
+验证：
+
+- `cargo fmt --all -- --check`：PASS。
+- `cargo test -p reader-core stream_sources_emits_incremental_batches_with_capabilities -- --nocapture`：PASS。
+- `cargo check -p reader-core`：PASS。
+- `cargo check -p legado-tauri`：PASS。
+
+Gate 报告：`reports/gates/2026-06-14-PERF-IMPORT-CACHE-INVALIDATION/summary.md`。
+
+剩余风险：
+
+- 本轮不改变逐源 DB upsert 和逐源 pretty JSON 写文件；超大订阅包导入仍可能需要批量事务和导入进度事件。
+
 ## 2026-06-14 PERF-SEARCH-STREAM-QUEUE
 
 任务 ID：`PERF-2026-06-14-SEARCH-STREAM-QUEUE`
