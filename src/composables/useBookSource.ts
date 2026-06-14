@@ -37,6 +37,8 @@ export interface BookSourceMeta {
   requireUrls: string[];
   /** 文本扫描检测到的顶层 explore 函数标志（无需启动 JS 引擎） */
   hasExplore?: boolean;
+  /** 后端轻量扫描出的入口能力，用于避免前端再次逐源 eval */
+  capabilities?: string[];
 }
 
 export interface NovelSourceRef {
@@ -340,8 +342,8 @@ export async function listBookSources(): Promise<BookSourceMeta[]> {
  * 流式列举书源：立即返回，后台通过 `booksource:batch` 事件分批推送。
  * 调用方需在调用本函数前监听 `booksource:batch` 事件，并通过 `requestId` 过滤。
  */
-export async function listBookSourcesStreaming(requestId: string): Promise<void> {
-  return invokeWithTimeout<void>("booksource_list_streaming", { requestId }, 10000);
+export async function listBookSourcesStreaming(requestId: string, force = false): Promise<void> {
+  return invokeWithTimeout<void>("booksource_list_streaming", { requestId, force }, 70000);
 }
 
 /** 读取单个书源 JS 内容 */

@@ -124,6 +124,19 @@ async fn repository_commands_are_routed() {
 }
 
 #[tokio::test]
+async fn booksource_list_streaming_is_routed() {
+    let (app, _dir) = test_app().await;
+    let value = router::dispatch(
+        app.handle(),
+        "booksource_list_streaming",
+        &json!({"requestId": "stream-test", "force": true}),
+    )
+    .await
+    .expect("booksource_list_streaming 应进入 WS 路由");
+    assert_eq!(value, Value::Null);
+}
+
+#[tokio::test]
 async fn webdav_sync_commands_are_routed() {
     let (app, _dir) = test_app().await;
     let value = router::dispatch(app.handle(), "sync_get_status", &json!({}))

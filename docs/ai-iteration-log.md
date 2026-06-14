@@ -1,5 +1,50 @@
 # AI Iteration Log
 
+## 2026-06-14 PERF-BOOKSOURCE-LAZY-LIST
+
+任务 ID：`PERF-2026-06-14-BOOKSOURCE-LAZY-LIST`
+
+本轮目标：按用户反馈优化 Windows/Android 端大量书源导入后依赖书源列表的卡顿和长时间等待，优先收口书源加载、搜索入口能力筛选、发现入口能力筛选这条公共链路。范围限定在通用书源列表扫描、流式推送、前端逐批合并与能力元数据预热；不修改第三方/私有书源样本，不做喵/猫公子等书源名特判，不改变搜索/详情/目录/正文规则语义。
+
+关键判断：
+
+- 旧的 `booksource_list_streaming` 虽然按 20 个切 batch emit，但入口仍先 `list_sources()` 全量扫描，前端要等后端完全扫完才收到首批数据；大量 Legado/JS 书源时首屏仍会长时间等待。
+- 前端旧逻辑收集所有批次后才统一合并列表，进一步抵消了流式事件的收益。
+- 搜索/发现页依赖 `hasFn()`/`detectCapabilities()` 做能力筛选；如果列表元数据不携带能力，前端会在大列表场景继续逐源读文件或检测能力，造成进入搜索相关功能时卡顿。
+
+实现：
+
+- `crates/reader-core/src/facade.rs` 新增 30 分钟 `SourceListCache`，`list_sources()` 复用缓存，写入路径统一失效缓存。
+- 新增 `ReaderCore::stream_sources(batch_size, force, emit)`，扫描 Legado DB、JS 目录、article JSON 时直接累计到 batch 并 emit；缓存命中时从缓存分批回放。
+- `BookSourceMeta` 新增 `capabilities` 字段，Legado 使用规则字段推导，JS 使用现有轻量源码扫描推导，article 源保留空能力。
+- `booksource_list_streaming` 在 Tauri IPC、Route B WS router、headless WS dispatcher 中均调用同一 core 流式实现，并支持可选 `force` 参数。
+- `src/stores/bookSource.ts` 收到批次后立即合并、排序和渲染，最终 `done` 时再裁剪本轮未出现的旧书源；同时修复旧流监听器可能误清理新请求监听器的竞态。
+- 前端用 `BookSourceMeta.capabilities` 预热 `fnsCache`，降低进入搜索/发现筛选时的逐源能力检测成本。
+
+验证：
+
+- `cargo fmt --all -- --check`：PASS。
+- `cargo check -p reader-core`：PASS。
+- `cargo check -p legado-tauri`：PASS。
+- `cargo check -p legado-headless`：PASS。
+- `cargo test -p reader-core stream_sources_emits_incremental_batches_with_capabilities -- --nocapture`：PASS。
+- `cargo test -p legado-tauri booksource_list_streaming_is_routed -- --nocapture`：PASS。
+- `cmd /c pnpm.cmd lint`：PASS。
+- `cmd /c pnpm.cmd build`：PASS，保留既有 vconsole direct eval、chunk size 与 plugin timing warning。
+- `cargo test -p reader-core`：PASS。
+- `cargo test -p legado-tauri`：PASS，仅既有 MSVC linker stdout warning。
+- `cargo test -p legado-headless`：PASS。
+- `node scripts/ci/check-command-contract.mjs --json`：PASS，`frontendTotal=162`、`registeredTotal=161`、`bothCount=161`、`onlyFrontend=["js_eval"]`、`onlyBackend=[]`、`frontend_unsupported_stub_count=39`、`frontend_implemented_count=122`。
+- `git diff --check`：PASS，仅 Windows LF/CRLF 工作区提示。
+
+Gate 报告：`reports/gates/2026-06-14-PERF-BOOKSOURCE-LAZY-LIST/summary.md`。
+
+剩余风险：
+
+- 本轮没有改多源搜索执行本体。搜索仍可能被大量启用书源、单源网络慢、规则执行慢拖住；下一轮性能工作建议继续做搜索任务进度、取消、并发上限和按源超时。
+- Android 真机的大量书源导入、WebView 事件吞吐和搜索体验需要后续设备验证。
+- `BookSourceMeta.capabilities` 是轻量静态能力扫描，复杂动态能力仍可能需要按需检测兜底。
+
 ## 2026-06-13 PERF-EXTENSION-EXAMPLES-LAZY
 
 任务 ID：`PERF-2026-06-13-EXTENSION-EXAMPLES-LAZY`

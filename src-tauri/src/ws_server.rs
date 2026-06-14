@@ -35,6 +35,7 @@ const FORWARDED_EVENTS: &[&str] = &[
     "rust:log",
     "app_config:changed",
     "script:dialog:result",
+    "booksource:batch",
     "shelf:prefetch-progress",
     "shelf:prefetch-done",
 ];

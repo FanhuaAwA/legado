@@ -30,9 +30,11 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::fs;
 
 const USER_NS: &str = "local";
@@ -42,6 +44,7 @@ const APP_CONFIG_SCOPE: &str = "app.config";
 const SOURCE_DIRS_CONFIG_SCOPE: &str = "booksource.dirs";
 const SOURCE_DIRS_CONFIG_KEY: &str = "external";
 const LEGADO_BROWSER_ACTION_FN: &str = "__legado_browser_action";
+const SOURCE_LIST_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
 const SYNC_SUPPORTED_DOMAINS: &[&str] = &[
     "bookshelf",
     "reading_progress",
@@ -53,6 +56,12 @@ const SYNC_SUPPORTED_DOMAINS: &[&str] = &[
 const SYNC_DEFERRED_DOMAINS: &[&str] = &["extensions", "script_config"];
 
 #[derive(Clone)]
+struct SourceListCache {
+    items: Vec<BookSourceMeta>,
+    loaded_at: Instant,
+}
+
+#[derive(Clone)]
 pub struct ReaderCore {
     reader_dir: PathBuf,
     js_source_dir: PathBuf,
@@ -62,6 +71,7 @@ pub struct ReaderCore {
     book_service: BookService,
     document_service: JsonDocumentService,
     sync_runtime: Arc<SyncRuntime>,
+    source_list_cache: Arc<tokio::sync::RwLock<Option<SourceListCache>>>,
     /// 每本书在跑的缓存任务取消令牌：同书新任务自动取消旧任务，
     /// 防止前端调用超时重发导致任务堆积、对书源高频请求。
     prefetch_tasks: Arc<tokio::sync::Mutex<HashMap<String, Arc<AtomicBool>>>>,
@@ -120,6 +130,7 @@ impl ReaderCore {
             book_service,
             document_service,
             sync_runtime: Arc::new(SyncRuntime::new()),
+            source_list_cache: Arc::new(tokio::sync::RwLock::new(None)),
             prefetch_tasks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         })
     }
@@ -155,7 +166,9 @@ impl ReaderCore {
         let mut dirs = self.external_source_dirs().await?;
         dirs.push(path.to_string_lossy().to_string());
         dedupe_strings(&mut dirs);
-        self.save_external_source_dirs(&dirs).await
+        self.save_external_source_dirs(&dirs).await?;
+        self.invalidate_source_list_cache().await;
+        Ok(())
     }
 
     pub async fn remove_source_dir(&self, dir_path: &str) -> Result<(), ReaderCoreError> {
@@ -163,16 +176,96 @@ impl ReaderCore {
         let target = path.to_string_lossy().to_string();
         let mut dirs = self.external_source_dirs().await?;
         dirs.retain(|dir| dir != &target);
-        self.save_external_source_dirs(&dirs).await
+        self.save_external_source_dirs(&dirs).await?;
+        self.invalidate_source_list_cache().await;
+        Ok(())
     }
 
     pub async fn list_sources(&self) -> Result<Vec<BookSourceMeta>, ReaderCoreError> {
+        if let Some(items) = self.cached_source_list(false).await {
+            return Ok(items);
+        }
+        let out = self.scan_sources().await?;
+        self.replace_source_list_cache(out.clone()).await;
+        Ok(out)
+    }
+
+    pub async fn stream_sources<F, Fut>(
+        &self,
+        batch_size: usize,
+        force: bool,
+        mut emit: F,
+    ) -> Result<usize, ReaderCoreError>
+    where
+        F: FnMut(Vec<BookSourceMeta>, bool, Option<usize>) -> Fut,
+        Fut: Future<Output = ()>,
+    {
+        let batch_size = batch_size.max(1);
+        if let Some(items) = self.cached_source_list(force).await {
+            let total = items.len();
+            if total == 0 {
+                emit(Vec::new(), true, Some(0)).await;
+                return Ok(0);
+            }
+            for (idx, chunk) in items.chunks(batch_size).enumerate() {
+                let done = (idx + 1) * batch_size >= total;
+                emit(chunk.to_vec(), done, Some(total)).await;
+            }
+            return Ok(total);
+        }
+
+        let mut all = Vec::new();
+        let mut batch = Vec::with_capacity(batch_size);
+        self.stream_legado_sources(batch_size, &mut all, &mut batch, &mut emit)
+            .await?;
+        self.stream_js_sources(batch_size, &mut all, &mut batch, &mut emit)
+            .await?;
+        self.stream_article_sources(batch_size, &mut all, &mut batch, &mut emit)
+            .await?;
+
+        let total = all.len() + batch.len();
+        all.extend(batch.iter().cloned());
+        all.sort_by(|a, b| a.name.cmp(&b.name));
+        if batch.is_empty() {
+            emit(Vec::new(), true, Some(total)).await;
+        } else {
+            let final_batch = std::mem::take(&mut batch);
+            emit(final_batch, true, Some(total)).await;
+        }
+        self.replace_source_list_cache(all).await;
+        Ok(total)
+    }
+
+    async fn scan_sources(&self) -> Result<Vec<BookSourceMeta>, ReaderCoreError> {
         let mut out = Vec::new();
         out.extend(self.list_js_sources().await?);
         out.extend(self.list_legado_sources().await?);
         out.extend(self.list_article_sources().await?);
         out.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(out)
+    }
+
+    async fn cached_source_list(&self, force: bool) -> Option<Vec<BookSourceMeta>> {
+        if force {
+            return None;
+        }
+        self.source_list_cache
+            .read()
+            .await
+            .as_ref()
+            .filter(|cache| cache.loaded_at.elapsed() < SOURCE_LIST_CACHE_TTL)
+            .map(|cache| cache.items.clone())
+    }
+
+    async fn replace_source_list_cache(&self, items: Vec<BookSourceMeta>) {
+        *self.source_list_cache.write().await = Some(SourceListCache {
+            items,
+            loaded_at: Instant::now(),
+        });
+    }
+
+    async fn invalidate_source_list_cache(&self) {
+        *self.source_list_cache.write().await = None;
     }
 
     async fn list_article_sources(&self) -> Result<Vec<BookSourceMeta>, ReaderCoreError> {
@@ -224,11 +317,185 @@ impl ReaderCore {
                     min_delay_ms: 0,
                     require_urls: Vec::new(),
                     has_explore: None,
+                    capabilities: Vec::new(),
                     runtime: SourceRuntimeKind::LegacyArticle,
                 });
             }
         }
         Ok(out)
+    }
+
+    async fn stream_legado_sources<F, Fut>(
+        &self,
+        batch_size: usize,
+        all: &mut Vec<BookSourceMeta>,
+        batch: &mut Vec<BookSourceMeta>,
+        emit: &mut F,
+    ) -> Result<(), ReaderCoreError>
+    where
+        F: FnMut(Vec<BookSourceMeta>, bool, Option<usize>) -> Fut,
+        Fut: Future<Output = ()>,
+    {
+        for raw in self.source_service.list_raw(USER_NS).await? {
+            let Ok(value) = serde_json::from_str::<Value>(&raw) else {
+                continue;
+            };
+            let Ok(source) = book_source_from_value(value) else {
+                continue;
+            };
+            let file_name = legado_file_name(&source);
+            let path = self.legado_source_dir.join(&file_name);
+            let metadata = fs::metadata(&path).await.ok();
+            Self::push_streamed_source(
+                BookSourceMeta::from_legado(
+                    &source,
+                    file_name,
+                    self.legado_source_dir.to_string_lossy().to_string(),
+                    metadata.as_ref(),
+                ),
+                batch_size,
+                all,
+                batch,
+                emit,
+            )
+            .await;
+        }
+        Ok(())
+    }
+
+    async fn stream_js_sources<F, Fut>(
+        &self,
+        batch_size: usize,
+        all: &mut Vec<BookSourceMeta>,
+        batch: &mut Vec<BookSourceMeta>,
+        emit: &mut F,
+    ) -> Result<(), ReaderCoreError>
+    where
+        F: FnMut(Vec<BookSourceMeta>, bool, Option<usize>) -> Fut,
+        Fut: Future<Output = ()>,
+    {
+        for dir in self.js_source_dirs().await? {
+            let mut entries = match fs::read_dir(&dir).await {
+                Ok(entries) => entries,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(err) => return Err(err.into()),
+            };
+            while let Some(entry) = entries.next_entry().await? {
+                let path = entry.path();
+                if path.extension().and_then(|value| value.to_str()) != Some("js") {
+                    continue;
+                }
+                let file_name = entry.file_name().to_string_lossy().to_string();
+                let content = fs::read_to_string(&path).await.unwrap_or_default();
+                let metadata = entry.metadata().await.ok();
+                Self::push_streamed_source(
+                    BookSourceMeta::from_js(
+                        &content,
+                        file_name,
+                        dir.to_string_lossy().to_string(),
+                        metadata.as_ref(),
+                    ),
+                    batch_size,
+                    all,
+                    batch,
+                    emit,
+                )
+                .await;
+            }
+        }
+        Ok(())
+    }
+
+    async fn stream_article_sources<F, Fut>(
+        &self,
+        batch_size: usize,
+        all: &mut Vec<BookSourceMeta>,
+        batch: &mut Vec<BookSourceMeta>,
+        emit: &mut F,
+    ) -> Result<(), ReaderCoreError>
+    where
+        F: FnMut(Vec<BookSourceMeta>, bool, Option<usize>) -> Fut,
+        Fut: Future<Output = ()>,
+    {
+        let article_dir = self.reader_dir.join("sources").join("article-json");
+        let mut entries = match fs::read_dir(&article_dir).await {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => return Err(err.into()),
+        };
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("json") {
+                continue;
+            }
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            let content = fs::read_to_string(&path).await.unwrap_or_default();
+            let Ok(article) = serde_json::from_str::<ArticleSource>(&content) else {
+                continue;
+            };
+            let metadata = fs::metadata(&path).await.ok();
+            let modified = metadata
+                .as_ref()
+                .and_then(|m| {
+                    m.modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs() as i64)
+                })
+                .unwrap_or(0);
+            let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+            Self::push_streamed_source(
+                BookSourceMeta {
+                    source_key: format!("article:{}", article.source_name),
+                    uuid: article.source_name.clone(),
+                    file_name,
+                    name: article.source_name,
+                    url: article.source_url.clone(),
+                    urls: vec![article.source_url.clone()],
+                    homepage_url: None,
+                    author: None,
+                    logo: None,
+                    description: None,
+                    enabled: article.enabled,
+                    file_size: size,
+                    modified_at: modified,
+                    source_dir: article_dir.to_string_lossy().to_string(),
+                    source_type: "article".to_string(),
+                    version: String::new(),
+                    update_url: None,
+                    tags: Vec::new(),
+                    min_delay_ms: 0,
+                    require_urls: Vec::new(),
+                    has_explore: None,
+                    capabilities: Vec::new(),
+                    runtime: SourceRuntimeKind::LegacyArticle,
+                },
+                batch_size,
+                all,
+                batch,
+                emit,
+            )
+            .await;
+        }
+        Ok(())
+    }
+
+    async fn push_streamed_source<F, Fut>(
+        source: BookSourceMeta,
+        batch_size: usize,
+        all: &mut Vec<BookSourceMeta>,
+        batch: &mut Vec<BookSourceMeta>,
+        emit: &mut F,
+    ) where
+        F: FnMut(Vec<BookSourceMeta>, bool, Option<usize>) -> Fut,
+        Fut: Future<Output = ()>,
+    {
+        batch.push(source);
+        if batch.len() >= batch_size {
+            all.extend(batch.iter().cloned());
+            let items = std::mem::take(batch);
+            emit(items, false, None).await;
+        }
     }
 
     pub async fn read_source(
@@ -254,6 +521,7 @@ impl ReaderCore {
             fs::create_dir_all(parent).await?;
         }
         fs::write(path, content).await?;
+        self.invalidate_source_list_cache().await;
         Ok(())
     }
 
@@ -271,8 +539,14 @@ impl ReaderCore {
         }
         let path = self.resolve_source_file(file_name, source_dir);
         match fs::remove_file(path).await {
-            Ok(()) => Ok(()),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Ok(()) => {
+                self.invalidate_source_list_cache().await;
+                Ok(())
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                self.invalidate_source_list_cache().await;
+                Ok(())
+            }
             Err(err) => Err(err.into()),
         }
     }
@@ -294,6 +568,7 @@ impl ReaderCore {
         let content = fs::read_to_string(&path).await?;
         let content = set_js_meta_enabled(&content, enabled);
         fs::write(path, content).await?;
+        self.invalidate_source_list_cache().await;
         Ok(())
     }
 
@@ -334,6 +609,7 @@ impl ReaderCore {
                     fs::create_dir_all(&article_dir).await?;
                     let article_path = article_dir.join(&file_name);
                     fs::write(&article_path, serde_json::to_string_pretty(&article)?).await?;
+                    self.invalidate_source_list_cache().await;
                     result.imported += 1;
                     result.files.push(file_name);
                     continue;
@@ -2261,6 +2537,7 @@ impl ReaderCore {
         let json = serde_json::to_string_pretty(source)?;
         fs::write(path, json).await?;
         self.source_service.save(USER_NS, source.clone()).await?;
+        self.invalidate_source_list_cache().await;
         Ok(())
     }
 
@@ -3294,6 +3571,7 @@ impl BookSourceMeta {
                 .unwrap_or(0),
             require_urls: Vec::new(),
             has_explore: Some(capabilities.iter().any(|item| item == "explore")),
+            capabilities,
             runtime: SourceRuntimeKind::LegadoRule,
         }
     }
@@ -3361,6 +3639,7 @@ impl BookSourceMeta {
                 .unwrap_or(0),
             require_urls: read_js_meta_values(content, "@require"),
             has_explore: Some(capabilities.iter().any(|item| item == "explore")),
+            capabilities,
             runtime: SourceRuntimeKind::JsScript,
         }
     }

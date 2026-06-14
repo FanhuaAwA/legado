@@ -12,7 +12,7 @@
 use reader_core::{AddBookPayload, CachedChapter, ReaderSessionPayload, UpdateShelfBookPayload};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use super::bookshelf::{self, ExportBookDataRequest, PrefetchPayload};
 use super::config;
@@ -136,6 +136,31 @@ pub async fn dispatch<R: tauri::Runtime>(
         "booksource_get_dir" => reply(source::booksource_get_dir(state).await),
         "booksource_get_dirs" => reply(source::booksource_get_dirs(state).await),
         "booksource_list" => reply(source::booksource_list(state).await),
+        "booksource_list_streaming" => {
+            let (request_id, force) =
+                parsed!(raw, { request_id: String, force: Option<bool> });
+            let result: Result<(), reader_core::CommandError> = state
+                .core
+                .stream_sources(20, force.unwrap_or(false), |items, done, total| {
+                    let app = app.clone();
+                    let request_id = request_id.clone();
+                    async move {
+                        let _ = app.emit(
+                            "booksource:batch",
+                            serde_json::json!({
+                                "requestId": request_id,
+                                "items": items,
+                                "done": done,
+                                "total": total
+                            }),
+                        );
+                    }
+                })
+                .await
+                .map(|_| ())
+                .map_err(|err| err.into_command_error());
+            reply(result)
+        }
         "booksource_read" => {
             let (file_name, source_dir) =
                 parsed!(raw, { file_name: String, source_dir: Option<String> });

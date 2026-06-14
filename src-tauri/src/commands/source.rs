@@ -105,23 +105,29 @@ pub async fn booksource_list_streaming(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     request_id: String,
+    force: Option<bool>,
 ) -> CommandResult<()> {
-    let items = state.core.list_sources().await.map_err(map_err)?;
-    let total = items.len();
     let batch_size = 20;
-    for (idx, chunk) in items.chunks(batch_size).enumerate() {
-        let done = (idx + 1) * batch_size >= total;
-        let _ = app.emit(
-            "booksource:batch",
-            serde_json::json!({
-                "requestId": &request_id,
-                "items": chunk,
-                "done": done,
-                "total": total
-            }),
-        );
-    }
-    Ok(())
+    state
+        .core
+        .stream_sources(batch_size, force.unwrap_or(false), |items, done, total| {
+            let app = app.clone();
+            let request_id = request_id.clone();
+            async move {
+                let _ = app.emit(
+                    "booksource:batch",
+                    serde_json::json!({
+                        "requestId": request_id,
+                        "items": items,
+                        "done": done,
+                        "total": total
+                    }),
+                );
+            }
+        })
+        .await
+        .map(|_| ())
+        .map_err(map_err)
 }
 
 #[tauri::command]

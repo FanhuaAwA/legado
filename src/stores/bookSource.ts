@@ -161,34 +161,40 @@ export const useBookSourceStore = defineStore("bookSource", () => {
 
   // ── Actions ──────────────────────────────────────────────────────────
 
-  /** 将新扫描到的列表增量合并进 sources.value，不清空数组以保持滚动位置。
-   * - 已有项：就地更新字段
-   * - 新增项：插入到列表顶部
-   * - 已删除项：从数组中移除
-   */
-  function applySourcesBatch(next: BookSourceMeta[]): void {
-    const nextByKey = new Map(next.map((s) => [getSourceCacheKey(s), s]));
-    const currentByKey = new Map(sources.value.map((s) => [getSourceCacheKey(s), s]));
+  function seedCapabilitiesFromMeta(source: BookSourceMeta): void {
+    const capabilities = source.capabilities?.filter(Boolean) ?? [];
+    if (!capabilities.length) {
+      return;
+    }
+    fnsCache[getSourceCacheKey(source)] = new Set(capabilities);
+  }
 
-    // 移除已删除的项（逆序遍历避免索引偏移）
+  /** 将新扫描到的批次立即合并进 sources.value，不清空数组以保持滚动位置。 */
+  function mergeSourcesBatch(next: BookSourceMeta[]): void {
+    if (!next.length) {
+      return;
+    }
+    const currentByKey = new Map(
+      sources.value.map((source) => [getSourceCacheKey(source), source]),
+    );
+    for (const item of next) {
+      seedCapabilitiesFromMeta(item);
+      const key = getSourceCacheKey(item);
+      const current = currentByKey.get(key);
+      if (current) {
+        Object.assign(current, item);
+      } else {
+        sources.value.push(item);
+      }
+    }
+    sources.value.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  function pruneSourcesNotSeen(seenKeys: Set<string>): void {
     for (let i = sources.value.length - 1; i >= 0; i--) {
-      if (!nextByKey.has(getSourceCacheKey(sources.value[i]))) {
+      if (!seenKeys.has(getSourceCacheKey(sources.value[i]))) {
         sources.value.splice(i, 1);
       }
-    }
-
-    // 就地更新已有项
-    for (let i = 0; i < sources.value.length; i++) {
-      const updated = nextByKey.get(getSourceCacheKey(sources.value[i]));
-      if (updated) {
-        Object.assign(sources.value[i], updated);
-      }
-    }
-
-    // 将新增项插入到列表顶部
-    const newItems = next.filter((s) => !currentByKey.has(getSourceCacheKey(s)));
-    if (newItems.length > 0) {
-      sources.value.unshift(...newItems);
     }
   }
 
@@ -208,8 +214,7 @@ export const useBookSourceStore = defineStore("bookSource", () => {
     _loadInFlight = (async () => {
       loading.value = true;
       streamingLoaded.value = 0;
-      // freshItems 收集本次流式批次，全部到齐后再增量合并进 sources.value
-      const freshItems: BookSourceMeta[] = [];
+      const freshKeys = new Set<string>();
 
       try {
         const requestId = safeRandomUUID();
@@ -230,7 +235,11 @@ export const useBookSourceStore = defineStore("bookSource", () => {
           }>("booksource:batch", (event) => {
             const { requestId: id, items, done, error } = event.payload;
 
-            // 非当前请求的批次（过期流）：等 done 时自动清理监听
+            if (id !== requestId) {
+              return;
+            }
+
+            // 当前监听器所属请求已过期：只清理自己，不影响新请求。
             if (id !== _streamRequestId) {
               if (done) {
                 unlisten();
@@ -239,13 +248,15 @@ export const useBookSourceStore = defineStore("bookSource", () => {
             }
 
             if (items.length > 0) {
-              freshItems.push(...items);
+              for (const item of items) {
+                freshKeys.add(getSourceCacheKey(item));
+              }
+              mergeSourcesBatch(items);
               streamingLoaded.value += items.length;
             }
 
             if (done) {
-              // 全部到达后按名称排序后增量合并，不清空现有列表
-              applySourcesBatch(freshItems.toSorted((a, b) => a.name.localeCompare(b.name)));
+              pruneSourcesNotSeen(freshKeys);
               unlisten();
               if (typeof error === "string" && error.length > 0) {
                 reject(new Error(error));
@@ -256,13 +267,14 @@ export const useBookSourceStore = defineStore("bookSource", () => {
           });
 
           // 启动后端流式扫描（立即返回）
-          listBookSourcesStreaming(requestId).catch((err: unknown) => {
+          listBookSourcesStreaming(requestId, force).catch((err: unknown) => {
             if (isStreamingListUnsupported(err)) {
               unlisten();
               listBookSources()
                 .then((items) => {
-                  const sorted = items.toSorted((a, b) => a.name.localeCompare(b.name));
-                  applySourcesBatch(sorted);
+                  const seenKeys = new Set(items.map(getSourceCacheKey));
+                  mergeSourcesBatch(items);
+                  pruneSourcesNotSeen(seenKeys);
                   streamingLoaded.value = sources.value.length;
                   resolve();
                 })

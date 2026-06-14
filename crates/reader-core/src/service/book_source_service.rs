@@ -55,7 +55,7 @@ impl BookSourceService {
     }
 
     pub async fn list(&self, user_ns: &str) -> Result<Vec<BookSource>, AppError> {
-        let rows = self.repo.list(user_ns).await?;
+        let rows = self.list_raw(user_ns).await?;
         let mut out = Vec::with_capacity(rows.len());
         for j in rows {
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(&j) {
@@ -67,6 +67,10 @@ impl BookSourceService {
             }
         }
         Ok(out)
+    }
+
+    pub async fn list_raw(&self, user_ns: &str) -> Result<Vec<String>, AppError> {
+        self.repo.list(user_ns).await
     }
 
     pub async fn delete(&self, user_ns: &str, book_source_url: &str) -> Result<(), AppError> {

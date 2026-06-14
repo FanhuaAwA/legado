@@ -1,5 +1,40 @@
 # AI Task Status
 
+## 2026-06-14 PERF-BOOKSOURCE-LAZY-LIST 状态更新
+
+本轮状态：`local-gate-pass`；提交、推送与远程 CI 状态以 git history 和 GitHub Actions 为准。
+
+任务 ID：`PERF-2026-06-14-BOOKSOURCE-LAZY-LIST`。本轮按用户反馈优化大量书源（如喵/猫公子订阅导入后的大列表）在加载、搜索入口筛选、发现入口筛选等依赖书源列表功能上的长时间等待。范围限定在通用书源列表扫描、流式推送、前端逐批合并与能力元数据预热；不触碰第三方/私有书源样本，不写任何书源名特判，不改变搜索、详情、目录、正文规则语义。
+
+关键修改：
+
+- `ReaderCore::list_sources()` 增加 30 分钟内存缓存；新增 `stream_sources(batch_size, force, emit)`，从 Legado DB、JS 书源目录、article JSON 目录扫描阶段直接分批 emit，不再先全量扫描完再推送。
+- `BookSourceMeta` 新增 `capabilities`，由 Legado rule 字段或 JS 顶层函数轻量扫描得出；前端用它预热 `fnsCache`，避免列表进入搜索/发现筛选时再逐源做能力检测。
+- Tauri IPC、Route B WebSocket router、headless WS dispatcher 均接入同一 `ReaderCore::stream_sources`；`booksource_list_streaming` 新增可选 `force` 参数，`booksource:batch` 保持统一事件契约。
+- `src/stores/bookSource.ts` 改为收到每个批次就合并、排序和渲染，最后 `done` 时只裁剪本轮未见的旧项；同时修复过期流监听器误清理新请求的竞态。
+- 所有书源新增/删除/启停、外部目录变更、Legado 导入等会使列表变化的写入路径均失效缓存。
+- `.cargo/config.toml` 仅因 `pnpm lint` 的 `oxfmt --check .` 基线要求做了格式化，无业务语义变化。
+
+已通过 gate：
+
+- `cargo fmt --all -- --check`
+- `cargo check -p reader-core`
+- `cargo check -p legado-tauri`
+- `cargo check -p legado-headless`
+- `cargo test -p reader-core stream_sources_emits_incremental_batches_with_capabilities -- --nocapture`
+- `cargo test -p legado-tauri booksource_list_streaming_is_routed -- --nocapture`
+- `cmd /c pnpm.cmd lint`
+- `cmd /c pnpm.cmd build`
+- `cargo test -p reader-core`
+- `cargo test -p legado-tauri`
+- `cargo test -p legado-headless`
+- `node scripts/ci/check-command-contract.mjs --json`
+- `git diff --check`
+
+命令契约基线保持不变：`frontendTotal=162`、`registeredTotal=161`、`bothCount=161`、`onlyFrontend=["js_eval"]`、`onlyBackend=[]`、`frontend_unsupported_stub_count=39`、`frontend_implemented_count=122`。
+
+剩余风险：本轮解决的是书源列表扫描和列表依赖筛选的首批可见与重复扫描问题；多源搜索本体仍会受启用书源数量、单源网络质量和规则执行耗时影响，后续应继续做搜索任务并发上限、进度事件、取消和按源超时的性能收口。Android 真机下的大批量导入/搜索体验仍需单独设备验证。
+
 ## 2026-06-13 PERF-EXTENSION-EXAMPLES-LAZY 状态更新
 
 本轮状态：`local-gate-pass`；提交、推送与远程 CI 状态以 git history 和 GitHub Actions 为准。

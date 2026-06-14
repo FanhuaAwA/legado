@@ -212,39 +212,28 @@ async fn dispatch(state: &AppState, raw: &str, out: &WsOutgoing) -> Option<Strin
             .map_err(|e| e.to_string()),
         "booksource_list_streaming" => {
             let request_id = arg_str(&args, "requestId").unwrap_or("").to_string();
-            let items = match core.list_sources().await {
-                Ok(items) => items,
-                Err(err) => return Some(response_err(&id, err.to_string())),
-            };
-            let total = items.len();
-            let batch_size = 20;
-            if total == 0 {
-                send_ws_event(
-                    out,
-                    "booksource:batch",
-                    json!({
-                        "requestId": request_id,
-                        "items": [],
-                        "done": true,
-                        "total": 0
-                    }),
-                )
-                .await;
-            } else {
-                for (idx, chunk) in items.chunks(batch_size).enumerate() {
-                    let done = (idx + 1) * batch_size >= total;
-                    send_ws_event(
-                        out,
-                        "booksource:batch",
-                        json!({
-                            "requestId": request_id,
-                            "items": chunk,
-                            "done": done,
-                            "total": total
-                        }),
-                    )
-                    .await;
-                }
+            let force = args.get("force").and_then(Value::as_bool).unwrap_or(false);
+            if let Err(err) = core
+                .stream_sources(20, force, |items, done, total| {
+                    let out = out.clone();
+                    let request_id = request_id.clone();
+                    async move {
+                        send_ws_event(
+                            &out,
+                            "booksource:batch",
+                            json!({
+                                "requestId": request_id,
+                                "items": items,
+                                "done": done,
+                                "total": total
+                            }),
+                        )
+                        .await;
+                    }
+                })
+                .await
+            {
+                return Some(response_err(&id, err.to_string()));
             }
             Ok(Value::Null)
         }
@@ -813,7 +802,8 @@ mod tests {
             "args": args,
         })
         .to_string();
-        let response = dispatch(state, &raw).await.expect("response");
+        let out: WsOutgoing = Arc::new(Mutex::new(None));
+        let response = dispatch(state, &raw, &out).await.expect("response");
         let value: Value = serde_json::from_str(&response).expect("response json");
         if let Some(error) = value.get("error") {
             panic!("{cmd} failed: {error}");

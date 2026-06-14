@@ -420,6 +420,63 @@ async fn prefetch_chapters_respects_range_and_emits_progress() {
 }
 
 #[tokio::test]
+async fn stream_sources_emits_incremental_batches_with_capabilities() {
+    let temp = tempfile::tempdir().unwrap();
+    let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
+        .await
+        .unwrap();
+
+    for index in 0..3 {
+        let source = json!({
+            "bookSourceName": format!("Batch Fixture {index}"),
+            "bookSourceUrl": format!("https://batch.example/{index}"),
+            "searchUrl": "/search?key={{key}}",
+            "ruleSearch": {
+                "bookList": "$[*]",
+                "name": "name",
+                "author": "author",
+                "bookUrl": "bookUrl"
+            }
+        });
+        core.import_legacy_json_text(&source.to_string(), false)
+            .await
+            .unwrap();
+    }
+
+    let batches = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let batches_for_callback = batches.clone();
+    let total = core
+        .stream_sources(2, true, move |items, done, total| {
+            let batches = batches_for_callback.clone();
+            async move {
+                batches.lock().unwrap().push((
+                    items.len(),
+                    done,
+                    total,
+                    items
+                        .iter()
+                        .all(|item| item.capabilities.iter().any(|cap| cap == "search")),
+                ));
+            }
+        })
+        .await
+        .unwrap();
+
+    let batches = batches.lock().unwrap();
+    assert_eq!(total, 3);
+    assert!(
+        batches.iter().any(|(_, done, _, _)| !done),
+        "expected at least one non-final batch: {batches:?}"
+    );
+    assert_eq!(batches.last().map(|(_, done, _, _)| *done), Some(true));
+    assert_eq!(batches.last().and_then(|(_, _, total, _)| *total), Some(3));
+    assert!(
+        batches.iter().all(|(_, _, _, has_search)| *has_search),
+        "capabilities should be carried in every streamed meta batch: {batches:?}"
+    );
+}
+
+#[tokio::test]
 #[ignore = "live network test for the user-provided Legado source"]
 async fn live_yckceo_3417_novel_reading_path() {
     let temp = tempfile::tempdir().unwrap();

@@ -62,6 +62,7 @@ pub struct BookSourceMeta {
     pub min_delay_ms: u64,
     pub require_urls: Vec<String>,
     pub has_explore: Option<bool>,
+    pub capabilities: Vec<String>,
     pub runtime: SourceRuntimeKind,
 }
 
