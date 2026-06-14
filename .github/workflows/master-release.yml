@@ -1,0 +1,401 @@
+name: Master Release
+
+on:
+  workflow_run:
+    workflows: ["Quality Gate"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: master-release-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+env:
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_HTTP_TIMEOUT: "120"
+  CARGO_NET_RETRY: "10"
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+
+jobs:
+  prepare:
+    name: Prepare release metadata
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'master'
+    runs-on: ubuntu-latest
+    outputs:
+      head_sha: ${{ steps.meta.outputs.head_sha }}
+      short_sha: ${{ steps.meta.outputs.short_sha }}
+      version: ${{ steps.meta.outputs.version }}
+      tag_name: ${{ steps.meta.outputs.tag_name }}
+      release_name: ${{ steps.meta.outputs.release_name }}
+
+    steps:
+      - name: Checkout gated commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Generate release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
+          SHORT_SHA="${HEAD_SHA:0:7}"
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG_NAME="master-v${VERSION}-${SHORT_SHA}"
+          RELEASE_NAME="Master ${VERSION} (${SHORT_SHA})"
+
+          echo "head_sha=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "release_name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
+
+  build-windows:
+    name: Build Windows
+    needs: prepare
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout gated commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.head_sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Windows executable
+        shell: pwsh
+        env:
+          RUSTFLAGS: -C debuginfo=0
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: "3"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
+          CARGO_PROFILE_RELEASE_LTO: "thin"
+          CARGO_PROFILE_RELEASE_INCREMENTAL: "false"
+          CARGO_PROFILE_RELEASE_DEBUG: "false"
+          CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "false"
+          CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: "false"
+          CARGO_PROFILE_RELEASE_STRIP: "symbols"
+        run: pnpm tauri build --target x86_64-pc-windows-msvc --no-bundle
+
+      - name: Collect Windows assets
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+
+          $candidates = @(
+            "src-tauri/target/x86_64-pc-windows-msvc/release/legado-tauri.exe",
+            "target/x86_64-pc-windows-msvc/release/legado-tauri.exe",
+            "src-tauri/target/release/legado-tauri.exe",
+            "target/release/legado-tauri.exe"
+          )
+
+          $found = $false
+          foreach ($candidate in $candidates) {
+            if (Test-Path $candidate) {
+              Copy-Item $candidate "release-assets/Legado-Tauri-${{ needs.prepare.outputs.version }}-windows-x64.exe"
+              $found = $true
+              break
+            }
+          }
+
+          if (-not $found) {
+            Get-ChildItem -Recurse -File -Path src-tauri/target,target -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -eq "legado-tauri.exe" } |
+              Select-Object -First 1 |
+              ForEach-Object {
+                Copy-Item $_.FullName "release-assets/Legado-Tauri-${{ needs.prepare.outputs.version }}-windows-x64.exe"
+                $script:found = $true
+              }
+          }
+
+          if (-not $found) {
+            throw "No Windows executable artifact found."
+          }
+
+          Get-ChildItem release-assets
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: master-release-windows
+          path: release-assets/*
+          if-no-files-found: error
+
+  build-android:
+    name: Build Android
+    needs: prepare
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout gated commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.head_sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            platform-tools
+            build-tools;35.0.0
+            platforms;android-36
+            ndk;27.1.12297006
+            cmdline-tools;latest
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Configure Android environment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          NDK_PATH="$(find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$NDK_PATH" >> "$GITHUB_ENV"
+          echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+          echo "BUILD_TOOLS_DIR=$ANDROID_HOME/build-tools/35.0.0" >> "$GITHUB_ENV"
+
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_NDK_HOME=$NDK_PATH"
+          test -f "$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          java -version
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Android APK
+        shell: bash
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+          RUSTFLAGS: -C debuginfo=0
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: "3"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
+          CARGO_PROFILE_RELEASE_LTO: "thin"
+          CARGO_PROFILE_RELEASE_INCREMENTAL: "false"
+          CARGO_PROFILE_RELEASE_DEBUG: "false"
+          CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: "false"
+          CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS: "false"
+          CARGO_PROFILE_RELEASE_STRIP: "symbols"
+        run: pnpm tauri android build --apk --target aarch64
+
+      - name: Sign Android APKs with V1 V2 V3
+        shell: bash
+        env:
+          APK_RELEASE_KEY_STORE: ${{ secrets.APK_RELEASE_KEY_STORE }}
+          APK_RELEASE_KEY_ALIAS: ${{ secrets.APK_RELEASE_KEY_ALIAS }}
+          APK_RELEASE_STORE_PASSWORD: ${{ secrets.APK_RELEASE_STORE_PASSWORD }}
+          APK_RELEASE_KEY_PASSWORD: ${{ secrets.APK_RELEASE_KEY_PASSWORD }}
+          APK_RELEASE_KEY_STORE_TYPE: ${{ secrets.APK_RELEASE_KEY_STORE_TYPE }}
+        run: |
+          set -euo pipefail
+
+          required=(
+            APK_RELEASE_KEY_STORE
+            APK_RELEASE_KEY_ALIAS
+            APK_RELEASE_STORE_PASSWORD
+            APK_RELEASE_KEY_PASSWORD
+          )
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required GitHub secret: $name"
+              exit 1
+            fi
+          done
+
+          KEYSTORE="$RUNNER_TEMP/release-signing.p12"
+          printf '%s' "$APK_RELEASE_KEY_STORE" | base64 --decode > "$KEYSTORE"
+          test -s "$KEYSTORE"
+
+          mkdir -p release-assets
+          shopt -s globstar nullglob
+          apks=(src-tauri/gen/android/app/build/outputs/apk/**/*.apk)
+
+          if [ "${#apks[@]}" -eq 0 ]; then
+            echo "No Android APK artifacts found."
+            exit 1
+          fi
+
+          for apk in "${apks[@]}"; do
+            name="$(basename "$apk")"
+            out="release-assets/Legado-Tauri-${{ needs.prepare.outputs.version }}-${name%.apk}-v1-v2-v3-signed.apk"
+            "$BUILD_TOOLS_DIR/apksigner" sign \
+              --ks "$KEYSTORE" \
+              --ks-type "${APK_RELEASE_KEY_STORE_TYPE:-PKCS12}" \
+              --ks-key-alias "$APK_RELEASE_KEY_ALIAS" \
+              --ks-pass "pass:$APK_RELEASE_STORE_PASSWORD" \
+              --key-pass "pass:$APK_RELEASE_KEY_PASSWORD" \
+              --min-sdk-version 21 \
+              --v1-signing-enabled true \
+              --v2-signing-enabled true \
+              --v3-signing-enabled true \
+              --v4-signing-enabled false \
+              --out "$out" \
+              "$apk"
+          done
+
+          find release-assets -maxdepth 1 -type f -print
+
+      - name: Verify Android APK signatures
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          shopt -s nullglob
+          signed_apks=(release-assets/*.apk)
+          if [ "${#signed_apks[@]}" -eq 0 ]; then
+            echo "No signed APK artifacts found."
+            exit 1
+          fi
+
+          for apk in "${signed_apks[@]}"; do
+            echo "Verifying $apk"
+            "$BUILD_TOOLS_DIR/apksigner" verify \
+              --verbose \
+              --print-certs \
+              --min-sdk-version 21 \
+              "$apk" | tee "${apk}.verify.txt"
+
+            grep -q "Verified using v1 scheme (JAR signing): true" "${apk}.verify.txt"
+            grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" "${apk}.verify.txt"
+            grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" "${apk}.verify.txt"
+          done
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: master-release-android
+          path: release-assets/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - prepare
+      - build-windows
+      - build-android
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout gated commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.head_sha }}
+          fetch-depth: 0
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: master-release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          {
+            echo "Automated prerelease generated after Quality Gate passed on master."
+            echo
+            echo "- Commit: \`${{ needs.prepare.outputs.head_sha }}\`"
+            echo "- Workflow run: ${{ github.event.workflow_run.html_url }}"
+            echo "- Windows: x64 executable"
+            echo "- Android: APK signed with V1, V2, and V3 schemes"
+          } > release-notes.md
+
+          echo "===== assets ====="
+          find release-assets -maxdepth 1 -type f -print | sort
+          echo "===== release notes ====="
+          cat release-notes.md
+
+      - name: Create or update release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
+          RELEASE_NAME: ${{ needs.prepare.outputs.release_name }}
+          HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if ! git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+            git tag "$TAG_NAME" "$HEAD_SHA"
+            git push origin "$TAG_NAME"
+          fi
+
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release edit "$TAG_NAME" \
+              --title "$RELEASE_NAME" \
+              --notes-file release-notes.md \
+              --prerelease
+            gh release upload "$TAG_NAME" release-assets/* --clobber
+          else
+            gh release create "$TAG_NAME" release-assets/* \
+              --title "$RELEASE_NAME" \
+              --notes-file release-notes.md \
+              --prerelease \
+              --target "$HEAD_SHA"
+          fi

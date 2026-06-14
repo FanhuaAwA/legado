@@ -1,5 +1,32 @@
 # AI Task Status
 
+## 2026-06-14 REL-MASTER-SIGNED-RELEASE 状态更新
+
+本轮状态：`local-gate-pass`；将追加到 `master`，GitHub Actions 自动发布状态以远端 run 为准。
+
+任务 ID：`REL-2026-06-14-MASTER-SIGNED-RELEASE`。本轮按用户要求新增 `master` 分支 Quality Gate 通过后的自动编译发布链路，并生成新的 Android release keystore，对 APK 执行 V1+V2+V3 签名。范围限定在 GitHub Actions 发布编排、本地/Secrets 签名材料配置和 APK 签名验证；不提交 keystore、密码、签名配置实值或 APK 构建产物。
+
+关键修改：
+
+- 新增 `.github/workflows/master-release.yml`，监听 `Quality Gate` 的 successful `workflow_run`，仅 `master` push 触发 prerelease 发布。
+- Windows job 构建 x64 executable；Android job 构建 unsigned APK 后用 GitHub Secrets 解码 keystore 并执行 `apksigner` 签名。
+- Android 签名显式启用 V1/V2/V3，并使用 `--min-sdk-version 21` 强制生成 V1/JAR 签名。
+- Android 发布前校验 `Verified using v1/v2/v3 ... true`。
+- `.gitignore` 新增 `.release-secrets/`，本地密钥元数据保持 ignored。
+- 已生成新的本地 PKCS12 release keystore，并把对应签名材料写入 GitHub repository secrets。
+
+已通过 gate：
+
+- `cmd /c pnpm.cmd tauri android build --apk --target aarch64`
+- `apksigner sign --min-sdk-version 21 --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true`
+- `apksigner verify --verbose --print-certs --min-sdk-version 21`（V1/V2/V3 均为 true）
+- `cmd /c pnpm.cmd lint`
+- `git diff --check`
+
+Gate 报告：`reports/gates/2026-06-14-REL-MASTER-SIGNED-RELEASE/summary.md`。
+
+剩余风险：新增 workflow 仍需推送后由 GitHub Actions 真实解析和运行；本地无 actionlint/YAML parser。当前发布为 prerelease，tag 形如 `master-v{version}-{shortSha}`；正式版发布策略可后续独立设计。Windows 当前发布 executable，安装包需后续恢复 bundler。
+
 ## 2026-06-14 PERF-IMPORT-BATCH-UPSERT 状态更新
 
 本轮状态：`local-gate-pass`；将追加到 `codex/perf-booksource-lazy-list` 分支，PR 状态以 GitHub 为准。

@@ -42,6 +42,7 @@ reader-rust/
 # 本地配置文件
 .env
 *.local
+.release-secrets/
 *.jks
 *.keystore
 *.p12

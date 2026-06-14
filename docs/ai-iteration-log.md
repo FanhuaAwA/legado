@@ -1,5 +1,47 @@
 # AI Iteration Log
 
+## 2026-06-14 REL-MASTER-SIGNED-RELEASE
+
+任务 ID：`REL-2026-06-14-MASTER-SIGNED-RELEASE`
+
+本轮目标：按用户要求让 GitHub 在 `master` 分支 Quality Gate 通过后继续编译 Windows/Android 产物并发布到 GitHub Releases，同时为 Android APK 配置新的 release keystore 并执行 V1+V2+V3 签名。
+
+关键判断：
+
+- 现有 `Release.yml` 是 tag/manual 触发，并且会 clone 外部上游仓库，不适合作为本仓库 `master` 自动发布链路。
+- 自动发布应只在 `Quality Gate` 的 `workflow_run` 成功、事件为 `push`、分支为 `master` 时触发；PR 门禁不应自动发版。
+- Android signing secrets 不能入库；本地生成的 `release-signing.p12`、`keystore.properties` 和 `.release-secrets/` 均保持 git ignored。
+
+实现：
+
+- 新增 `.github/workflows/master-release.yml`：监听 `Quality Gate` 完成事件，成功后构建 Windows x64 可执行文件和 Android APK，并创建 GitHub prerelease。
+- Android release job 从 GitHub Secrets 读取 `APK_RELEASE_KEY_STORE`、`APK_RELEASE_KEY_ALIAS`、`APK_RELEASE_STORE_PASSWORD`、`APK_RELEASE_KEY_PASSWORD`、`APK_RELEASE_KEY_STORE_TYPE`。
+- Android job 构建 unsigned APK 后调用 `apksigner sign`，显式开启 `--v1-signing-enabled true`、`--v2-signing-enabled true`、`--v3-signing-enabled true`，并用 `--min-sdk-version 21` 强制生成 V1/JAR 签名。
+- 发布前使用 `apksigner verify --verbose --print-certs --min-sdk-version 21` 检查 V1/V2/V3 都为 true。
+- `.gitignore` 新增 `.release-secrets/`，避免本地生成的密钥元数据误入库。
+- 已生成新的本地 PKCS12 release keystore，并设置到 GitHub repository secrets。
+
+本地验证：
+
+- `cmd /c pnpm.cmd tauri android build --apk --target aarch64`：PASS，产出 unsigned APK。
+- `apksigner sign --min-sdk-version 21 --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true`：PASS。
+- `apksigner verify --verbose --print-certs --min-sdk-version 21`：PASS，V1/V2/V3 均为 true。
+- `cmd /c pnpm.cmd lint`：PASS。
+- `git diff --check`：PASS，仅 Windows LF/CRLF 工作区提示。
+
+产物：
+
+- 本地签名 APK：`构建结果/android-signed/Legado-Tauri-0.9.0-android-aarch64-v1-v2-v3-signed.apk`。
+- 签名校验输出：`构建结果/android-signed/apksigner-verify.txt`。
+
+Gate 报告：`reports/gates/2026-06-14-REL-MASTER-SIGNED-RELEASE/summary.md`。
+
+剩余风险：
+
+- 新增 workflow 需要推送到 GitHub 后由 Actions 真实解析和运行；本地没有 actionlint/YAML parser 可用。
+- GitHub 自动发布会创建 prerelease tag `master-v{version}-{shortSha}`；如后续需要正式版/稳定 tag 策略，应再拆分 release channel。
+- Windows 当前按本项目 `bundle.active=false` 产出 x64 executable；安装包发布可后续恢复 Tauri bundler。
+
 ## 2026-06-14 PERF-IMPORT-BATCH-UPSERT
 
 任务 ID：`PERF-2026-06-14-IMPORT-BATCH-UPSERT`
