@@ -258,6 +258,7 @@ async fn dispatch(state: &AppState, raw: &str, out: &WsOutgoing) -> Option<Strin
             let keyword = arg_str(&args, "keyword").unwrap_or("");
             let file_name = arg_str(&args, "fileName").unwrap_or("");
             let page = arg_i32(&args, "page").unwrap_or(1);
+            let _task_id = arg_str(&args, "taskId");
             let source_dir = arg_str(&args, "sourceDir");
             core.search(file_name, keyword, page, source_dir)
                 .await

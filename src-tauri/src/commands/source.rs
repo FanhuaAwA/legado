@@ -5,6 +5,8 @@ use reader_core::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tauri::{Emitter, State};
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use tauri_plugin_dialog::DialogExt;
@@ -13,6 +15,21 @@ type CommandResult<T> = Result<T, CommandError>;
 
 fn map_err(err: reader_core::ReaderCoreError) -> CommandError {
     err.into_command_error()
+}
+
+fn cancelled_error() -> CommandError {
+    CommandError {
+        code: "CANCELLED".to_string(),
+        message: "任务已取消".to_string(),
+        detail: None,
+        retryable: false,
+    }
+}
+
+async fn wait_for_cancel(cancelled: Arc<AtomicBool>) {
+    while !cancelled.load(Ordering::SeqCst) {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -275,13 +292,34 @@ pub async fn booksource_search(
     file_name: String,
     keyword: String,
     page: i32,
+    task_id: Option<String>,
     source_dir: Option<String>,
 ) -> CommandResult<Vec<BookItem>> {
-    state
-        .core
-        .search(&file_name, &keyword, page, source_dir.as_deref())
-        .await
-        .map_err(map_err)
+    let token = task_id.as_deref().map(|tid| state.tasks.register(tid));
+    if let Some(ref t) = token {
+        if t.load(Ordering::SeqCst) {
+            return Err(cancelled_error());
+        }
+    }
+
+    let result = if let Some(t) = token {
+        tokio::select! {
+            result = state.core.search(&file_name, &keyword, page, source_dir.as_deref()) => {
+                result.map_err(map_err)
+            }
+            _ = wait_for_cancel(t) => Err(cancelled_error()),
+        }
+    } else {
+        state
+            .core
+            .search(&file_name, &keyword, page, source_dir.as_deref())
+            .await
+            .map_err(map_err)
+    };
+    if let Some(tid) = task_id.as_deref() {
+        state.tasks.remove(tid);
+    }
+    result
 }
 
 #[tauri::command]
@@ -308,13 +346,8 @@ pub async fn booksource_chapter_list(
 ) -> CommandResult<Vec<ChapterItem>> {
     let token = task_id.as_deref().map(|tid| state.tasks.register(tid));
     if let Some(ref t) = token {
-        if t.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(CommandError {
-                code: "CANCELLED".to_string(),
-                message: "任务已取消".to_string(),
-                detail: None,
-                retryable: false,
-            });
+        if t.load(Ordering::SeqCst) {
+            return Err(cancelled_error());
         }
     }
     let result = state
@@ -339,13 +372,8 @@ pub async fn booksource_chapter_content(
 ) -> CommandResult<String> {
     let token = task_id.as_deref().map(|tid| state.tasks.register(tid));
     if let Some(ref t) = token {
-        if t.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(CommandError {
-                code: "CANCELLED".to_string(),
-                message: "任务已取消".to_string(),
-                detail: None,
-                retryable: false,
-            });
+        if t.load(Ordering::SeqCst) {
+            return Err(cancelled_error());
         }
     }
     let result = state

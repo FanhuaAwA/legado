@@ -1,5 +1,45 @@
 # AI Iteration Log
 
+## 2026-06-14 PERF-SEARCH-CANCEL-TASKS
+
+任务 ID：`PERF-2026-06-14-SEARCH-CANCEL-TASKS`
+
+本轮目标：继续优化大量书源搜索体验。前两轮已经让搜索页能边加载书源边动态入队；本轮补上“停止搜索”对后端单源搜索命令的取消，减少用户停止后仍等待已发出请求完成/超时的情况。
+
+关键判断：
+
+- `TaskRegistry` 已存在，`booksource_cancel` 已是前后端公共取消入口。
+- `booksource_chapter_list` / `booksource_chapter_content` 已接受 `taskId`，但 `booksource_search` 没有接入，搜索页停止搜索只是不再回写旧结果。
+- 搜索页已有动态 `SearchRun` 队列，适合在每个活跃单源搜索上挂 task id。
+
+实现：
+
+- `src-tauri/src/commands/source.rs`：`booksource_search` 新增 `task_id: Option<String>`，注册取消 token，并用 `tokio::select!` 在 core search 与取消 token 之间竞争；取消时返回结构化 `CANCELLED`。
+- `src-tauri/src/commands/router.rs`：Route B WS 路由解析 `taskId` 并传入同一命令实现。
+- `src-headless/src/main.rs`：兼容读取 `taskId` 参数，保持现有 headless 搜索语义。
+- `src/stores/scriptBridge.ts`：`runSearch` 新增可选 `taskId` 参数。
+- `src/views/SearchView.vue`：每个活跃单源搜索生成 `search-{run}-{uuid}` 任务 ID；`stopSearch()` 对当前 run 的活跃任务逐个调用 `cancelTask()`，并继续用 token 防止旧结果回写。
+- `src-tauri/tests/ws_router.rs`：新增 `booksource_search_accepts_task_id_in_ws_router`，覆盖 WS 路由接受 `taskId` 的参数契约。
+- `docs/reader-rust-route-b-spec.md`：更新 `booksource_search(fileName, keyword, page, taskId?, sourceDir?)`。
+
+验证：
+
+- `cargo fmt --all -- --check`：PASS。
+- `cmd /c pnpm.cmd lint`：PASS。
+- `cargo test -p legado-tauri booksource_search_accepts_task_id_in_ws_router -- --nocapture`：PASS，仅既有 MSVC linker stdout warning。
+- `node scripts/ci/check-command-contract.mjs --json`：PASS，`frontendTotal=162`、`registeredTotal=161`、`bothCount=161`、`onlyFrontend=["js_eval"]`、`onlyBackend=[]`、`frontend_unsupported_stub_count=39`、`frontend_implemented_count=122`。
+- `cmd /c pnpm.cmd build`：PASS，保留既有 vconsole direct eval 与 large chunk warning。
+- `cargo check -p legado-headless`：PASS。
+- `cargo check -p reader-core`：PASS。
+- `git diff --check`：PASS，仅 Windows LF/CRLF 工作区提示。
+
+Gate 报告：`reports/gates/2026-06-14-PERF-SEARCH-CANCEL-TASKS/summary.md`。
+
+剩余风险：
+
+- Legado async 搜索可通过 future cancellation 尽早返回；JS 搜索目前通过 `spawn_blocking` 执行，命令会提前返回 `CANCELLED`，但 blocking 线程中的 JS 运行本体无法被这一层抢占。
+- 后续可继续把 JS 搜索运行时和搜索进度事件纳入更完整的任务模型。
+
 ## 2026-06-14 PERF-IMPORT-CACHE-INVALIDATION
 
 任务 ID：`PERF-2026-06-14-IMPORT-CACHE-INVALIDATION`

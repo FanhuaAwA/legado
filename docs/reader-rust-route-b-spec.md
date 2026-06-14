@@ -393,7 +393,7 @@ payload: { requestId, items, done, total?, error? }
 ### 11.2 书源执行
 
 ```text
-booksource_search(fileName, keyword, page, sourceDir?) -> BookItem[]
+booksource_search(fileName, keyword, page, taskId?, sourceDir?) -> BookItem[]
 booksource_book_info(fileName, bookUrl, sourceDir?) -> BookDetail
 booksource_chapter_list(fileName, bookUrl, taskId?, sourceDir?) -> ChapterItem[]
 booksource_chapter_content(fileName, chapterUrl, sourceDir?, categoryParams?) -> string | ContentPayload

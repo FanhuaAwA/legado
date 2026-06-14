@@ -18,6 +18,7 @@ import {
   usePrivacyModeStore,
   useScriptBridgeStore,
 } from "@/stores";
+import { safeRandomUUID } from "@/utils/uuid";
 import AppEmpty from "../components/base/AppEmpty.vue";
 import AggregatedSearchResults from "../components/explore/AggregatedSearchResults.vue";
 import BookDetailDrawer from "../components/explore/BookDetailDrawer.vue";
@@ -277,6 +278,7 @@ interface SearchRun {
   pending: BookSourceMeta[];
   queuedKeys: Set<string>;
   searchedKeys: Set<string>;
+  taskIds: Map<string, string>;
   activeWorkers: number;
 }
 const searchStates = reactive<Record<string, SourceSearchState>>({});
@@ -344,9 +346,16 @@ const sourcesWithResultCount = computed(
 
 /** 立即终止当前搜索，清除所有进行中状态 */
 function stopSearch() {
+  const run = currentSearchRun;
   activeSearchToken.value += 1;
   currentSearchRun = null;
   searchRunning.value = false;
+  if (run) {
+    for (const taskId of run.taskIds.values()) {
+      void cancelTask(taskId);
+    }
+    run.taskIds.clear();
+  }
   for (const src of activeSources.value) {
     const key = sourceKeyOf(src);
     if (searchStates[key]?.loading) {
@@ -375,8 +384,10 @@ function finishSearchIfIdle(run: SearchRun) {
 
 async function searchOneSource(run: SearchRun, src: BookSourceMeta) {
   const key = sourceKeyOf(src);
+  const taskId = `search-${run.token}-${safeRandomUUID()}`;
+  run.taskIds.set(key, taskId);
   try {
-    const raw = await runSearch(src.fileName, run.keyword, run.page, src.sourceDir);
+    const raw = await runSearch(src.fileName, run.keyword, run.page, src.sourceDir, taskId);
     if (currentSearchRun !== run || run.token !== activeSearchToken.value) {
       return;
     }
@@ -387,6 +398,7 @@ async function searchOneSource(run: SearchRun, src: BookSourceMeta) {
     }
     searchStates[key].error = e instanceof Error ? e.message : String(e);
   } finally {
+    run.taskIds.delete(key);
     run.activeWorkers = Math.max(0, run.activeWorkers - 1);
     if (currentSearchRun === run && run.token === activeSearchToken.value) {
       searchStates[key].loading = false;
@@ -458,6 +470,7 @@ async function doSearch(page = 1) {
     pending: [],
     queuedKeys: new Set(),
     searchedKeys: new Set(),
+    taskIds: new Map(),
     activeWorkers: 0,
   };
   currentSearchRun = run;

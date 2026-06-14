@@ -214,13 +214,17 @@ pub async fn dispatch<R: tauri::Runtime>(
             reply(source::booksource_delete_draft(state, file_name).await)
         }
         "booksource_search" => {
-            let (file_name, keyword, page, source_dir) = parsed!(raw, {
+            let (file_name, keyword, page, task_id, source_dir) = parsed!(raw, {
                 file_name: String,
                 keyword: String,
                 page: i32,
+                task_id: Option<String>,
                 source_dir: Option<String>,
             });
-            reply(source::booksource_search(state, file_name, keyword, page, source_dir).await)
+            reply(
+                source::booksource_search(state, file_name, keyword, page, task_id, source_dir)
+                    .await,
+            )
         }
         "booksource_book_info" => {
             let (file_name, book_url, source_dir) = parsed!(raw, {

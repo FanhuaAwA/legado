@@ -1,5 +1,32 @@
 # AI Task Status
 
+## 2026-06-14 PERF-SEARCH-CANCEL-TASKS 状态更新
+
+本轮状态：`local-gate-pass`；将追加到 `codex/perf-booksource-lazy-list` 分支，PR 状态以 GitHub 为准。
+
+任务 ID：`PERF-2026-06-14-SEARCH-CANCEL-TASKS`。本轮继续处理“大量书源搜索卡顿/等待”的搜索本体链路，范围限定在单源搜索命令取消与前端搜索队列取消；不改变搜索结果语义、书源规则执行逻辑、用户搜索并发和超时配置。
+
+关键修改：
+
+- `booksource_search` 新增可选 `taskId`，Tauri IPC 与 Route B WS router 共用同一命令实现并接入 `TaskRegistry`。
+- Tauri 搜索命令会在 `taskId` 被 `booksource_cancel` 取消后提前返回 `CANCELLED`，避免用户停止搜索后继续等待已发出的单源搜索命令返回。
+- `SearchView.vue` 为每个活跃单源搜索生成任务 ID；停止搜索时批量调用现有 `cancelTask()`，同时继续用 token 阻止旧结果回写 UI。
+- `src-headless` 兼容接收 `taskId` 参数，但不引入独立任务注册表。
+- Route B spec 更新 `booksource_search(fileName, keyword, page, taskId?, sourceDir?)`。
+
+已通过 gate：
+
+- `cargo fmt --all -- --check`
+- `cmd /c pnpm.cmd lint`
+- `cargo test -p legado-tauri booksource_search_accepts_task_id_in_ws_router -- --nocapture`
+- `node scripts/ci/check-command-contract.mjs --json`
+- `cmd /c pnpm.cmd build`
+- `cargo check -p legado-headless`
+- `cargo check -p reader-core`
+- `git diff --check`
+
+剩余风险：Legado/async 网络搜索在 future 被取消后可尽早释放等待；JS 搜索当前仍运行在 `spawn_blocking`，取消会让命令/UI 提前返回但不能抢占已经进入 blocking 线程的 JS 执行。下一轮如继续收口，应把 JS 搜索执行也纳入可中断/超时更细的任务模型。
+
 ## 2026-06-14 PERF-IMPORT-CACHE-INVALIDATION 状态更新
 
 本轮状态：`local-gate-pass`；将追加到 `codex/perf-booksource-lazy-list` 分支，PR 状态以 GitHub 为准。

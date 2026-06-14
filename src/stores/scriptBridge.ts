@@ -207,12 +207,18 @@ export const useScriptBridgeStore = defineStore("scriptBridge", () => {
     return id;
   }
 
-  async function runSearch(fileName: string, keyword: string, page = 1, sourceDir?: string) {
+  async function runSearch(
+    fileName: string,
+    keyword: string,
+    page = 1,
+    sourceDir?: string,
+    taskId?: string,
+  ) {
     const prefs = usePreferencesStore();
     const timeoutMs = (prefs.search.searchTimeoutSecs || 35) * 1000;
     return invokeWithTimeout<unknown>(
       "booksource_search",
-      { fileName, keyword, page, sourceDir: sourceDir ?? null },
+      { fileName, keyword, page, sourceDir: sourceDir ?? null, taskId: taskId ?? null },
       timeoutMs,
     );
   }

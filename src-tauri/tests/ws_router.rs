@@ -137,6 +137,29 @@ async fn booksource_list_streaming_is_routed() {
 }
 
 #[tokio::test]
+async fn booksource_search_accepts_task_id_in_ws_router() {
+    let (app, _dir) = test_app().await;
+    let err = router::dispatch(
+        app.handle(),
+        "booksource_search",
+        &json!({
+            "fileName": "missing.legado.json",
+            "keyword": "测试",
+            "page": 1,
+            "taskId": "search-router-test",
+            "sourceDir": null
+        }),
+    )
+    .await
+    .expect_err("缺失书源应报命令错误");
+    assert!(
+        !err.starts_with("INVALID_ARGS"),
+        "taskId 应可被解析，实际: {err}"
+    );
+    assert!(!err.starts_with("NOT_ROUTED"), "应已路由，实际: {err}");
+}
+
+#[tokio::test]
 async fn webdav_sync_commands_are_routed() {
     let (app, _dir) = test_app().await;
     let value = router::dispatch(app.handle(), "sync_get_status", &json!({}))
