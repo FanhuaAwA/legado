@@ -31,10 +31,16 @@ impl BookSourceService {
     }
 
     pub async fn save_many(&self, user_ns: &str, sources: Vec<BookSource>) -> Result<(), AppError> {
-        for s in sources {
-            self.save(user_ns, s).await?;
+        if sources.is_empty() {
+            return Ok(());
         }
-        Ok(())
+        let mut entries = Vec::with_capacity(sources.len());
+        for source in sources {
+            let json =
+                serde_json::to_string(&source).map_err(|e| AppError::BadRequest(e.to_string()))?;
+            entries.push((source, json));
+        }
+        self.repo.upsert_many(user_ns, &entries).await
     }
 
     pub async fn get(

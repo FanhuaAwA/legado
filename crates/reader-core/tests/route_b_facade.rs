@@ -128,6 +128,9 @@ async fn import_legacy_json_text_reports_progress_batches() {
         .unwrap();
 
     assert_eq!(result.imported, 30);
+    let persisted_sources = core.list_sources().await.unwrap();
+    assert_eq!(persisted_sources.len(), 30);
+
     let events = progress_events.lock().unwrap();
     assert!(
         events.iter().any(|event| event.processed == 25),

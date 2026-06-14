@@ -1,5 +1,44 @@
 # AI Iteration Log
 
+## 2026-06-14 PERF-IMPORT-BATCH-UPSERT
+
+任务 ID：`PERF-2026-06-14-IMPORT-BATCH-UPSERT`
+
+本轮目标：继续压缩大量 Legado JSON 书源导入的后端写入耗时。上一轮已经让导入过程可见并在批次边界让出调度机会，但每个书源仍会单独 upsert 到 SQLite；本轮把批量导入路径里的 DB 写入改成事务批量提交，减少上千源导入时的事务和连接调度开销。
+
+关键判断：
+
+- `BookSourceService::save_many()` 原先只是循环调用 `save()`，并没有真正批量写入；因此 `copy_default_to_user()` 和批量导入都无法从 service 层批处理受益。
+- `BookSourceRepo::upsert()` 每条源单独执行一次 SQLite 写入；大量导入时事务边界和连接调度开销会放大。
+- 导入仍需要逐文件落盘以保持 Legado JSON 文件布局和现有单源管理语义，因此本轮只合并 DB upsert，不改变文件命名、文件内容或单源保存失效缓存行为。
+
+实现：
+
+- `BookSourceRepo` 新增 `UPSERT_BOOK_SOURCE_SQL` 常量和 `upsert_many()`，在单个 SQLite transaction 内写入一批 `(BookSource, json)`。
+- `BookSourceService::save_many()` 改为一次性序列化源列表并调用 `repo.upsert_many()`；现有 `copy_default_to_user()` 自动受益。
+- `BookSourceRepo::copy_to()` 也复用同一 upsert SQL，并把目标用户复制写入放进事务。
+- `ReaderCore::import_legacy_json_text_with_progress()` 不再对每个 Legado 源立即 DB upsert，而是先逐文件写入，积累到进度批次或最终项时通过 `save_many()` 批量提交。
+- 新增 `write_legado_source_file()` 辅助函数，保留 `persist_legado_source_without_cache_invalidation()` 的单源文件写入加 DB 保存语义。
+- 扩展 `import_legacy_json_text_reports_progress_batches`，导入后通过 `list_sources()` 验证 30 个源都已持久化并可被列表读取。
+
+验证：
+
+- `cargo test -p reader-core import_legacy_json_text_reports_progress_batches -- --nocapture`：PASS。
+- `cmd /c pnpm.cmd lint`：PASS。
+- `cargo fmt --all -- --check`：PASS。
+- `node scripts/ci/check-command-contract.mjs --json`：PASS。
+- `cargo check -p reader-core`：PASS。
+- `cargo check -p legado-tauri`：PASS。
+- `git diff --check`：PASS，仅 Windows LF/CRLF 工作区提示。
+
+Gate 报告：`reports/gates/2026-06-14-PERF-IMPORT-BATCH-UPSERT/summary.md`。
+
+剩余风险：
+
+- 本轮只批量化 DB upsert；Legado JSON 文件仍按源逐个 pretty JSON 写入，以保持现有文件布局和可读性。超大包导入的剩余耗时可能继续来自文件系统写入。
+- 导入进度批次目前复用 25 项间隔，因此事务数量从每源一次降为每 25 源一次；后续可在真实压测后评估是否把 DB batch size 与 UI progress interval 分离。
+- Android 真机大包导入压测仍未完成。
+
 ## 2026-06-14 PERF-IMPORT-PROGRESS-EVENTS
 
 任务 ID：`PERF-2026-06-14-IMPORT-PROGRESS-EVENTS`

@@ -3,6 +3,10 @@ use crate::model::book_source::BookSource;
 use crate::util::time::now_ts;
 use sqlx::{Row, SqlitePool};
 
+const UPSERT_BOOK_SOURCE_SQL: &str =
+    "INSERT INTO book_sources (user_ns, book_source_url, book_source_name, json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5) \
+     ON CONFLICT(user_ns, book_source_url) DO UPDATE SET book_source_name=excluded.book_source_name, json=excluded.json, updated_at=excluded.updated_at";
+
 #[derive(Clone)]
 pub struct BookSourceRepo {
     pool: SqlitePool,
@@ -19,17 +23,39 @@ impl BookSourceRepo {
         source: &BookSource,
         json: &str,
     ) -> Result<(), AppError> {
-        sqlx::query(
-            "INSERT INTO book_sources (user_ns, book_source_url, book_source_name, json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5) \
-             ON CONFLICT(user_ns, book_source_url) DO UPDATE SET book_source_name=excluded.book_source_name, json=excluded.json, updated_at=excluded.updated_at"
-        )
-        .bind(user_ns)
-        .bind(&source.book_source_url)
-        .bind(&source.book_source_name)
-        .bind(json)
-        .bind(now_ts())
-        .execute(&self.pool)
-        .await?;
+        sqlx::query(UPSERT_BOOK_SOURCE_SQL)
+            .bind(user_ns)
+            .bind(&source.book_source_url)
+            .bind(&source.book_source_name)
+            .bind(json)
+            .bind(now_ts())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn upsert_many(
+        &self,
+        user_ns: &str,
+        sources: &[(BookSource, String)],
+    ) -> Result<(), AppError> {
+        if sources.is_empty() {
+            return Ok(());
+        }
+
+        let mut tx = self.pool.begin().await?;
+        let updated_at = now_ts();
+        for (source, json) in sources {
+            sqlx::query(UPSERT_BOOK_SOURCE_SQL)
+                .bind(user_ns)
+                .bind(&source.book_source_url)
+                .bind(&source.book_source_name)
+                .bind(json)
+                .bind(updated_at)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -82,23 +108,22 @@ impl BookSourceRepo {
             .fetch_all(&self.pool)
             .await?;
         let count = rows.len() as i64;
+        let mut tx = self.pool.begin().await?;
         for row in rows {
             let url: String = row.get("book_source_url");
             let name: String = row.get("book_source_name");
             let json: String = row.get("json");
             let updated_at: i64 = row.get("updated_at");
-            sqlx::query(
-                "INSERT INTO book_sources (user_ns, book_source_url, book_source_name, json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5) \
-                 ON CONFLICT(user_ns, book_source_url) DO UPDATE SET book_source_name=excluded.book_source_name, json=excluded.json, updated_at=excluded.updated_at"
-            )
-            .bind(to_ns)
-            .bind(&url)
-            .bind(&name)
-            .bind(&json)
-            .bind(updated_at)
-            .execute(&self.pool)
-            .await?;
+            sqlx::query(UPSERT_BOOK_SOURCE_SQL)
+                .bind(to_ns)
+                .bind(&url)
+                .bind(&name)
+                .bind(&json)
+                .bind(updated_at)
+                .execute(&mut *tx)
+                .await?;
         }
+        tx.commit().await?;
         Ok(count)
     }
 }

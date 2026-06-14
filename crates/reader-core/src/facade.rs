@@ -610,6 +610,7 @@ impl ReaderCore {
             errors: Vec::new(),
         };
         let mut seen = HashSet::new();
+        let mut pending_legado_sources = Vec::new();
         self.invalidate_source_list_cache().await;
 
         if total == 0 {
@@ -668,13 +669,11 @@ impl ReaderCore {
                             result.skipped += 1;
                         } else {
                             let file_name = legado_file_name(&source);
-                            self.persist_legado_source_without_cache_invalidation(
-                                &file_name, &source,
-                            )
-                            .await?;
+                            self.write_legado_source_file(&file_name, &source).await?;
                             progress_file_name = Some(file_name.clone());
                             result.imported += 1;
                             result.files.push(file_name);
+                            pending_legado_sources.push(source);
                         }
                     }
                     Err(err) => {
@@ -686,6 +685,10 @@ impl ReaderCore {
 
             let processed = index + 1;
             if processed % LEGACY_IMPORT_PROGRESS_INTERVAL == 0 || processed == total {
+                if !pending_legado_sources.is_empty() {
+                    let pending = std::mem::take(&mut pending_legado_sources);
+                    self.source_service.save_many(USER_NS, pending).await?;
+                }
                 on_progress(LegacyJsonImportProgress {
                     processed,
                     total,
@@ -2597,6 +2600,16 @@ impl ReaderCore {
         file_name: &str,
         source: &BookSource,
     ) -> Result<(), ReaderCoreError> {
+        self.write_legado_source_file(file_name, source).await?;
+        self.source_service.save(USER_NS, source.clone()).await?;
+        Ok(())
+    }
+
+    async fn write_legado_source_file(
+        &self,
+        file_name: &str,
+        source: &BookSource,
+    ) -> Result<(), ReaderCoreError> {
         ensure_safe_file_name(file_name)?;
         let path = self.legado_source_dir.join(file_name);
         if let Some(parent) = path.parent() {
@@ -2604,7 +2617,6 @@ impl ReaderCore {
         }
         let json = serde_json::to_string_pretty(source)?;
         fs::write(path, json).await?;
-        self.source_service.save(USER_NS, source.clone()).await?;
         Ok(())
     }
 

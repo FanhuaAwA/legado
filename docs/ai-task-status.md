@@ -1,5 +1,33 @@
 # AI Task Status
 
+## 2026-06-14 PERF-IMPORT-BATCH-UPSERT 状态更新
+
+本轮状态：`local-gate-pass`；将追加到 `codex/perf-booksource-lazy-list` 分支，PR 状态以 GitHub 为准。
+
+任务 ID：`PERF-2026-06-14-IMPORT-BATCH-UPSERT`。本轮继续优化“大量书源导入慢”的后端写入链路，范围限定在 Legado JSON 批量导入中的 SQLite upsert 批处理；不改变书源文件命名、JSON 内容、单源保存语义或第三方/私有书源样本。
+
+关键修改：
+
+- `BookSourceRepo` 新增事务内 `upsert_many()`，单条 `upsert()` 与批量写入共用同一 SQL。
+- `BookSourceService::save_many()` 从循环单条保存改成一次序列化后批量提交。
+- `ReaderCore::import_legacy_json_text_with_progress()` 在进度批次边界批量 flush DB，避免每个源一次 SQLite upsert。
+- `copy_to()` 也改为事务内复制，减少默认书源复制时的写入开销。
+- 扩展 reader-core 导入进度测试，导入后验证 30 个源都可通过 `list_sources()` 读取。
+
+已通过 gate：
+
+- `cargo test -p reader-core import_legacy_json_text_reports_progress_batches -- --nocapture`
+- `cmd /c pnpm.cmd lint`
+- `cargo fmt --all -- --check`
+- `node scripts/ci/check-command-contract.mjs --json`
+- `cargo check -p reader-core`
+- `cargo check -p legado-tauri`
+- `git diff --check`
+
+Gate 报告：`reports/gates/2026-06-14-PERF-IMPORT-BATCH-UPSERT/summary.md`。
+
+剩余风险：本轮减少的是 DB upsert 事务和连接调度开销；Legado JSON 文件仍逐源写入以保持现有文件布局。导入进度批次当前仍是 25 项，后续可根据真实压测把 DB batch size 与 UI progress interval 分离。真实安卓设备大包导入压测仍未完成。
+
 ## 2026-06-14 PERF-IMPORT-PROGRESS-EVENTS 状态更新
 
 本轮状态：`local-gate-pass`；将追加到 `codex/perf-booksource-lazy-list` 分支，PR 状态以 GitHub 为准。
