@@ -34,7 +34,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tokio::fs;
 
 const USER_NS: &str = "local";
@@ -46,6 +46,7 @@ const SOURCE_DIRS_CONFIG_SCOPE: &str = "booksource.dirs";
 const SOURCE_DIRS_CONFIG_KEY: &str = "external";
 const LEGADO_BROWSER_ACTION_FN: &str = "__legado_browser_action";
 const SOURCE_LIST_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
+const SOURCE_TEXT_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
 const SYNC_SUPPORTED_DOMAINS: &[&str] = &[
     "bookshelf",
     "reading_progress",
@@ -63,6 +64,14 @@ struct SourceListCache {
 }
 
 #[derive(Clone)]
+struct SourceTextCacheEntry {
+    content: String,
+    modified: Option<SystemTime>,
+    len: u64,
+    loaded_at: Instant,
+}
+
+#[derive(Clone)]
 pub struct ReaderCore {
     reader_dir: PathBuf,
     js_source_dir: PathBuf,
@@ -73,6 +82,7 @@ pub struct ReaderCore {
     document_service: JsonDocumentService,
     sync_runtime: Arc<SyncRuntime>,
     source_list_cache: Arc<tokio::sync::RwLock<Option<SourceListCache>>>,
+    source_text_cache: Arc<tokio::sync::RwLock<HashMap<PathBuf, SourceTextCacheEntry>>>,
     /// 每本书在跑的缓存任务取消令牌：同书新任务自动取消旧任务，
     /// 防止前端调用超时重发导致任务堆积、对书源高频请求。
     prefetch_tasks: Arc<tokio::sync::Mutex<HashMap<String, Arc<AtomicBool>>>>,
@@ -132,6 +142,7 @@ impl ReaderCore {
             document_service,
             sync_runtime: Arc::new(SyncRuntime::new()),
             source_list_cache: Arc::new(tokio::sync::RwLock::new(None)),
+            source_text_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             prefetch_tasks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         })
     }
@@ -168,6 +179,7 @@ impl ReaderCore {
         dirs.push(path.to_string_lossy().to_string());
         dedupe_strings(&mut dirs);
         self.save_external_source_dirs(&dirs).await?;
+        self.clear_source_text_cache().await;
         self.invalidate_source_list_cache().await;
         Ok(())
     }
@@ -178,6 +190,7 @@ impl ReaderCore {
         let mut dirs = self.external_source_dirs().await?;
         dirs.retain(|dir| dir != &target);
         self.save_external_source_dirs(&dirs).await?;
+        self.clear_source_text_cache().await;
         self.invalidate_source_list_cache().await;
         Ok(())
     }
@@ -267,6 +280,61 @@ impl ReaderCore {
 
     async fn invalidate_source_list_cache(&self) {
         *self.source_list_cache.write().await = None;
+    }
+
+    async fn read_source_text_cached(&self, path: &Path) -> Result<String, ReaderCoreError> {
+        let metadata = fs::metadata(path).await?;
+        if let Some(content) = self.cached_source_text(path, &metadata).await {
+            return Ok(content);
+        }
+
+        let content = fs::read_to_string(path).await?;
+        self.store_source_text_cache(path, &content, &metadata)
+            .await;
+        Ok(content)
+    }
+
+    async fn cached_source_text(
+        &self,
+        path: &Path,
+        metadata: &std::fs::Metadata,
+    ) -> Option<String> {
+        let modified = metadata.modified().ok();
+        self.source_text_cache
+            .read()
+            .await
+            .get(path)
+            .filter(|entry| {
+                entry.loaded_at.elapsed() < SOURCE_TEXT_CACHE_TTL
+                    && entry.len == metadata.len()
+                    && entry.modified == modified
+            })
+            .map(|entry| entry.content.clone())
+    }
+
+    async fn store_source_text_cache(
+        &self,
+        path: &Path,
+        content: &str,
+        metadata: &std::fs::Metadata,
+    ) {
+        self.source_text_cache.write().await.insert(
+            path.to_path_buf(),
+            SourceTextCacheEntry {
+                content: content.to_string(),
+                modified: metadata.modified().ok(),
+                len: metadata.len(),
+                loaded_at: Instant::now(),
+            },
+        );
+    }
+
+    async fn remove_source_text_cache(&self, path: &Path) {
+        self.source_text_cache.write().await.remove(path);
+    }
+
+    async fn clear_source_text_cache(&self) {
+        self.source_text_cache.write().await.clear();
     }
 
     async fn list_article_sources(&self) -> Result<Vec<BookSourceMeta>, ReaderCoreError> {
@@ -389,6 +457,10 @@ impl ReaderCore {
                 let file_name = entry.file_name().to_string_lossy().to_string();
                 let content = fs::read_to_string(&path).await.unwrap_or_default();
                 let metadata = entry.metadata().await.ok();
+                if let Some(metadata) = metadata.as_ref() {
+                    self.store_source_text_cache(&path, &content, metadata)
+                        .await;
+                }
                 Self::push_streamed_source(
                     BookSourceMeta::from_js(
                         &content,
@@ -505,9 +577,7 @@ impl ReaderCore {
         source_dir: Option<&str>,
     ) -> Result<String, ReaderCoreError> {
         let path = self.resolve_source_file(file_name, source_dir);
-        fs::read_to_string(path)
-            .await
-            .map_err(ReaderCoreError::from)
+        self.read_source_text_cached(&path).await
     }
 
     pub async fn save_js_source(
@@ -521,7 +591,13 @@ impl ReaderCore {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).await?;
         }
-        fs::write(path, content).await?;
+        fs::write(&path, content).await?;
+        if let Ok(metadata) = fs::metadata(&path).await {
+            self.store_source_text_cache(&path, content, &metadata)
+                .await;
+        } else {
+            self.remove_source_text_cache(&path).await;
+        }
         self.invalidate_source_list_cache().await;
         Ok(())
     }
@@ -539,12 +615,14 @@ impl ReaderCore {
             }
         }
         let path = self.resolve_source_file(file_name, source_dir);
-        match fs::remove_file(path).await {
+        match fs::remove_file(&path).await {
             Ok(()) => {
+                self.remove_source_text_cache(&path).await;
                 self.invalidate_source_list_cache().await;
                 Ok(())
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                self.remove_source_text_cache(&path).await;
                 self.invalidate_source_list_cache().await;
                 Ok(())
             }
@@ -566,9 +644,15 @@ impl ReaderCore {
         }
 
         let path = self.resolve_source_file(file_name, source_dir);
-        let content = fs::read_to_string(&path).await?;
+        let content = self.read_source_text_cached(&path).await?;
         let content = set_js_meta_enabled(&content, enabled);
-        fs::write(path, content).await?;
+        fs::write(&path, &content).await?;
+        if let Ok(metadata) = fs::metadata(&path).await {
+            self.store_source_text_cache(&path, &content, &metadata)
+                .await;
+        } else {
+            self.remove_source_text_cache(&path).await;
+        }
         self.invalidate_source_list_cache().await;
         Ok(())
     }
@@ -2574,6 +2658,10 @@ impl ReaderCore {
             let file_name = entry.file_name().to_string_lossy().to_string();
             let content = fs::read_to_string(&path).await.unwrap_or_default();
             let metadata = entry.metadata().await.ok();
+            if let Some(metadata) = metadata.as_ref() {
+                self.store_source_text_cache(&path, &content, metadata)
+                    .await;
+            }
             out.push(BookSourceMeta::from_js(
                 &content,
                 file_name,
@@ -2616,7 +2704,8 @@ impl ReaderCore {
             fs::create_dir_all(parent).await?;
         }
         let json = serde_json::to_string_pretty(source)?;
-        fs::write(path, json).await?;
+        fs::write(&path, &json).await?;
+        self.remove_source_text_cache(&path).await;
         Ok(())
     }
 

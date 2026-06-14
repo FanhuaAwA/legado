@@ -1,8 +1,37 @@
 # AI Task Status
 
+## 2026-06-14 PERF-JS-SOURCE-TEXT-CACHE 状态更新
+
+本轮状态：`local-gate-pass`；将追加到 `master`，远端 Quality Gate 和自动发布状态以 GitHub Actions 为准。
+
+任务 ID：`PERF-2026-06-14-JS-SOURCE-TEXT-CACHE`。本轮继续优化“大量书源加载后搜索仍卡顿/等待”的公共链路，范围限定在 reader-core 的 JS 书源文本读取缓存；不改变 JS 书源执行语义、搜索结果结构、书源规则、网络请求策略或第三方/私有书源样本。
+
+关键修改：
+
+- `ReaderCore` 新增 30 分钟 TTL 的源文本缓存，缓存项用文件路径、mtime 和 size 校验。
+- JS 书源列表扫描与流式加载读取文件内容后会顺手写入缓存，后续搜索、详情、目录、正文和调试调用可复用刚读过的 JS 文本。
+- `read_source()` 改为先校验缓存再读盘；外部手动修改文件时因 mtime/size 不匹配会自动重读。
+- `save_js_source()`、`toggle_source()`、`delete_source()` 和外部书源目录变更会同步更新或清理缓存，避免读到旧书源。
+- Legado JSON 写入只清理对应文本缓存，不保存导入过程中的整份 JSON，避免大包导入额外占用内存。
+- 新增 `js_source_text_cache_refreshes_after_external_file_change` 回归测试，覆盖“列表扫描缓存后外部改文件，下一次搜索读到新内容”的正确性。
+
+已通过本地 gate：
+
+- `cargo test -p reader-core js_source_text_cache_refreshes_after_external_file_change -- --nocapture`
+- `cargo fmt --all -- --check`
+- `cmd /c pnpm.cmd lint`
+- `cargo check -p reader-core`
+- `cargo check -p legado-tauri`
+- `node scripts/ci/check-command-contract.mjs --json`
+- `git diff --check`
+
+Gate 报告：`reports/gates/2026-06-14-PERF-JS-SOURCE-TEXT-CACHE/summary.md`。
+
+剩余风险：该轮减少的是 JS 书源文本重复磁盘读取；单源 JS 执行和网络请求本身仍受书源质量、上游接口速度、JS engine timeout、HTTP 并发/限速影响。真实安卓设备大包搜索/导入压测仍未完成。
+
 ## 2026-06-14 REL-ANDROID-CI-SYSROOT 状态更新
 
-本轮状态：`remote-release-fix-pending`；将追加到 `master`，等待 Quality Gate 通过后再次触发 Master Release。
+本轮状态：`remote-release-pass`；已追加到 `master`，Quality Gate 与 Master Release 均已通过。
 
 任务 ID：`REL-2026-06-14-ANDROID-CI-SYSROOT`。本轮处理上一次 `Master Release` 远端运行在 Android 编译阶段失败的问题：Ubuntu runner 上 `rquickjs-sys` 的 bindgen/clang 没有使用 Android NDK sysroot，回退到宿主 `/usr/include` 后找不到目标平台头文件。
 
@@ -21,8 +50,11 @@
 远端观察：
 
 - `Master Release` run `27493455571` 已确认失败在 Android `rquickjs-sys` bindgen 阶段；Windows build 已通过，publish 因 Android job 失败被跳过。
+- 修复提交 `07a4f7d` 推送后，Quality Gate run `27493894613` 成功。
+- 后续 `Master Release` run `27494084851` 成功；Android build、V1/V2/V3 签名、签名校验、Windows build 和 GitHub Release 发布均通过。
+- Release 已创建：`master-v0.9.0-07a4f7d`。
 
-剩余风险：本轮修复的目标是远端 Ubuntu Android toolchain 环境，必须推送后由 GitHub Actions 真实验证；本地 Windows Android build 和 V1/V2/V3 签名在上一轮已通过。
+剩余风险：本轮已由远端 Ubuntu Android build 验证；后续若调整 Android NDK/API level 或正式版发布策略，需要重新观察发布链路。
 
 ## 2026-06-14 REL-MASTER-SIGNED-RELEASE 状态更新
 

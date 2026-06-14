@@ -1,5 +1,44 @@
 # AI Iteration Log
 
+## 2026-06-14 PERF-JS-SOURCE-TEXT-CACHE
+
+任务 ID：`PERF-2026-06-14-JS-SOURCE-TEXT-CACHE`
+
+本轮目标：继续沿“大量书源加载/搜索卡顿”主线压缩公共成本。前几轮已经让书源列表流式到达、搜索可边加载边入队、导入可见进度并批量 upsert；本轮处理 JS 书源在列表扫描后又被搜索/详情链路重复读盘的问题。
+
+关键判断：
+
+- `stream_js_sources()` / `list_js_sources_in_dir()` 为了生成 `BookSourceMeta` 和 capabilities 已经读取了每个 JS 文件内容。
+- `ReaderCore::search()`、`book_info()`、`chapter_list()`、`chapter_content()`、`source_call_fn()` 等 JS 路径会再次调用 `require_js_runtime()`，原先每次都重新 `read_source()` 从磁盘读取同一份 JS 文本。
+- QuickJS runtime 已有线程本地池；本轮不改变 JS 执行语义，只缓存源文本，减少大量书源刚加载后马上搜索时的重复 I/O。
+- 缓存必须对外部书源目录手动修改保持正确，因此不能只按文件名缓存，需要用路径、mtime 和 size 校验。
+
+实现：
+
+- `ReaderCore` 新增 `source_text_cache`，缓存项保存 `content`、`modified`、`len` 和 `loaded_at`，TTL 为 30 分钟。
+- `read_source()` 改为 `read_source_text_cached()`：先读取 metadata，比对缓存项的 mtime/size/TTL，命中时直接返回文本，否则读盘并更新缓存。
+- JS 书源列表扫描和流式加载在读取内容后调用 `store_source_text_cache()`，让后续搜索/详情调用复用刚读过的文本。
+- `save_js_source()` 和 `toggle_source()` 写盘后同步更新缓存；`delete_source()` 和外部 source dir 增删会清理缓存。
+- Legado JSON 写入路径只清理对应缓存，不缓存导入过程中的 JSON，避免大包导入时额外保留大量文本。
+
+验证：
+
+- `cargo test -p reader-core js_source_text_cache_refreshes_after_external_file_change -- --nocapture`：PASS。
+- `cargo fmt --all -- --check`：PASS。
+- `cmd /c pnpm.cmd lint`：PASS。
+- `cargo check -p reader-core`：PASS。
+- `cargo check -p legado-tauri`：PASS。
+- `node scripts/ci/check-command-contract.mjs --json`：PASS。
+- `git diff --check`：PASS，仅 Windows LF/CRLF 工作区提示。
+
+Gate 报告：`reports/gates/2026-06-14-PERF-JS-SOURCE-TEXT-CACHE/summary.md`。
+
+剩余风险：
+
+- 本轮减少磁盘重复读取，不解决单源 JS 函数执行、上游网络慢、HTTP 限速或坏源 timeout 本身。
+- 大量 JS 源文本会在扫描后进入 30 分钟缓存；当前预期体积相对 APK/运行内存可控，但后续如遇极端大 JS 包，可继续增加 LRU/容量上限。
+- Android 真机大包搜索/导入压测仍需后续补齐。
+
 ## 2026-06-14 REL-ANDROID-CI-SYSROOT
 
 任务 ID：`REL-2026-06-14-ANDROID-CI-SYSROOT`

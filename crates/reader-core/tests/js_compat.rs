@@ -413,6 +413,51 @@ async function search() {
         .any(|source| source.file_name == "external-fixture.js"));
 }
 
+#[tokio::test]
+async fn js_source_text_cache_refreshes_after_external_file_change() {
+    let temp = tempfile::tempdir().unwrap();
+    let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
+        .await
+        .unwrap();
+    let file_name = "cached-search.js";
+    let path = core.js_source_dir().join(file_name);
+
+    tokio::fs::write(
+        &path,
+        r#"// @name        Cached Search Fixture
+// @url         https://example.invalid/v1
+// @enabled     true
+
+async function search() {
+  return [{ name: "Old cached result", author: "Cache", bookUrl: "old://book" }];
+}
+"#,
+    )
+    .await
+    .unwrap();
+
+    let sources = core.list_sources().await.unwrap();
+    assert!(sources.iter().any(|source| source.file_name == file_name));
+
+    tokio::fs::write(
+        &path,
+        r#"// @name        Cached Search Fixture Updated
+// @url         https://example.invalid/v2
+// @enabled     true
+
+async function search() {
+  return [{ name: "Fresh cached result after disk update", author: "Cache", bookUrl: "fresh://book" }];
+}
+"#,
+    )
+    .await
+    .unwrap();
+
+    let books = core.search(file_name, "cache", 1, None).await.unwrap();
+    assert_eq!(books[0].name, "Fresh cached result after disk update");
+    assert_eq!(books[0].book_url, "fresh://book");
+}
+
 #[test]
 fn new_js_apis_work() {
     // md5Encode16: first 16 chars of md5
