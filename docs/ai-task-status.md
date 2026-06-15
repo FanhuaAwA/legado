@@ -1,5 +1,42 @@
 # AI Task Status
 
+## 2026-06-15 PERF-SOURCE-STREAM-SORT-DEFER 状态更新
+
+本轮状态：`local-gate-pass`；将追加到 `master`，远端 Quality Gate 和自动发布状态以 GitHub Actions 为准。
+
+任务 ID：`PERF-2026-06-15-SOURCE-STREAM-SORT-DEFER`。本轮继续优化“大量书源加载/导入后依赖书源功能卡顿”的公共链路，范围覆盖 reader-core 的书源列表扫描和前端书源 store 的流式批次合并；不改变后端命令契约、书源规则执行语义、搜索结果结构、用户搜索并发/超时配置、签名材料或第三方/私有书源样本。
+
+Review 发现的问题：
+
+- 后端 `list_legado_sources()` / `stream_legado_sources()` 会先把 DB 中全部 Legado JSON 读出并完整反序列化为 `BookSource`，再生成列表元数据；大量书源时会把“逐步加载”前置成一次较重的全量解析。
+- 前端 `src/stores/bookSource.ts` 的 `mergeSourcesBatch()` 每收到一个 `booksource:batch` 批次都会对完整 `sources.value` 排序，触发列表渲染、搜索页 `activeSources` watcher 和能力筛选反复重算。
+- 前端能力缓存 `cap_*` 与用户搜索/发现禁用开关共用 `source.capabilities` 命名空间；后台逐源写能力缓存时，会触发禁用集合重载和相关搜索源过滤重算。
+- 两处问题都不改变结果正确性，但会放大用户反馈的“加载书源后依赖书源的功能继续卡顿”。
+
+关键修改：
+
+- `BookSourceRepo` 新增基于 `(updated_at, book_source_url)` 的 keyset 游标分页读取，`BookSourceService` 暴露 `list_rows_page_after()`，reader-core 按页扫描 Legado 书源并在页间 `yield_now()`，降低单轮列表扫描峰值。
+- 新增 `idx_book_sources_user_updated_url` 迁移，匹配列表分页排序条件，避免大库按页读取时退化成反复扫描。
+- `BookSourceMeta::from_legado_row()` 使用轻量 seed 解析列表所需字段，并复用 `migrate_legacy_book_source_value()` / legacy 字段兜底保持旧书源字段兼容。
+- 新增 `legado_list_meta_preserves_lightweight_fields` 回归测试，覆盖轻量列表元数据、能力推导、分组、类型、启用状态和版本字段。
+- `mergeSourcesBatch()` 只负责合并新增/更新项和预热能力缓存，不再每批排序全量列表；流式 `done` 或旧命令 fallback 完成后统一排序一次。
+- `source.capabilities` 仅保留 `cap_*` 能力缓存，用户搜索/发现禁用开关迁移到 `source.flags`；读取时保留旧命名空间兜底，避免已有用户设置丢失。
+
+已通过本地 gate：
+
+- `cmd /c pnpm.cmd lint`
+- `cargo fmt --all`
+- `cmd /c pnpm.cmd build`
+- `cargo check -p reader-core`
+- `cargo check -p legado-tauri`
+- `cargo check -p legado-headless`
+- `cargo test -p reader-core`
+- `cargo test -p reader-core --test route_b_facade -- --nocapture`
+- `node scripts/ci/check-command-contract.mjs --json`
+- `git diff --check`
+
+Gate 报告：`reports/gates/2026-06-15-PERF-SOURCE-STREAM-SORT-DEFER/summary.md`。
+
 ## 2026-06-14 PERF-LEGADO-SOURCE-OBJECT-CACHE 状态更新
 
 本轮状态：`local-gate-pass`；将追加到 `master`，远端 Quality Gate 和自动发布状态以 GitHub Actions 为准。

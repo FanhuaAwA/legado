@@ -12,6 +12,14 @@ pub struct BookSourceRepo {
     pool: SqlitePool,
 }
 
+#[derive(Debug, Clone)]
+pub struct BookSourceListRow {
+    pub book_source_url: String,
+    pub book_source_name: String,
+    pub json: String,
+    pub updated_at: i64,
+}
+
 impl BookSourceRepo {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -99,6 +107,39 @@ impl BookSourceRepo {
         Ok(rows
             .into_iter()
             .map(|r| r.get::<String, _>("json"))
+            .collect())
+    }
+
+    pub async fn list_page_after(
+        &self,
+        user_ns: &str,
+        limit: usize,
+        cursor: Option<(i64, &str)>,
+    ) -> Result<Vec<BookSourceListRow>, AppError> {
+        let cursor_updated_at = cursor.map(|(updated_at, _)| updated_at);
+        let cursor_url = cursor.map(|(_, url)| url);
+        let rows = sqlx::query(
+            "SELECT book_source_url, book_source_name, json, updated_at \
+             FROM book_sources \
+             WHERE user_ns=?1 \
+               AND (?2 IS NULL OR updated_at < ?2 OR (updated_at = ?2 AND book_source_url < ?3)) \
+             ORDER BY updated_at DESC, book_source_url DESC \
+             LIMIT ?4",
+        )
+        .bind(user_ns)
+        .bind(cursor_updated_at)
+        .bind(cursor_url)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| BookSourceListRow {
+                book_source_url: row.get("book_source_url"),
+                book_source_name: row.get("book_source_name"),
+                json: row.get("json"),
+                updated_at: row.get("updated_at"),
+            })
             .collect())
     }
 

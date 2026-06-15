@@ -627,6 +627,65 @@ async fn stream_sources_emits_incremental_batches_with_capabilities() {
 }
 
 #[tokio::test]
+async fn legado_list_meta_preserves_lightweight_fields() {
+    let temp = tempfile::tempdir().unwrap();
+    let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
+        .await
+        .unwrap();
+
+    let source = json!({
+        "bookSourceName": "Meta Fixture",
+        "bookSourceUrl": "https://meta.example/source",
+        "bookSourceGroup": "alpha,beta",
+        "bookSourceType": 1,
+        "enabled": false,
+        "bookSourceComment": "metadata description",
+        "lastUpdateTime": 123456,
+        "concurrentRate": "250",
+        "exploreUrl": "https://meta.example/explore",
+        "searchUrl": "https://meta.example/search?key={{key}}",
+        "ruleSearch": {
+            "bookList": "$[*]",
+            "name": "name",
+            "author": "author",
+            "bookUrl": "bookUrl"
+        },
+        "ruleBookInfo": {
+            "name": "name"
+        },
+        "ruleToc": {
+            "chapterList": "$[*]",
+            "chapterName": "name",
+            "chapterUrl": "url"
+        },
+        "ruleContent": {
+            "content": "content"
+        }
+    });
+    core.import_legacy_json_text(&source.to_string(), false)
+        .await
+        .unwrap();
+
+    let sources = core.list_sources().await.unwrap();
+    let meta = sources
+        .iter()
+        .find(|source| source.name == "Meta Fixture")
+        .expect("imported source should be listable");
+    assert_eq!(meta.url, "https://meta.example/source");
+    assert!(!meta.enabled);
+    assert_eq!(meta.source_type, "audio");
+    assert_eq!(meta.description.as_deref(), Some("metadata description"));
+    assert_eq!(meta.version, "123456");
+    assert_eq!(meta.min_delay_ms, 250);
+    assert!(meta.tags.iter().any(|tag| tag == "alpha"));
+    assert!(meta.capabilities.iter().any(|cap| cap == "search"));
+    assert!(meta.capabilities.iter().any(|cap| cap == "bookInfo"));
+    assert!(meta.capabilities.iter().any(|cap| cap == "toc"));
+    assert!(meta.capabilities.iter().any(|cap| cap == "content"));
+    assert!(meta.capabilities.iter().any(|cap| cap == "explore"));
+}
+
+#[tokio::test]
 #[ignore = "live network test for the user-provided Legado source"]
 async fn live_yckceo_3417_novel_reading_path() {
     let temp = tempfile::tempdir().unwrap();

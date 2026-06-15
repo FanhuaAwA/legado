@@ -1,6 +1,6 @@
 use crate::error::error::AppError;
 use crate::model::book_source::{book_source_from_value, BookSource};
-use crate::storage::db::repo::BookSourceRepo;
+use crate::storage::db::repo::{BookSourceListRow, BookSourceRepo};
 use std::path::PathBuf;
 use tokio::fs;
 
@@ -77,6 +77,15 @@ impl BookSourceService {
 
     pub async fn list_raw(&self, user_ns: &str) -> Result<Vec<String>, AppError> {
         self.repo.list(user_ns).await
+    }
+
+    pub async fn list_rows_page_after(
+        &self,
+        user_ns: &str,
+        limit: usize,
+        cursor: Option<(i64, &str)>,
+    ) -> Result<Vec<BookSourceListRow>, AppError> {
+        self.repo.list_page_after(user_ns, limit, cursor).await
     }
 
     pub async fn delete(&self, user_ns: &str, book_source_url: &str) -> Result<(), AppError> {

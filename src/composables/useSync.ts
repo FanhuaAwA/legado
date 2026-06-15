@@ -12,7 +12,8 @@ import { invokeWithTimeout } from "./useInvoke";
 
 const READER_SETTINGS_NAMESPACE = "dynamic-config.reader.defaults.lastEffective";
 const READER_SETTINGS_KEY = "state";
-const SOURCE_FLAGS_NAMESPACE = "source.capabilities";
+const SOURCE_FLAGS_NAMESPACE = "source.flags";
+const LEGACY_SOURCE_FLAGS_NAMESPACE = "source.capabilities";
 const SOURCE_EXPLORE_DISABLED_KEY = "exploreDisabled";
 const SOURCE_SEARCH_DISABLED_KEY = "searchDisabled";
 
@@ -92,7 +93,8 @@ function readLocalJson(key: string): unknown {
     const raw =
       key === READER_SETTINGS_KEY
         ? getFrontendStorageItem(READER_SETTINGS_NAMESPACE, READER_SETTINGS_KEY)
-        : getFrontendStorageItem(SOURCE_FLAGS_NAMESPACE, key);
+        : (getFrontendStorageItem(SOURCE_FLAGS_NAMESPACE, key) ??
+          getFrontendStorageItem(LEGACY_SOURCE_FLAGS_NAMESPACE, key));
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
@@ -182,6 +184,7 @@ void ensureFrontendNamespaceLoaded(SOURCE_FLAGS_NAMESPACE, () => {
   }
   return Object.keys(migrated).length ? migrated : null;
 });
+void ensureFrontendNamespaceLoaded(LEGACY_SOURCE_FLAGS_NAMESPACE);
 
 export function installSyncClientStateListener() {
   return eventListenSync<{ domain: string; value: unknown }>("sync:client-state", ({ payload }) => {

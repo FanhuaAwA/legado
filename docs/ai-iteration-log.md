@@ -1,5 +1,51 @@
 # AI Iteration Log
 
+## 2026-06-15 PERF-SOURCE-STREAM-SORT-DEFER
+
+任务 ID：`PERF-2026-06-15-SOURCE-STREAM-SORT-DEFER`
+
+本轮目标：继续按项目文档处理“大量书源加载/导入后，依赖书源列表的搜索等功能卡顿”的公共链路；同时按用户要求先做代码 Review，再对 Review 发现的问题做修复。
+
+Review 发现：
+
+- reader-core 的 `list_legado_sources()` 和 `stream_legado_sources()` 仍会先把 DB 中全部 Legado JSON 完整反序列化为 `BookSource`，再生成列表用的 `BookSourceMeta`。对喵/猫公子这类大包而言，列表加载前半段仍有一次较重的全量解析。
+- `src/stores/bookSource.ts::mergeSourcesBatch()` 在每个流式批次合并后都会执行 `sources.value.sort(...)`。
+- 后端已经逐批推送时，前端每批仍对完整数组排序，会触发 Vue 响应式数组重排、书源管理列表重渲染、搜索页 `activeSources` watcher 重算和后台能力筛选联动。
+- 能力缓存和用户搜索/发现禁用开关共用 `source.capabilities`，后台批量能力检测写入 `cap_*` 时会触发禁用集合重载，放大搜索源列表重算。
+- 列表排序只需要在一轮扫描完成后稳定即可；加载中允许批次自然追加，不影响搜索动态入队和能力预热。
+
+实现：
+
+- `BookSourceRepo` 新增 `list_page_after()`，按 `updated_at DESC, book_source_url DESC` 做 keyset 游标分页。
+- `BookSourceService` 新增 `list_rows_page_after()`，供 reader-core 列表扫描使用。
+- 新增 `idx_book_sources_user_updated_url` 迁移，匹配列表分页排序条件，避免大库分页时重复全表扫描。
+- `stream_legado_sources()` / `list_legado_sources()` 改为游标分页扫描 DB，并在页间 `tokio::task::yield_now()`，降低单轮扫描峰值。
+- 新增 `LegadoSourceMetaSeed` 和 `BookSourceMeta::from_legado_row()`，只解析列表元数据、能力推导和启用/类型/版本等字段；解析前仍调用 `migrate_legacy_book_source_value()`，并保留 legacy 字段兜底。
+- `mergeSourcesBatch()` 保留去重、更新、追加和 `seedCapabilitiesFromMeta()`，移除每批全量排序。
+- 新增 `sortSourcesByName()`；流式 `done` 分支和非流式 fallback 完成后统一排序一次。
+- 将 `cap_*` 能力缓存继续保存在 `source.capabilities`，把用户搜索/发现禁用开关迁移到 `source.flags`，并保留旧命名空间读取兜底。
+
+预期收益：
+
+- 大量 Legado 书源列表加载时，后端由一次全量完整对象反序列化改为分页轻量元数据解析，减少列表加载峰值和长时间独占。
+- 前端全量排序次数由“批次数”降到“每轮加载一次”，减少源列表响应式数组重排和搜索页 watcher 在书源流入期间的重复负担。
+- 后台能力检测写入不再触发用户开关 listener，减少加载完成后第二段能力维护对搜索页 computed 的扰动。
+
+验证：
+
+- `cmd /c pnpm.cmd lint`：PASS。
+- `cargo fmt --all`：PASS。
+- `cmd /c pnpm.cmd build`：PASS（仅既有 vconsole eval / 大 chunk 警告）。
+- `cargo check -p reader-core`：PASS。
+- `cargo check -p legado-tauri`：PASS。
+- `cargo check -p legado-headless`：PASS。
+- `cargo test -p reader-core`：PASS。
+- `cargo test -p reader-core --test route_b_facade -- --nocapture`：PASS。
+- `node scripts/ci/check-command-contract.mjs --json`：PASS。
+- `git diff --check`：PASS，仅 Windows LF/CRLF 工作区提示。
+
+Gate 报告：`reports/gates/2026-06-15-PERF-SOURCE-STREAM-SORT-DEFER/summary.md`。
+
 ## 2026-06-14 PERF-LEGADO-SOURCE-OBJECT-CACHE
 
 任务 ID：`PERF-2026-06-14-LEGADO-SOURCE-OBJECT-CACHE`

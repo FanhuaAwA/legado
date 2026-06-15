@@ -13,7 +13,9 @@ use crate::model::ai_proxy::{ai_proxy_timeout, validate_ai_proxy_url, AiHttpProx
 use crate::model::article_source::ArticleSource;
 use crate::model::book::Book;
 use crate::model::book_chapter::BookChapter;
-use crate::model::book_source::{book_source_from_value, BookSource};
+use crate::model::book_source::{
+    book_source_from_value, migrate_legacy_book_source_value, BookSource,
+};
 use crate::model::search::SearchBook;
 use crate::parser::js::{eval_js, with_js_source, JsSourceArg};
 use crate::parser::rule_engine::{derive_toc_url_from_chapter_url, RuleEngine};
@@ -24,8 +26,11 @@ use crate::service::sync_webdav::{SyncRuntime, WebDavClient, WebDavConfig};
 use crate::source_runtime::js_source::JsSourceRuntime;
 use crate::storage::cache::file_cache::FileCache;
 use crate::storage::db::init_pool;
+use crate::storage::db::repo::BookSourceListRow;
 use crate::util::hash::md5_hex;
 use crate::util::time::now_ts;
+use serde::de::IgnoredAny;
+use serde::Deserialize;
 use serde::Serialize;
 use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
@@ -46,6 +51,7 @@ const SOURCE_DIRS_CONFIG_SCOPE: &str = "booksource.dirs";
 const SOURCE_DIRS_CONFIG_KEY: &str = "external";
 const LEGADO_BROWSER_ACTION_FN: &str = "__legado_browser_action";
 const SOURCE_LIST_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
+const SOURCE_LIST_DB_PAGE_SIZE: usize = 64;
 const SOURCE_TEXT_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
 const LEGADO_SOURCE_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
 const SYNC_SUPPORTED_DOMAINS: &[&str] = &[
@@ -456,29 +462,36 @@ impl ReaderCore {
         F: FnMut(Vec<BookSourceMeta>, bool, Option<usize>) -> Fut,
         Fut: Future<Output = ()>,
     {
-        for raw in self.source_service.list_raw(USER_NS).await? {
-            let Ok(value) = serde_json::from_str::<Value>(&raw) else {
-                continue;
-            };
-            let Ok(source) = book_source_from_value(value) else {
-                continue;
-            };
-            let file_name = legado_file_name(&source);
-            let path = self.legado_source_dir.join(&file_name);
-            let metadata = fs::metadata(&path).await.ok();
-            Self::push_streamed_source(
-                BookSourceMeta::from_legado(
-                    &source,
-                    file_name,
-                    self.legado_source_dir.to_string_lossy().to_string(),
-                    metadata.as_ref(),
-                ),
-                batch_size,
-                all,
-                batch,
-                emit,
-            )
-            .await;
+        let source_dir = self.legado_source_dir.to_string_lossy().to_string();
+        let page_size = SOURCE_LIST_DB_PAGE_SIZE.max(batch_size.max(1));
+        let mut cursor: Option<(i64, String)> = None;
+        loop {
+            let rows = self
+                .source_service
+                .list_rows_page_after(
+                    USER_NS,
+                    page_size,
+                    cursor
+                        .as_ref()
+                        .map(|(updated_at, url)| (*updated_at, url.as_str())),
+                )
+                .await?;
+            if rows.is_empty() {
+                break;
+            }
+            let row_count = rows.len();
+            cursor = rows
+                .last()
+                .map(|row| (row.updated_at, row.book_source_url.clone()));
+            for row in rows {
+                if let Some(meta) = BookSourceMeta::from_legado_row(&row, source_dir.clone()) {
+                    Self::push_streamed_source(meta, batch_size, all, batch, emit).await;
+                }
+            }
+            if row_count < page_size {
+                break;
+            }
+            tokio::task::yield_now().await;
         }
         Ok(())
     }
@@ -2669,18 +2682,35 @@ impl ReaderCore {
     }
 
     async fn list_legado_sources(&self) -> Result<Vec<BookSourceMeta>, ReaderCoreError> {
-        let sources = self.source_service.list(USER_NS).await?;
-        let mut out = Vec::with_capacity(sources.len());
-        for source in sources {
-            let file_name = legado_file_name(&source);
-            let path = self.legado_source_dir.join(&file_name);
-            let metadata = fs::metadata(&path).await.ok();
-            out.push(BookSourceMeta::from_legado(
-                &source,
-                file_name,
-                self.legado_source_dir.to_string_lossy().to_string(),
-                metadata.as_ref(),
-            ));
+        let source_dir = self.legado_source_dir.to_string_lossy().to_string();
+        let mut out = Vec::new();
+        let mut cursor: Option<(i64, String)> = None;
+        loop {
+            let rows = self
+                .source_service
+                .list_rows_page_after(
+                    USER_NS,
+                    SOURCE_LIST_DB_PAGE_SIZE,
+                    cursor
+                        .as_ref()
+                        .map(|(updated_at, url)| (*updated_at, url.as_str())),
+                )
+                .await?;
+            if rows.is_empty() {
+                break;
+            }
+            let row_count = rows.len();
+            cursor = rows
+                .last()
+                .map(|row| (row.updated_at, row.book_source_url.clone()));
+            out.extend(
+                rows.iter()
+                    .filter_map(|row| BookSourceMeta::from_legado_row(row, source_dir.clone())),
+            );
+            if row_count < SOURCE_LIST_DB_PAGE_SIZE {
+                break;
+            }
+            tokio::task::yield_now().await;
         }
         Ok(out)
     }
@@ -3762,50 +3792,91 @@ impl From<BookChapter> for ChapterItem {
     }
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct LegadoSourceMetaSeed {
+    book_source_name: String,
+    book_source_group: Option<String>,
+    book_source_url: String,
+    #[serde(deserialize_with = "deserialize_meta_i32_option")]
+    book_source_type: Option<i32>,
+    enabled: Option<bool>,
+    #[serde(deserialize_with = "deserialize_meta_i64_option")]
+    last_update_time: Option<i64>,
+    concurrent_rate: Option<String>,
+    enable: Option<bool>,
+    explore_url: Option<String>,
+    rule_find_url: Option<String>,
+    rule_search_url: Option<String>,
+    rule_search: Option<IgnoredAny>,
+    rule_search_list: Option<IgnoredAny>,
+    rule_book_info: Option<IgnoredAny>,
+    rule_book_name: Option<IgnoredAny>,
+    rule_book_author: Option<IgnoredAny>,
+    rule_introduce: Option<IgnoredAny>,
+    rule_book_intro: Option<IgnoredAny>,
+    rule_chapter_url: Option<IgnoredAny>,
+    rule_toc: Option<IgnoredAny>,
+    rule_chapter_list: Option<IgnoredAny>,
+    rule_content: Option<IgnoredAny>,
+    rule_book_content: Option<IgnoredAny>,
+    rule_explore: Option<IgnoredAny>,
+    rule_find_list: Option<IgnoredAny>,
+    book_source_comment: Option<String>,
+    search_url: Option<String>,
+}
+
 impl BookSourceMeta {
-    fn from_legado(
-        source: &BookSource,
-        file_name: String,
-        source_dir: String,
-        metadata: Option<&std::fs::Metadata>,
-    ) -> Self {
-        let capabilities = legado_capabilities(source);
-        let tags = source
+    fn from_legado_row(row: &BookSourceListRow, source_dir: String) -> Option<Self> {
+        let seed = legado_meta_seed_from_json(&row.json)?;
+        let source_url = if seed.book_source_url.trim().is_empty() {
+            row.book_source_url.clone()
+        } else {
+            seed.book_source_url.clone()
+        };
+        let source_name = if seed.book_source_name.trim().is_empty() {
+            row.book_source_name.clone()
+        } else {
+            seed.book_source_name.clone()
+        };
+        if source_name.trim().is_empty() || source_url.trim().is_empty() {
+            return None;
+        }
+
+        let file_name = legado_file_name_parts(&source_name, &source_url);
+        let capabilities = legado_seed_capabilities(&seed);
+        let tags = seed
             .book_source_group
             .as_deref()
             .map(split_tags)
             .unwrap_or_default();
         let source_key = format!("{source_dir}::{file_name}");
-        Self {
+        Some(Self {
             source_key,
-            uuid: md5_hex(&source.book_source_url),
+            uuid: md5_hex(&source_url),
             file_name,
-            name: source.book_source_name.clone(),
-            url: source.book_source_url.clone(),
-            urls: vec![source.book_source_url.clone()],
-            homepage_url: Some(source.book_source_url.clone()),
+            name: source_name,
+            url: source_url.clone(),
+            urls: vec![source_url.clone()],
+            homepage_url: Some(source_url),
             author: None,
             logo: None,
-            description: source.book_source_comment.clone(),
-            enabled: source.enabled.unwrap_or(true),
-            file_size: metadata.map(|item| item.len()).unwrap_or_default(),
-            modified_at: metadata
-                .and_then(|item| item.modified().ok())
-                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|duration| duration.as_millis() as i64)
-                .unwrap_or_else(now_ms),
+            description: seed.book_source_comment,
+            enabled: seed.enabled.or(seed.enable).unwrap_or(true),
+            file_size: row.json.len() as u64,
+            modified_at: row.updated_at.saturating_mul(1000),
             source_dir,
-            source_type: match source.book_source_type.unwrap_or(0) {
+            source_type: match seed.book_source_type.unwrap_or(0) {
                 1 => "audio".to_string(),
                 _ => "novel".to_string(),
             },
-            version: source
+            version: seed
                 .last_update_time
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "1.0.0".to_string()),
             update_url: None,
             tags,
-            min_delay_ms: source
+            min_delay_ms: seed
                 .concurrent_rate
                 .as_deref()
                 .and_then(|value| value.parse::<u64>().ok())
@@ -3814,7 +3885,7 @@ impl BookSourceMeta {
             has_explore: Some(capabilities.iter().any(|item| item == "explore")),
             capabilities,
             runtime: SourceRuntimeKind::LegadoRule,
-        }
+        })
     }
 
     fn from_js(
@@ -3887,8 +3958,11 @@ impl BookSourceMeta {
 }
 
 fn legado_file_name(source: &BookSource) -> String {
-    let safe_name = source
-        .book_source_name
+    legado_file_name_parts(&source.book_source_name, &source.book_source_url)
+}
+
+fn legado_file_name_parts(source_name: &str, source_url: &str) -> String {
+    let safe_name = source_name
         .chars()
         .map(|ch| {
             if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
@@ -3907,11 +3981,7 @@ fn legado_file_name(source: &BookSource) -> String {
     } else {
         safe_name
     };
-    format!(
-        "{}-{}.legado.json",
-        prefix,
-        &md5_hex(&source.book_source_url)[..12]
-    )
+    format!("{}-{}.legado.json", prefix, &md5_hex(source_url)[..12])
 }
 
 fn legado_capabilities(source: &BookSource) -> Vec<String> {
@@ -3944,6 +4014,76 @@ fn legado_capabilities(source: &BookSource) -> Vec<String> {
         out.push("explore".to_string());
     }
     out
+}
+
+fn legado_meta_seed_from_json(raw: &str) -> Option<LegadoSourceMetaSeed> {
+    let value = serde_json::from_str::<Value>(raw).ok()?;
+    serde_json::from_value(migrate_legacy_book_source_value(value)).ok()
+}
+
+fn legado_seed_capabilities(seed: &LegadoSourceMetaSeed) -> Vec<String> {
+    let mut out = Vec::new();
+    let has_search_url = seed
+        .search_url
+        .as_deref()
+        .or(seed.rule_search_url.as_deref())
+        .is_some_and(|value| !value.trim().is_empty());
+    if has_search_url && (seed.rule_search.is_some() || seed.rule_search_list.is_some()) {
+        out.push("search".to_string());
+    }
+    if seed.rule_book_info.is_some()
+        || seed.rule_book_name.is_some()
+        || seed.rule_book_author.is_some()
+        || seed.rule_introduce.is_some()
+        || seed.rule_book_intro.is_some()
+        || seed.rule_chapter_url.is_some()
+    {
+        out.push("bookInfo".to_string());
+    }
+    if seed.rule_toc.is_some() || seed.rule_chapter_list.is_some() {
+        out.push("toc".to_string());
+        out.push("chapterList".to_string());
+    }
+    if seed.rule_content.is_some() || seed.rule_book_content.is_some() {
+        out.push("content".to_string());
+        out.push("chapterContent".to_string());
+    }
+    if seed
+        .explore_url
+        .as_deref()
+        .or(seed.rule_find_url.as_deref())
+        .is_some_and(|value| !value.trim().is_empty())
+        || seed.rule_explore.is_some()
+        || seed.rule_find_list.is_some()
+    {
+        out.push("explore".to_string());
+    }
+    out
+}
+
+fn deserialize_meta_i64_option<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|value| match value {
+        Value::Number(num) => num.as_i64(),
+        Value::String(raw) => raw.trim().parse::<i64>().ok(),
+        _ => None,
+    }))
+}
+
+fn deserialize_meta_i32_option<'de, D>(deserializer: D) -> Result<Option<i32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|value| match value {
+        Value::Number(num) => num.as_i64().map(|num| num as i32),
+        Value::String(raw) if raw.eq_ignore_ascii_case("AUDIO") => Some(1),
+        Value::String(raw) => raw.trim().parse::<i32>().ok(),
+        _ => None,
+    }))
 }
 
 fn js_capabilities(content: &str) -> Vec<String> {

@@ -28,7 +28,8 @@ import {
 import { safeRandomUUID } from "@/utils/uuid";
 
 // ── 书源能力存储键（继承自 useSourceCapabilities）────────────────────────
-const STORAGE_NAMESPACE = "source.capabilities";
+const CAPABILITY_STORAGE_NAMESPACE = "source.capabilities";
+const SOURCE_FLAGS_STORAGE_NAMESPACE = "source.flags";
 /** 能力缓存条目前缀：cap_{sourceKey} → 逗号分隔函数名列表 */
 const CAP_KEY_PREFIX = "cap_";
 
@@ -60,13 +61,14 @@ function parseDisabledSet(raw: string | null): Set<string> {
 
 function loadDisabledSet(key: string): Set<string> {
   const storageKey = key === LS_EXPLORE_KEY ? EXPLORE_KEY : SEARCH_KEY;
-  const cached = listFrontendStorageNamespaceSync(STORAGE_NAMESPACE);
-  return parseDisabledSet(cached[storageKey] ?? null);
+  const flags = listFrontendStorageNamespaceSync(SOURCE_FLAGS_STORAGE_NAMESPACE);
+  const legacy = listFrontendStorageNamespaceSync(CAPABILITY_STORAGE_NAMESPACE);
+  return parseDisabledSet(flags[storageKey] ?? legacy[storageKey] ?? null);
 }
 
 function saveDisabledSet(key: string, set: Set<string>) {
   const storageKey = key === LS_EXPLORE_KEY ? EXPLORE_KEY : SEARCH_KEY;
-  setFrontendStorageJson(STORAGE_NAMESPACE, storageKey, [...set]);
+  setFrontendStorageJson(SOURCE_FLAGS_STORAGE_NAMESPACE, storageKey, [...set]);
 }
 
 function getErrorMessage(error: unknown): string {
@@ -203,6 +205,9 @@ export const useBookSourceStore = defineStore("bookSource", () => {
         sources.value.push(item);
       }
     }
+  }
+
+  function sortSourcesByName(): void {
     sources.value.sort((a, b) => a.name.localeCompare(b.name));
   }
 
@@ -273,6 +278,7 @@ export const useBookSourceStore = defineStore("bookSource", () => {
 
             if (done) {
               pruneSourcesNotSeen(freshKeys);
+              sortSourcesByName();
               unlisten();
               if (typeof error === "string" && error.length > 0) {
                 reject(new Error(error));
@@ -291,6 +297,7 @@ export const useBookSourceStore = defineStore("bookSource", () => {
                   const seenKeys = new Set(items.map(getSourceCacheKey));
                   mergeSourcesBatch(items);
                   pruneSourcesNotSeen(seenKeys);
+                  sortSourcesByName();
                   streamingLoaded.value = sources.value.length;
                   resolve();
                 })
@@ -362,8 +369,8 @@ export const useBookSourceStore = defineStore("bookSource", () => {
    * 在首次 detectAllCapabilities 之前调用可大幅缩短能力扫描时间。
    */
   async function ensureCapsLoaded(): Promise<void> {
-    await ensureFrontendNamespaceLoaded(STORAGE_NAMESPACE);
-    const stored = listFrontendStorageNamespaceSync(STORAGE_NAMESPACE);
+    await ensureFrontendNamespaceLoaded(CAPABILITY_STORAGE_NAMESPACE);
+    const stored = listFrontendStorageNamespaceSync(CAPABILITY_STORAGE_NAMESPACE);
     for (const [key, val] of Object.entries(stored)) {
       if (!key.startsWith(CAP_KEY_PREFIX)) {
         continue;
@@ -424,11 +431,15 @@ export const useBookSourceStore = defineStore("bookSource", () => {
       fnsCache[sourceRef.cacheKey] = fns;
       const newVal = [...fns].join(",");
       const storedVal = getFrontendStorageItem(
-        STORAGE_NAMESPACE,
+        CAPABILITY_STORAGE_NAMESPACE,
         CAP_KEY_PREFIX + sourceRef.cacheKey,
       );
       if (storedVal !== newVal) {
-        setFrontendStorageItem(STORAGE_NAMESPACE, CAP_KEY_PREFIX + sourceRef.cacheKey, newVal);
+        setFrontendStorageItem(
+          CAPABILITY_STORAGE_NAMESPACE,
+          CAP_KEY_PREFIX + sourceRef.cacheKey,
+          newVal,
+        );
       }
       return fns;
     } catch {
@@ -470,11 +481,15 @@ export const useBookSourceStore = defineStore("bookSource", () => {
                 );
                 const newVal = [...fns].join(",");
                 const storedVal = getFrontendStorageItem(
-                  STORAGE_NAMESPACE,
+                  CAPABILITY_STORAGE_NAMESPACE,
                   CAP_KEY_PREFIX + cacheKey,
                 );
                 if (storedVal !== newVal) {
-                  setFrontendStorageItem(STORAGE_NAMESPACE, CAP_KEY_PREFIX + cacheKey, newVal);
+                  setFrontendStorageItem(
+                    CAPABILITY_STORAGE_NAMESPACE,
+                    CAP_KEY_PREFIX + cacheKey,
+                    newVal,
+                  );
                 }
                 // 直接写入 shallowReactive：只通知依赖了 sourceKey 这条 key
                 // 的 computed（如 explorableSources / searchableSources），
@@ -510,16 +525,16 @@ export const useBookSourceStore = defineStore("bookSource", () => {
     for (const key of keys) {
       // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
       delete fnsCache[key];
-      removeFrontendStorageItem(STORAGE_NAMESPACE, CAP_KEY_PREFIX + key);
+      removeFrontendStorageItem(CAPABILITY_STORAGE_NAMESPACE, CAP_KEY_PREFIX + key);
     }
   }
 
   /** 清空全部能力缓存（同时删除所有持久化条目） */
   function invalidateAllCapabilities() {
-    const stored = listFrontendStorageNamespaceSync(STORAGE_NAMESPACE);
+    const stored = listFrontendStorageNamespaceSync(CAPABILITY_STORAGE_NAMESPACE);
     for (const key of Object.keys(stored)) {
       if (key.startsWith(CAP_KEY_PREFIX)) {
-        removeFrontendStorageItem(STORAGE_NAMESPACE, key);
+        removeFrontendStorageItem(CAPABILITY_STORAGE_NAMESPACE, key);
       }
     }
     for (const key of Object.keys(fnsCache)) {
@@ -676,26 +691,32 @@ export const useBookSourceStore = defineStore("bookSource", () => {
 
   // ── 初始化（迁移旧数据 + 监听存储变更）──────────────────────────────
   function initialize() {
-    void ensureFrontendNamespaceLoaded(STORAGE_NAMESPACE, () => {
-      const migrated: Record<string, string> = {};
-      const exploreLegacy = legacyLocalStorageGet(LS_EXPLORE_KEY);
-      const searchLegacy = legacyLocalStorageGet(LS_SEARCH_KEY);
-      if (exploreLegacy) {
-        migrated[EXPLORE_KEY] = exploreLegacy;
-        legacyLocalStorageRemove(LS_EXPLORE_KEY);
-      }
-      if (searchLegacy) {
-        migrated[SEARCH_KEY] = searchLegacy;
-        legacyLocalStorageRemove(LS_SEARCH_KEY);
-      }
-      return Object.keys(migrated).length ? migrated : null;
-    }).then(() => {
+    void Promise.all([
+      ensureFrontendNamespaceLoaded(CAPABILITY_STORAGE_NAMESPACE),
+      ensureFrontendNamespaceLoaded(SOURCE_FLAGS_STORAGE_NAMESPACE, () => {
+        const migrated: Record<string, string> = {};
+        const exploreLegacy = legacyLocalStorageGet(LS_EXPLORE_KEY);
+        const searchLegacy = legacyLocalStorageGet(LS_SEARCH_KEY);
+        if (exploreLegacy) {
+          migrated[EXPLORE_KEY] = exploreLegacy;
+          legacyLocalStorageRemove(LS_EXPLORE_KEY);
+        }
+        if (searchLegacy) {
+          migrated[SEARCH_KEY] = searchLegacy;
+          legacyLocalStorageRemove(LS_SEARCH_KEY);
+        }
+        return Object.keys(migrated).length ? migrated : null;
+      }),
+    ]).then(() => {
       exploreDisabled.value = loadDisabledSet(LS_EXPLORE_KEY);
       searchDisabled.value = loadDisabledSet(LS_SEARCH_KEY);
     });
 
-    onFrontendStorageChange(({ namespace }) => {
-      if (namespace !== STORAGE_NAMESPACE) {
+    onFrontendStorageChange(({ namespace, key }) => {
+      if (
+        namespace !== SOURCE_FLAGS_STORAGE_NAMESPACE ||
+        (key !== EXPLORE_KEY && key !== SEARCH_KEY)
+      ) {
         return;
       }
       exploreDisabled.value = loadDisabledSet(LS_EXPLORE_KEY);
