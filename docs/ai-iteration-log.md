@@ -1,5 +1,41 @@
 # AI Iteration Log
 
+## 2026-06-15 PERF-SEARCH-GROUPED-LAZY-RENDER
+
+Task ID: `PERF-2026-06-15-SEARCH-GROUPED-LAZY-RENDER`
+
+Goal: continue reducing search-page stalls for large source sets. Previous work reduced backend execution, cancellation, and aggregated-result recomputation; this round addresses grouped-mode DOM creation.
+
+Review findings:
+
+- `SearchView.vue` grouped mode used `v-for="src in activeSources"` and created a `SourceSearchGroup` for every searchable source.
+- In large source libraries, grouped mode could render many empty groups in a single pass even though only a subset had results or active loading state.
+- That render burst was independent of backend performance and could still make the UI feel stuck.
+
+Implementation:
+
+- Added grouped-mode visible source batching with an initial limit of 48 and batch increments of 48.
+- Prioritized sources with loading state, errors, or results ahead of idle empty groups.
+- Added a compact load-more control for revealing remaining groups.
+- Reset the grouped visible limit at the start of each new search.
+
+Expected benefit:
+
+- Grouped search mode creates far fewer components on the first render for large source packs.
+- Result-bearing and active sources remain visible first while idle empty groups are deferred.
+- Search execution, cancellation, aggregation, and result data stay unchanged.
+
+Verification:
+
+- `cmd /c pnpm.cmd lint` - PASS
+- `git diff --check` - PASS
+
+Gate report: `reports/gates/2026-06-15-PERF-SEARCH-GROUPED-LAZY-RENDER/summary.md`.
+
+Residual risk:
+
+- This is batched rendering rather than true virtual scrolling; a future round can add viewport virtualization if grouped mode still needs to display thousands of groups at once.
+
 ## 2026-06-15 PERF-JS-PREFETCH-CANCEL-COOPERATIVE
 
 Task ID: `PERF-2026-06-15-JS-PREFETCH-CANCEL-COOPERATIVE`

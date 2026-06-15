@@ -1,5 +1,32 @@
 # AI Task Status
 
+## 2026-06-15 PERF-SEARCH-GROUPED-LAZY-RENDER status update
+
+Status: `local-gate-pass`; this entry will be added to the current performance PR after push. Remote Quality Gate remains governed by GitHub Actions.
+
+Task ID: `PERF-2026-06-15-SEARCH-GROUPED-LAZY-RENDER`. This round continues the search-page performance review by reducing grouped-mode DOM work when thousands of source-dependent result groups exist.
+
+Review findings:
+
+- Aggregated search mode was already incremental, but grouped mode still rendered one `SourceSearchGroup` for every active source.
+- With large source packs, switching to grouped mode after a search could create hundreds or thousands of group components, including empty groups, in one render pass.
+- This frontend render burst can still feel like a search/loading stall even when backend source execution is incremental and cancellable.
+
+Key changes:
+
+- Grouped mode now renders sources in batches, starting with 48 groups.
+- Sources with loading, errors, or results are prioritized before idle empty groups.
+- A compact load-more control reveals additional groups without changing search execution or result data.
+
+Passed local gate:
+
+- `cmd /c pnpm.cmd lint`
+- `git diff --check`
+
+Gate report: `reports/gates/2026-06-15-PERF-SEARCH-GROUPED-LAZY-RENDER/summary.md`.
+
+Residual risk: grouped-mode batching reduces DOM pressure but does not replace true viewport virtualization; if users need to inspect thousands of empty source groups frequently, a future round can add virtual scrolling.
+
 ## 2026-06-15 PERF-JS-PREFETCH-CANCEL-COOPERATIVE status update
 
 Status: `local-gate-pass`; this entry will be added to the current performance PR after push. Remote Quality Gate remains governed by GitHub Actions.

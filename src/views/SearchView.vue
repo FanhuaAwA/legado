@@ -223,6 +223,9 @@ const searchPage = ref(1);
 /** 搜索模式：'grouped' 按书源分组 | 'aggregated' 聚合排序 */
 const searchMode = ref<"grouped" | "aggregated">("aggregated");
 const reloadingSources = ref(false);
+const GROUPED_SOURCE_INITIAL_LIMIT = 48;
+const GROUPED_SOURCE_BATCH_SIZE = 48;
+const groupedVisibleLimit = ref(GROUPED_SOURCE_INITIAL_LIMIT);
 
 // ── 移动端三点菜单 ──────────────────────────────────────────────────────
 const mobileMenuOptions = computed(() => [
@@ -366,6 +369,7 @@ function resetSearchDerivedState() {
   completedSourceCount.value = 0;
   totalRawResultCount.value = 0;
   sourcesWithResultCount.value = 0;
+  groupedVisibleLimit.value = GROUPED_SOURCE_INITIAL_LIMIT;
 }
 
 function markSourceCompleted(key: string) {
@@ -400,6 +404,31 @@ function applySourceResults(run: SearchRun, src: BookSourceMeta, results: BookIt
   }));
   appendTaggedResultsToGroups(aggregatedGroupBuffer, taggedResults, run.keyword);
   scheduleAggregatedGroupPublish();
+}
+
+const groupedOrderedSources = computed(() => {
+  const active: BookSourceMeta[] = [];
+  const idle: BookSourceMeta[] = [];
+  for (const src of activeSources.value) {
+    const state = searchStates[sourceKeyOf(src)];
+    if (state?.loading || state?.error || state?.results.length) {
+      active.push(src);
+    } else {
+      idle.push(src);
+    }
+  }
+  return active.concat(idle);
+});
+
+const groupedVisibleSources = computed(() =>
+  groupedOrderedSources.value.slice(0, groupedVisibleLimit.value),
+);
+const groupedHiddenSourceCount = computed(() =>
+  Math.max(0, groupedOrderedSources.value.length - groupedVisibleSources.value.length),
+);
+
+function showMoreGroupedSources() {
+  groupedVisibleLimit.value += GROUPED_SOURCE_BATCH_SIZE;
 }
 
 /** 立即终止当前搜索，清除所有进行中状态 */
@@ -873,7 +902,7 @@ onUnmounted(() => {
         <template v-else>
           <template v-if="hasSearched">
             <SourceSearchGroup
-              v-for="src in activeSources"
+              v-for="src in groupedVisibleSources"
               :key="sourceKeyOf(src)"
               :source="src"
               :results="searchStates[sourceKeyOf(src)]?.results ?? []"
@@ -882,6 +911,12 @@ onUnmounted(() => {
               :show-covers="showCovers"
               @select="openDetail"
             />
+            <div v-if="groupedHiddenSourceCount > 0" class="sv-grouped-more">
+              <span>{{ groupedHiddenSourceCount }} 个书源未展开</span>
+              <n-button size="small" secondary @click="showMoreGroupedSources">
+                加载更多书源
+              </n-button>
+            </div>
           </template>
           <AppEmpty v-else :title="searchStartDescription" />
         </template>
@@ -1003,6 +1038,16 @@ onUnmounted(() => {
 
 .sv-toolbar__limit-tag {
   flex-shrink: 0;
+}
+
+.sv-grouped-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-3) 0 var(--space-4);
+  color: var(--color-text-soft);
+  font-size: var(--fs-13);
 }
 
 .sv-content {
