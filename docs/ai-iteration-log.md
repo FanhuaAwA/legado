@@ -4,11 +4,12 @@ Last updated: 2026-06-15
 
 本文件是当前迭代索引，不再保存完整对话式流水。2026-06-15 之前的长历史、旧续办提示和过期命令统计已清理；需要追溯请查看 git history 与 `reports/gates/*/summary.md`。
 
-## 2026-06-15 Active Performance PR
+## 2026-06-15 Master Direct Push
 
-- Branch：`codex/perf-booksource-lazy-list`
-- PR：`https://github.com/FanhuaAwA/legado/pull/2`
-- Latest pushed commit：`09b6144 perf: batch large source imports`
+- Branch：`master`
+- Master direct push：2026-06-15 已按用户要求直接推送到 `origin/master`，快进范围 `a91ff0f..3727a36`
+- Delivered payload commit：`3727a36 docs: prune stale maintenance notes`
+- Historical PR：`https://github.com/FanhuaAwA/legado/pull/2` 仅作为本轮历史 staging 记录；后续交付以 `master` 为准，不再依赖单独分支
 - GitHub Quality Gate：PASS，run `27539725883`
 
 本轮主线围绕用户反馈的“加载/导入大量书源后，搜索与依赖书源加载的功能长时间等待”展开，已完成：

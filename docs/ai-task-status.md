@@ -4,11 +4,12 @@ Last updated: 2026-06-15
 
 本文件只记录当前维护状态、可继续执行的队列和必须遵守的口径。旧的逐轮流水、未完成提示和过期统计已删除；需要考古时使用 git history 与 `reports/gates/*/summary.md`。
 
-## 当前分支与 PR
+## 当前分支与发布
 
-- Branch：`codex/perf-booksource-lazy-list`
-- PR：`https://github.com/FanhuaAwA/legado/pull/2`
-- Latest pushed commit：`09b6144 perf: batch large source imports`
+- Branch：`master`
+- Master direct push：2026-06-15 已按用户要求直接推送到 `origin/master`，快进范围 `a91ff0f..3727a36`
+- Delivered payload commit：`3727a36 docs: prune stale maintenance notes`
+- Historical PR：`https://github.com/FanhuaAwA/legado/pull/2` 仅作为本轮历史 staging 记录；后续交付以 `master` 为准，不再依赖单独分支
 - GitHub Quality Gate：PASS，run `27539725883`，约 13m47s
 - Windows release artifact：
   - `target/x86_64-pc-windows-msvc/release/legado-tauri.exe`
@@ -59,7 +60,7 @@ cargo check -p legado-tauri
 cmd /c pnpm.cmd build:windows:release
 ```
 
-以上命令在 `09b6144` 前均已本地通过。Tauri 测试/构建仍可能输出已知 Windows linker stdout warning；当前不作为失败。
+以上命令在 `3727a36` 推送到 `master` 前均已本地通过。Tauri 测试/构建仍可能输出已知 Windows linker stdout warning；当前不作为失败。
 
 ## 当前未结工作
 
