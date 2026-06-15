@@ -29,6 +29,7 @@ use crate::storage::db::init_pool;
 use crate::storage::db::repo::BookSourceListRow;
 use crate::util::hash::md5_hex;
 use crate::util::time::now_ts;
+use futures::{stream, StreamExt};
 use serde::de::IgnoredAny;
 use serde::Deserialize;
 use serde::Serialize;
@@ -43,7 +44,8 @@ use std::time::{Duration, Instant, SystemTime};
 use tokio::fs;
 
 const USER_NS: &str = "local";
-const LEGACY_IMPORT_PROGRESS_INTERVAL: usize = 25;
+const LEGACY_IMPORT_PROGRESS_INTERVAL: usize = 100;
+const LEGACY_IMPORT_FILE_WRITE_CONCURRENCY: usize = 8;
 const LEGADO_SOURCE_DIR_LABEL: &str = "legado-json";
 const FRONTEND_STORAGE_PREFIX: &str = "frontend:";
 const APP_CONFIG_SCOPE: &str = "app.config";
@@ -84,6 +86,19 @@ struct LegadoSourceCacheEntry {
     modified: Option<SystemTime>,
     len: u64,
     loaded_at: Instant,
+}
+
+#[derive(Clone)]
+struct LegacyImportFileWrite {
+    file_name: String,
+    source: BookSource,
+}
+
+fn flatten_legacy_json_value(value: Value) -> Vec<Value> {
+    match value {
+        Value::Array(items) => items,
+        other => vec![other],
+    }
 }
 
 #[derive(Clone)]
@@ -740,25 +755,82 @@ impl ReaderCore {
         &self,
         content: &str,
         _smart_explore_sub_categories: bool,
-        mut on_progress: F,
+        on_progress: F,
     ) -> Result<LegacyJsonImportResult, ReaderCoreError>
     where
         F: FnMut(LegacyJsonImportProgress) -> Fut,
         Fut: Future<Output = ()>,
     {
         let value: Value = serde_json::from_str(content)?;
-        let values = match value {
-            Value::Array(items) => items,
-            other => vec![other],
-        };
-        let total = values.len();
+        let values = flatten_legacy_json_value(value);
+        self.import_legacy_json_values_with_progress(
+            values,
+            LegacyJsonImportResult {
+                imported: 0,
+                skipped: 0,
+                files: Vec::new(),
+                errors: Vec::new(),
+            },
+            on_progress,
+        )
+        .await
+    }
 
+    pub async fn import_legacy_json_texts(
+        &self,
+        items: &[(String, String)],
+        smart_explore_sub_categories: bool,
+    ) -> Result<LegacyJsonImportResult, ReaderCoreError> {
+        self.import_legacy_json_texts_with_progress(
+            items,
+            smart_explore_sub_categories,
+            |_| async {},
+        )
+        .await
+    }
+
+    pub async fn import_legacy_json_texts_with_progress<F, Fut>(
+        &self,
+        items: &[(String, String)],
+        _smart_explore_sub_categories: bool,
+        on_progress: F,
+    ) -> Result<LegacyJsonImportResult, ReaderCoreError>
+    where
+        F: FnMut(LegacyJsonImportProgress) -> Fut,
+        Fut: Future<Output = ()>,
+    {
+        let mut values = Vec::new();
         let mut result = LegacyJsonImportResult {
             imported: 0,
             skipped: 0,
             files: Vec::new(),
             errors: Vec::new(),
         };
+        for (label, content) in items {
+            match serde_json::from_str::<Value>(content) {
+                Ok(value) => values.extend(flatten_legacy_json_value(value)),
+                Err(err) => {
+                    result.skipped += 1;
+                    result.errors.push(format!("{label}: {err}"));
+                }
+            }
+        }
+        self.import_legacy_json_values_with_progress(values, result, on_progress)
+            .await
+    }
+
+    async fn import_legacy_json_values_with_progress<F, Fut>(
+        &self,
+        values: Vec<Value>,
+        mut result: LegacyJsonImportResult,
+        mut on_progress: F,
+    ) -> Result<LegacyJsonImportResult, ReaderCoreError>
+    where
+        F: FnMut(LegacyJsonImportProgress) -> Fut,
+        Fut: Future<Output = ()>,
+    {
+        let total = values.len();
+
         let mut seen = HashSet::new();
         let mut pending_legado_sources = Vec::new();
         self.invalidate_source_list_cache().await;
@@ -768,8 +840,8 @@ impl ReaderCore {
                 processed: 0,
                 total,
                 imported: 0,
-                skipped: 0,
-                errors: 0,
+                skipped: result.skipped,
+                errors: result.errors.len(),
                 file_name: None,
                 done: true,
             })
@@ -819,11 +891,11 @@ impl ReaderCore {
                             result.skipped += 1;
                         } else {
                             let file_name = legado_file_name(&source);
-                            self.write_legado_source_file(&file_name, &source).await?;
                             progress_file_name = Some(file_name.clone());
                             result.imported += 1;
-                            result.files.push(file_name);
-                            pending_legado_sources.push(source);
+                            result.files.push(file_name.clone());
+                            pending_legado_sources
+                                .push(LegacyImportFileWrite { file_name, source });
                         }
                     }
                     Err(err) => {
@@ -837,7 +909,13 @@ impl ReaderCore {
             if processed % LEGACY_IMPORT_PROGRESS_INTERVAL == 0 || processed == total {
                 if !pending_legado_sources.is_empty() {
                     let pending = std::mem::take(&mut pending_legado_sources);
-                    self.source_service.save_many(USER_NS, pending).await?;
+                    self.write_many_legado_source_files(&pending).await?;
+                    self.source_service
+                        .save_many(
+                            USER_NS,
+                            pending.into_iter().map(|item| item.source).collect(),
+                        )
+                        .await?;
                 }
                 on_progress(LegacyJsonImportProgress {
                     processed,
@@ -2887,6 +2965,40 @@ impl ReaderCore {
         let metadata = fs::metadata(&path).await.ok();
         self.store_legado_source_cache(file_name, source, metadata.as_ref())
             .await;
+        Ok(())
+    }
+
+    async fn write_many_legado_source_files(
+        &self,
+        sources: &[LegacyImportFileWrite],
+    ) -> Result<(), ReaderCoreError> {
+        if sources.is_empty() {
+            return Ok(());
+        }
+
+        fs::create_dir_all(&self.legado_source_dir).await?;
+        let source_dir = self.legado_source_dir.clone();
+        let writes = stream::iter(sources.iter().cloned().map(|item| {
+            let source_dir = source_dir.clone();
+            async move {
+                ensure_safe_file_name(&item.file_name)?;
+                let path = source_dir.join(&item.file_name);
+                let json = serde_json::to_string_pretty(&item.source)?;
+                fs::write(&path, &json).await?;
+                let metadata = fs::metadata(&path).await.ok();
+                Ok::<_, ReaderCoreError>((item.file_name, item.source, path, metadata))
+            }
+        }))
+        .buffer_unordered(LEGACY_IMPORT_FILE_WRITE_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+
+        for write in writes {
+            let (file_name, source, path, metadata) = write?;
+            self.remove_source_text_cache(&path).await;
+            self.store_legado_source_cache(&file_name, &source, metadata.as_ref())
+                .await;
+        }
         Ok(())
     }
 

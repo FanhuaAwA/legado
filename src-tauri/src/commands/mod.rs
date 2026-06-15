@@ -42,6 +42,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         source::booksource_delete_batch,
         source::booksource_toggle,
         source::booksource_import_legacy_json_text,
+        source::booksource_import_legacy_json_texts,
         source::booksource_import_legacy_json_url,
         source::booksource_eval,
         source::booksource_save_draft,

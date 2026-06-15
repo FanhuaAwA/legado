@@ -213,6 +213,38 @@ pub async fn dispatch<R: tauri::Runtime>(
                 .map_err(|err| err.into_command_error());
             reply(result)
         }
+        "booksource_import_legacy_json_texts" => {
+            let (items, smart_explore_sub_categories, request_id) = parsed!(
+                raw,
+                {
+                    items: Vec<source::LegacyJsonTextImportItem>,
+                    smart_explore_sub_categories: bool,
+                    request_id: Option<String>
+                }
+            );
+            let request_id = request_id.unwrap_or_default();
+            let app_for_progress = app.clone();
+            let items = items
+                .into_iter()
+                .map(|item| (item.label, item.content))
+                .collect::<Vec<_>>();
+            let result = state
+                .core
+                .import_legacy_json_texts_with_progress(
+                    &items,
+                    smart_explore_sub_categories,
+                    move |progress| {
+                        let app = app_for_progress.clone();
+                        let request_id = request_id.clone();
+                        async move {
+                            source::emit_legacy_import_progress(&app, &request_id, progress);
+                        }
+                    },
+                )
+                .await
+                .map_err(|err| err.into_command_error());
+            reply(result)
+        }
         "booksource_import_legacy_json_url" => {
             let (url, smart_explore_sub_categories, request_id) = parsed!(
                 raw,

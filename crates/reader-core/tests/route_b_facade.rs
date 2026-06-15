@@ -151,7 +151,7 @@ async fn import_legacy_json_text_reports_progress_batches() {
         .await
         .unwrap();
 
-    let sources: Vec<_> = (0..30)
+    let sources: Vec<_> = (0..130)
         .map(|index| {
             json!({
                 "bookSourceName": format!("Progress Fixture {index}"),
@@ -180,20 +180,73 @@ async fn import_legacy_json_text_reports_progress_batches() {
         .await
         .unwrap();
 
-    assert_eq!(result.imported, 30);
+    assert_eq!(result.imported, 130);
     let persisted_sources = core.list_sources().await.unwrap();
-    assert_eq!(persisted_sources.len(), 30);
+    assert_eq!(persisted_sources.len(), 130);
 
     let events = progress_events.lock().unwrap();
     assert!(
-        events.iter().any(|event| event.processed == 25),
-        "expected a progress event at the batch interval"
+        events
+            .iter()
+            .any(|event| event.processed < 130 && !event.done),
+        "expected an intermediate progress event before the final batch"
     );
     let final_event = events.last().expect("expected final progress event");
-    assert_eq!(final_event.processed, 30);
-    assert_eq!(final_event.total, 30);
-    assert_eq!(final_event.imported, 30);
+    assert_eq!(final_event.processed, 130);
+    assert_eq!(final_event.total, 130);
+    assert_eq!(final_event.imported, 130);
     assert!(final_event.done);
+}
+
+#[tokio::test]
+async fn import_legacy_json_texts_skips_bad_item_and_imports_valid_sources() {
+    let temp = tempfile::tempdir().unwrap();
+    let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
+        .await
+        .unwrap();
+    let valid = json!([
+        {
+            "bookSourceName": "Batch Text Fixture 1",
+            "bookSourceUrl": "https://batch-text.example/1",
+            "enabled": true,
+            "searchUrl": "/search?key={{key}}",
+            "ruleSearch": {
+                "bookList": ".item",
+                "name": ".title@text",
+                "bookUrl": ".title@href"
+            }
+        },
+        {
+            "bookSourceName": "Batch Text Fixture 2",
+            "bookSourceUrl": "https://batch-text.example/2",
+            "enabled": true,
+            "searchUrl": "/search?key={{key}}",
+            "ruleSearch": {
+                "bookList": ".item",
+                "name": ".title@text",
+                "bookUrl": ".title@href"
+            }
+        }
+    ])
+    .to_string();
+    let items = vec![
+        ("bad-local-source.json".to_string(), "{".to_string()),
+        ("valid-local-source.json".to_string(), valid),
+    ];
+
+    let result = core.import_legacy_json_texts(&items, false).await.unwrap();
+
+    assert_eq!(result.imported, 2);
+    assert_eq!(result.skipped, 1);
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|error| error.contains("bad-local-source.json")),
+        "parse error should retain the local file label"
+    );
+    let persisted_sources = core.list_sources().await.unwrap();
+    assert_eq!(persisted_sources.len(), 2);
 }
 
 #[tokio::test]

@@ -275,12 +275,12 @@ where
             payload.source_dir.as_deref(),
             payload.start_index,
             payload.count,
-            Some(cancelled),
+            Some(cancelled.clone()),
             on_progress,
         )
         .await
         .map_err(map_err);
-    state.tasks.remove(&payload.task_id);
+    state.tasks.remove_if_current(&payload.task_id, &cancelled);
     result
 }
 

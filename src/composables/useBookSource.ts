@@ -81,6 +81,11 @@ export interface LegacyJsonImportProgress {
   done: boolean;
 }
 
+export interface LegacyJsonTextImportItem {
+  label: string;
+  content: string;
+}
+
 export interface BookSourceDeleteItem {
   fileName: string;
   sourceDir?: string | null;
@@ -399,7 +404,20 @@ export async function importLegacyJsonText(
   );
 }
 
-/** 从远程 URL 下载开源阅读/Legado Android JSON 书源，转换为 Tauri JS 书源并安装。 */
+/** Import multiple Legado JSON texts in one backend batch. */
+export async function importLegacyJsonTexts(
+  items: LegacyJsonTextImportItem[],
+  smartExploreSubCategories = false,
+  requestId?: string | null,
+): Promise<LegacyJsonImportResult> {
+  return invokeWithTimeout<LegacyJsonImportResult>(
+    "booksource_import_legacy_json_texts",
+    { items, smartExploreSubCategories, requestId: requestId ?? null },
+    70000,
+  );
+}
+
+/** Import Legado JSON from a remote URL. */
 export async function importLegacyJsonUrl(
   url: string,
   smartExploreSubCategories = false,

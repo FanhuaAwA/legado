@@ -7,7 +7,7 @@
 实测命令：
 
 ```powershell
-# 本地导入（reader-core facade，对应 Tauri 命令 booksource_import_legacy_json_text）
+# 本地导入（reader-core facade，对应 Tauri 命令 booksource_import_legacy_json_text；多文件批量对应 booksource_import_legacy_json_texts）
 cargo test -p reader-core --test source_compat_import imports_and_parses_fields -- --ignored --nocapture
 # 网络导入（reader-core facade，对应 Tauri 命令 booksource_import_legacy_json_url）
 cargo test -p reader-core --test source_compat_import network_import -- --ignored --nocapture --test-threads=1
@@ -283,7 +283,7 @@ cargo test -p reader-core wikisource_classics_public_domain_full_chain -- --igno
 ## 验证命令
 
 ```powershell
-# 本地文件导入（booksource_import_legacy_json_text 同链路）
+# 本地文件导入（单文件走 booksource_import_legacy_json_text，多文件批量走 booksource_import_legacy_json_texts 同核心导入链路）
 cargo test -p reader-core --test source_compat_import imports_and_parses_fields -- --ignored --nocapture
 # 网络 URL 导入（booksource_import_legacy_json_url 同链路；下载来自各目录 网络导入.txt）
 cargo test -p reader-core --test source_compat_import shuqi_network_import_full_chain -- --ignored --nocapture

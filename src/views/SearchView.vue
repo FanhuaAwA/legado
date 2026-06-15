@@ -82,6 +82,10 @@ function renderSourceTypeLabel(option: SelectOption) {
   return String(option.label ?? "");
 }
 
+function sourceKeyOf(source: BookSourceMeta): string {
+  return source.sourceKey || `${source.sourceDir}::${source.fileName}`;
+}
+
 const searchableSources = computed(() => {
   if (selectedSearchType.value === "all") {
     return allSearchableSources.value;
@@ -95,17 +99,110 @@ const searchableSources = computed(() => {
 const limitedSource = ref<BookSourceMeta | null>(null);
 const limitedSourceName = computed(() => limitedSource.value?.name ?? "");
 const selectedTypeLabel = computed(() => sourceTypeLabels[selectedSearchType.value]);
-
-const searchScopeOptions = computed(() => [
+const SEARCH_SCOPE_OPTION_BATCH_SIZE = 250;
+const SEARCH_SCOPE_MENU_PROPS = {
+  style: {
+    maxHeight: "320px",
+  },
+};
+const searchScopeOptions = shallowRef<SelectOption[]>([
   {
-    label: `全部书源（${searchableSources.value.length}）`,
+    label: "全部书源（0）",
     value: ALL_SOURCES_VALUE,
   },
-  ...searchableSources.value.map((source) => ({
-    label: source.name,
-    value: source.sourceKey,
-  })),
 ]);
+let searchScopeOptionsBuildId = 0;
+let pendingSearchScopeSources: BookSourceMeta[] = [];
+let pendingSearchScopeBuildId = 0;
+let searchScopeOptionsFrameHandle: number | null = null;
+let searchScopeOptionsFrameViaRaf = false;
+
+function buildAllSourcesOption(count: number): SelectOption {
+  return {
+    label: `全部书源（${count}）`,
+    value: ALL_SOURCES_VALUE,
+  };
+}
+
+function buildSourceScopeOption(source: BookSourceMeta): SelectOption {
+  return {
+    label: source.name,
+    value: sourceKeyOf(source),
+  };
+}
+
+function waitForSearchScopeOptionFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => resolve());
+      return;
+    }
+    globalThis.setTimeout(resolve, 0);
+  });
+}
+
+function clearScheduledSearchScopeOptionsRebuild() {
+  if (searchScopeOptionsFrameHandle === null) {
+    return;
+  }
+  if (searchScopeOptionsFrameViaRaf && typeof window !== "undefined") {
+    window.cancelAnimationFrame(searchScopeOptionsFrameHandle);
+  } else {
+    globalThis.clearTimeout(searchScopeOptionsFrameHandle);
+  }
+  searchScopeOptionsFrameHandle = null;
+  searchScopeOptionsFrameViaRaf = false;
+}
+
+async function rebuildSearchScopeOptions(sources: BookSourceMeta[], buildId: number) {
+  const nextOptions: SelectOption[] = [buildAllSourcesOption(sources.length)];
+  if (!sources.length) {
+    if (buildId === searchScopeOptionsBuildId) {
+      searchScopeOptions.value = nextOptions;
+    }
+    return;
+  }
+
+  for (let i = 0; i < sources.length; i += SEARCH_SCOPE_OPTION_BATCH_SIZE) {
+    if (buildId !== searchScopeOptionsBuildId) {
+      return;
+    }
+    const chunk = sources.slice(i, i + SEARCH_SCOPE_OPTION_BATCH_SIZE);
+    nextOptions.push(...chunk.map(buildSourceScopeOption));
+    searchScopeOptions.value = nextOptions.slice();
+    if (i + SEARCH_SCOPE_OPTION_BATCH_SIZE < sources.length) {
+      await waitForSearchScopeOptionFrame();
+    }
+  }
+}
+
+function scheduleSearchScopeOptionsRebuild(sources: BookSourceMeta[]) {
+  pendingSearchScopeSources = sources;
+  pendingSearchScopeBuildId = ++searchScopeOptionsBuildId;
+  if (searchScopeOptionsFrameHandle !== null) {
+    return;
+  }
+  const rebuild = () => {
+    searchScopeOptionsFrameHandle = null;
+    searchScopeOptionsFrameViaRaf = false;
+    void rebuildSearchScopeOptions(pendingSearchScopeSources, pendingSearchScopeBuildId);
+  };
+  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    searchScopeOptionsFrameViaRaf = true;
+    searchScopeOptionsFrameHandle = window.requestAnimationFrame(rebuild);
+    return;
+  }
+  searchScopeOptionsFrameViaRaf = false;
+  searchScopeOptionsFrameHandle = globalThis.setTimeout(rebuild, 0) as unknown as number;
+}
+
+watch(
+  searchableSources,
+  (nextSources) => {
+    scheduleSearchScopeOptionsRebuild(nextSources);
+  },
+  { immediate: true },
+);
 
 /** 实际参与搜索的书源列表 */
 const activeSources = computed(() =>
@@ -122,10 +219,6 @@ const aggregatedEmptyDescription = computed(() =>
   limitedSource.value ? `${limitedSourceName.value} 暂无搜索结果` : "当前搜索范围暂无结果",
 );
 const hasSearchKeyword = computed(() => searchKeyword.value.trim().length > 0);
-
-function sourceKeyOf(source: BookSourceMeta): string {
-  return source.sourceKey || `${source.sourceDir}::${source.fileName}`;
-}
 
 function sourceEventKey(fileName: string, sourceDir?: string): string {
   return sourceDir ? `${sourceDir}::${fileName}` : fileName;
@@ -730,6 +823,8 @@ onMounted(async () => {
 
 onUnmounted(() => {
   activeSearchToken.value += 1;
+  searchScopeOptionsBuildId += 1;
+  clearScheduledSearchScopeOptionsRebuild();
   cancelAggregatedGroupPublish();
   unlisteners.forEach((fn) => fn());
 });
@@ -863,6 +958,7 @@ onUnmounted(() => {
         filterable
         class="sv-toolbar__scope"
         :options="searchScopeOptions"
+        :menu-props="SEARCH_SCOPE_MENU_PROPS"
       />
       <n-button v-if="searchRunning" type="warning" size="small" @click="stopSearch">
         停止搜索

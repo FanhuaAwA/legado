@@ -14,6 +14,12 @@ use tauri_plugin_dialog::DialogExt;
 
 type CommandResult<T> = Result<T, CommandError>;
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct LegacyJsonTextImportItem {
+    pub label: String,
+    pub content: String,
+}
+
 fn map_err(err: reader_core::ReaderCoreError) -> CommandError {
     err.into_command_error()
 }
@@ -266,6 +272,37 @@ pub async fn booksource_import_legacy_json_text(
 }
 
 #[tauri::command]
+pub async fn booksource_import_legacy_json_texts(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    items: Vec<LegacyJsonTextImportItem>,
+    smart_explore_sub_categories: bool,
+    request_id: Option<String>,
+) -> CommandResult<LegacyJsonImportResult> {
+    let request_id = request_id.unwrap_or_default();
+    let app_for_progress = app.clone();
+    let items = items
+        .into_iter()
+        .map(|item| (item.label, item.content))
+        .collect::<Vec<_>>();
+    state
+        .core
+        .import_legacy_json_texts_with_progress(
+            &items,
+            smart_explore_sub_categories,
+            move |progress: LegacyJsonImportProgress| {
+                let app = app_for_progress.clone();
+                let request_id = request_id.clone();
+                async move {
+                    emit_legacy_import_progress(&app, &request_id, progress);
+                }
+            },
+        )
+        .await
+        .map_err(map_err)
+}
+
+#[tauri::command]
 pub async fn booksource_import_legacy_json_url(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -364,8 +401,8 @@ pub async fn booksource_search(
             .await
             .map_err(map_err)
     };
-    if let Some(tid) = task_id.as_deref() {
-        state.tasks.remove(tid);
+    if let (Some(tid), Some(t)) = (task_id.as_deref(), token.as_ref()) {
+        state.tasks.remove_if_current(tid, t);
     }
     result
 }
@@ -418,8 +455,8 @@ pub async fn booksource_chapter_list(
             .await
             .map_err(map_err)
     };
-    if let Some(tid) = task_id.as_deref() {
-        state.tasks.remove(tid);
+    if let (Some(tid), Some(t)) = (task_id.as_deref(), token.as_ref()) {
+        state.tasks.remove_if_current(tid, t);
     }
     result
 }
@@ -459,8 +496,8 @@ pub async fn booksource_chapter_content(
             .await
             .map_err(map_err)
     };
-    if let Some(tid) = task_id.as_deref() {
-        state.tasks.remove(tid);
+    if let (Some(tid), Some(t)) = (task_id.as_deref(), token.as_ref()) {
+        state.tasks.remove_if_current(tid, t);
     }
     result
 }

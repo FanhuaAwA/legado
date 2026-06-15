@@ -166,6 +166,42 @@ async fn booksource_import_legacy_json_text_accepts_request_id_in_ws_router() {
 }
 
 #[tokio::test]
+async fn booksource_import_legacy_json_texts_accepts_request_id_in_ws_router() {
+    let (app, _dir) = test_app().await;
+    let items = (0..2)
+        .map(|index| {
+            json!({
+                "label": format!("batch-{index}.json"),
+                "content": json!({
+                    "bookSourceName": format!("WS Batch Import Fixture {index}"),
+                    "bookSourceUrl": format!("https://ws-batch-import.example/source/{index}"),
+                    "enabled": true,
+                    "ruleSearch": {
+                        "bookList": "$[*]",
+                        "name": "name",
+                        "author": "author",
+                        "bookUrl": "url"
+                    }
+                })
+                .to_string()
+            })
+        })
+        .collect::<Vec<_>>();
+    let value = router::dispatch(
+        app.handle(),
+        "booksource_import_legacy_json_texts",
+        &json!({
+            "items": items,
+            "smartExploreSubCategories": false,
+            "requestId": "ws-import-batch-progress-test"
+        }),
+    )
+    .await
+    .expect("booksource_import_legacy_json_texts 应接受 requestId 并进入 WS 路由");
+    assert_eq!(value["imported"], 2);
+}
+
+#[tokio::test]
 async fn booksource_search_accepts_task_id_in_ws_router() {
     let (app, _dir) = test_app().await;
     let err = router::dispatch(

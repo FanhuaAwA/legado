@@ -3172,3 +3172,37 @@ GitHub 说明：
 - 自定义色派生采用线性混色，极亮或极暗自定义颜色仍可能需要后续做对比度增强策略。
 
 下一轮第一件事：提交推送并观察 GitHub Actions；若 CI 通过，按任务队列继续处理 headless/browser 形态下的 `extension_list NOT_ROUTED` 或前端性能边界校验脚本。
+
+## 2026-06-15 PERF-MIAOGONGZI-LOCAL-IMPORT
+
+任务 ID：`PERF-2026-06-15-MIAOGONGZI-LOCAL-IMPORT`
+
+范围声明：
+
+- 允许修改：书源导入 UI、`useBookSource` 命令封装、Tauri source 命令/WS router、reader-core 导入 facade/SQLite repo、导入性能测试、命令规格文档和 gate 报告。
+- 不触碰：第三方书源规则内容、用户数据目录、依赖版本、发布签名配置、非书源导入业务。
+
+关键修改：
+
+- 新增 `booksource_import_legacy_json_texts(items, smartExploreSubCategories, requestId?)`，用于多 URL 包和多本地 JSON 文件的批量文本导入；旧 `booksource_import_legacy_json_text` 保持兼容。
+- 本地多文件导入改成并发读取文件，再把 `{ label, content }[]` 交给 reader-core 批量导入，坏文件只计入 skipped/errors，不阻塞其它文件。
+- 喵/猫公子 URL 订阅展开并发从 4 调整为 8，解析出的多个包走同一批量文本命令。
+- reader-core 导入落盘改成每批有上限并发写文件，进度/写入批次从 25 调整为 100；SQLite `save_many` 改为分块多行 upsert。
+- 新增 ignored live perf：`crates/reader-core/tests/miaogongzi_import_perf.rs`，真实访问喵/猫公子订阅并用临时目录测试 URL 包导入与本地多文件导入。
+
+实测结果：
+
+- 最终喵/猫公子 10 包/1259 条：`resolve_ms=1344`、`combined_ms=3831`。
+- 本地多文件旧逐文件：`local_sequential_ms=4146`；新并发读 + 批量文本：`local_combined_ms=3807`，`local_speedup=1.09x`。
+- review 中发现前端 JSON parse/stringify 合并是负优化：`local_sequential_ms=4199`、`local_combined_ms=4665`、`local_speedup=0.90x`，已移除。
+
+门禁：
+
+- `cmd /c pnpm.cmd lint`：PASS。
+- `cargo test -p reader-core import_legacy_json_text_reports_progress_batches -- --nocapture`：PASS。
+- `cargo test -p reader-core import_legacy_json_texts_skips_bad_item_and_imports_valid_sources -- --nocapture`：PASS。
+- `cargo test -p legado-tauri booksource_import_legacy_json_texts_accepts_request_id_in_ws_router -- --nocapture`：PASS。
+- `node scripts\ci\check-command-contract.mjs --json`：PASS，`frontendTotal=163`、`registeredTotal=162`、`bothCount=162`、`onlyBackend=[]`。
+- `cargo check -p legado-tauri`：PASS。
+
+本轮报告：`reports/gates/2026-06-15-PERF-MIAOGONGZI-LOCAL-IMPORT/summary.md`

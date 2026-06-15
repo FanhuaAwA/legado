@@ -1,11 +1,12 @@
 use crate::error::error::AppError;
 use crate::model::book_source::BookSource;
 use crate::util::time::now_ts;
-use sqlx::{Row, SqlitePool};
+use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 
 const UPSERT_BOOK_SOURCE_SQL: &str =
     "INSERT INTO book_sources (user_ns, book_source_url, book_source_name, json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5) \
      ON CONFLICT(user_ns, book_source_url) DO UPDATE SET book_source_name=excluded.book_source_name, json=excluded.json, updated_at=excluded.updated_at";
+const UPSERT_BOOK_SOURCE_CHUNK_SIZE: usize = 100;
 
 #[derive(Clone)]
 pub struct BookSourceRepo {
@@ -53,15 +54,25 @@ impl BookSourceRepo {
 
         let mut tx = self.pool.begin().await?;
         let updated_at = now_ts();
-        for (source, json) in sources {
-            sqlx::query(UPSERT_BOOK_SOURCE_SQL)
-                .bind(user_ns)
-                .bind(&source.book_source_url)
-                .bind(&source.book_source_name)
-                .bind(json)
-                .bind(updated_at)
-                .execute(&mut *tx)
-                .await?;
+        for chunk in sources.chunks(UPSERT_BOOK_SOURCE_CHUNK_SIZE) {
+            let mut query = QueryBuilder::<Sqlite>::new(
+                "INSERT INTO book_sources (user_ns, book_source_url, book_source_name, json, updated_at) ",
+            );
+            query.push_values(chunk, |mut builder, (source, json)| {
+                builder
+                    .push_bind(user_ns)
+                    .push_bind(&source.book_source_url)
+                    .push_bind(&source.book_source_name)
+                    .push_bind(json)
+                    .push_bind(updated_at);
+            });
+            query.push(
+                " ON CONFLICT(user_ns, book_source_url) DO UPDATE SET \
+                 book_source_name=excluded.book_source_name, \
+                 json=excluded.json, \
+                 updated_at=excluded.updated_at",
+            );
+            query.build().execute(&mut *tx).await?;
         }
         tx.commit().await?;
         Ok(())

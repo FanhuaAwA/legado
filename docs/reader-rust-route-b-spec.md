@@ -380,6 +380,7 @@ booksource_delete(fileName, sourceDir?) -> void
 booksource_delete_batch(items) -> BookSourceBatchDeleteResult
 booksource_toggle(fileName, enabled, sourceDir?) -> void
 booksource_import_legacy_json_text(content, smartExploreSubCategories, requestId?) -> LegacyJsonImportResult
+booksource_import_legacy_json_texts(items: [{ label, content }], smartExploreSubCategories, requestId?) -> LegacyJsonImportResult
 booksource_import_legacy_json_url(url, smartExploreSubCategories, requestId?) -> LegacyJsonImportResult
 ```
 
@@ -676,9 +677,10 @@ cargo test -p reader-core crawler
 
 1. 实现 `SourceCatalogService`。
 2. 实现 `booksource_import_legacy_json_text`。
-3. 实现 `booksource_import_legacy_json_url`。
-4. 实现 `booksource_list` 和 `booksource_list_streaming`。
-5. 前端书源列表显示 Legado JSON 书源。
+3. 实现 `booksource_import_legacy_json_texts`。
+4. 实现 `booksource_import_legacy_json_url`。
+5. 实现 `booksource_list` 和 `booksource_list_streaming`。
+6. 前端书源列表显示 Legado JSON 书源。
 
 验收：
 
@@ -821,7 +823,7 @@ read cache
 路线 B 第一版完成的最低验收：
 
 1. 不启动本地 HTTP 服务。
-2. `booksource_import_legacy_json_text` 可导入 Legado JSON。
+2. `booksource_import_legacy_json_text` / `booksource_import_legacy_json_texts` 可导入 Legado JSON。
 3. `booksource_list` 能返回 JS 和 Legado 两类书源。
 4. `booksource_search` 可使用 Legado 书源搜索。
 5. `booksource_book_info`、`booksource_chapter_list`、`booksource_chapter_content` 可完成一本书从详情到阅读。

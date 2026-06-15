@@ -156,6 +156,7 @@ booksource_get_dir
 booksource_get_dirs
 booksource_http_proxy
 booksource_import_legacy_json_text
+booksource_import_legacy_json_texts
 booksource_import_legacy_json_url
 booksource_list
 booksource_list_streaming

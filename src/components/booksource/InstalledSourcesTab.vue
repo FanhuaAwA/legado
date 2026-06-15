@@ -19,6 +19,7 @@ import {
   readBookSource,
   saveBookSource,
   importLegacyJsonText,
+  importLegacyJsonTexts,
   type LegacyJsonImportProgress,
   type LegacyJsonImportResult,
   deleteBookSource,
@@ -356,7 +357,7 @@ const legacySmartSubCategories = ref(false);
 const legacyImporting = ref(false);
 const legacyImportRequestId = ref("");
 const legacyImportProgress = ref<LegacyJsonImportProgress | null>(null);
-const LEGACY_IMPORT_RESOLVE_CONCURRENCY = 4;
+const LEGACY_IMPORT_RESOLVE_CONCURRENCY = 8;
 let unlistenLegacyImportProgress: (() => void) | null = null;
 let legacyImportProgressListenerDisposed = false;
 
@@ -707,6 +708,15 @@ function mergeLegacyImportResult(target: LegacyJsonImportResult, next: LegacyJso
   target.errors.push(...next.errors);
 }
 
+function createLegacyImportResult(): LegacyJsonImportResult {
+  return {
+    imported: 0,
+    skipped: 0,
+    files: [],
+    errors: [],
+  };
+}
+
 function beginLegacyImportProgress(): string {
   const requestId = `legacy-import-${safeRandomUUID()}`;
   legacyImportRequestId.value = requestId;
@@ -761,28 +771,19 @@ async function runLegacyUrlImport(rawUrl: string) {
     if (!imports.length) {
       return;
     }
-    const merged: LegacyJsonImportResult = {
-      imported: 0,
-      skipped: 0,
-      files: [],
-      errors: [],
-    };
+    const merged = createLegacyImportResult();
     if (imports.length > 1) {
-      message.info(`已从订阅源解析出 ${imports.length} 个书源包，开始逐个导入`);
+      message.info(`已从订阅源解析出 ${imports.length} 个书源包，开始批量导入`);
     }
-    for (const item of imports) {
-      try {
-        const result = await importLegacyJsonText(
-          item.content,
-          legacySmartSubCategories.value,
-          requestId,
-        );
-        mergeLegacyImportResult(merged, result);
-      } catch (e: unknown) {
-        merged.skipped += 1;
-        merged.errors.push(`${item.url}: ${formatBookSourceError(e)}`);
-      }
-    }
+    const result = await importLegacyJsonTexts(
+      imports.map((item) => ({
+        label: item.url,
+        content: item.content,
+      })),
+      legacySmartSubCategories.value,
+      requestId,
+    );
+    mergeLegacyImportResult(merged, result);
     showLegacyImportResult(merged);
   } catch (e: unknown) {
     message.error(`导入失败: ${formatBookSourceError(e)}`);
@@ -814,28 +815,48 @@ function confirmLegacyFileImport() {
       return;
     }
     const files = Array.from(input.files);
-    const merged: LegacyJsonImportResult = {
-      imported: 0,
-      skipped: 0,
-      files: [],
-      errors: [],
-    };
+    const merged = createLegacyImportResult();
     legacyImporting.value = true;
     const requestId = beginLegacyImportProgress();
     message.info(`正在导入 ${files.length} 个开源阅读书源文件...`);
     try {
-      for (const file of files) {
-        try {
-          const result = await importLegacyJsonText(
-            await file.text(),
-            smartExploreSubCategories,
-            requestId,
-          );
-          mergeLegacyImportResult(merged, result);
-        } catch (e: unknown) {
+      const imports: ResolvedLegacyImport[] = [];
+      const readResults = await Promise.all(
+        files.map(async (file) => {
+          try {
+            return {
+              item: {
+                url: file.name,
+                content: await file.text(),
+              },
+              error: "",
+            };
+          } catch (e: unknown) {
+            return {
+              item: null,
+              error: `${file.name}: ${e instanceof Error ? e.message : String(e)}`,
+            };
+          }
+        }),
+      );
+      for (const result of readResults) {
+        if (result.item) {
+          imports.push(result.item);
+        } else if (result.error) {
           merged.skipped += 1;
-          merged.errors.push(`${file.name}: ${e instanceof Error ? e.message : String(e)}`);
+          merged.errors.push(result.error);
         }
+      }
+      if (imports.length > 0) {
+        const result = await importLegacyJsonTexts(
+          imports.map((item) => ({
+            label: item.url,
+            content: item.content,
+          })),
+          smartExploreSubCategories,
+          requestId,
+        );
+        mergeLegacyImportResult(merged, result);
       }
       showLegacyImportResult(merged);
     } finally {
