@@ -861,7 +861,31 @@ impl ReaderCore {
         url: &str,
         smart_explore_sub_categories: bool,
     ) -> Result<LegacyJsonImportResult, ReaderCoreError> {
+        self.import_legacy_json_url_with_progress(url, smart_explore_sub_categories, |_| async {})
+            .await
+    }
+
+    pub async fn import_legacy_json_url_with_progress<F, Fut>(
+        &self,
+        url: &str,
+        smart_explore_sub_categories: bool,
+        mut on_progress: F,
+    ) -> Result<LegacyJsonImportResult, ReaderCoreError>
+    where
+        F: FnMut(LegacyJsonImportProgress) -> Fut,
+        Fut: Future<Output = ()>,
+    {
         validate_network_url(url)?;
+        on_progress(LegacyJsonImportProgress {
+            processed: 0,
+            total: 0,
+            imported: 0,
+            skipped: 0,
+            errors: 0,
+            file_name: None,
+            done: false,
+        })
+        .await;
         let text = self
             .book_service
             .http_client()
@@ -871,7 +895,7 @@ impl ReaderCore {
             .error_for_status()?
             .text()
             .await?;
-        self.import_legacy_json_text(&text, smart_explore_sub_categories)
+        self.import_legacy_json_text_with_progress(&text, smart_explore_sub_categories, on_progress)
             .await
     }
 

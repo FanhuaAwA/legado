@@ -27,6 +27,18 @@ fn cancelled_error() -> CommandError {
     }
 }
 
+pub fn emit_legacy_import_progress<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    request_id: &str,
+    progress: LegacyJsonImportProgress,
+) {
+    let mut payload = serde_json::to_value(progress).unwrap_or_else(|_| serde_json::json!({}));
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("requestId".to_string(), serde_json::json!(request_id));
+    }
+    let _ = app.emit("booksource:import-progress", payload);
+}
+
 async fn wait_for_cancel(cancelled: Arc<AtomicBool>) {
     while !cancelled.load(Ordering::SeqCst) {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -245,12 +257,7 @@ pub async fn booksource_import_legacy_json_text(
                 let app = app_for_progress.clone();
                 let request_id = request_id.clone();
                 async move {
-                    let mut payload =
-                        serde_json::to_value(progress).unwrap_or_else(|_| serde_json::json!({}));
-                    if let Some(object) = payload.as_object_mut() {
-                        object.insert("requestId".to_string(), serde_json::json!(request_id));
-                    }
-                    let _ = app.emit("booksource:import-progress", payload);
+                    emit_legacy_import_progress(&app, &request_id, progress);
                 }
             },
         )
@@ -260,13 +267,27 @@ pub async fn booksource_import_legacy_json_text(
 
 #[tauri::command]
 pub async fn booksource_import_legacy_json_url(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     url: String,
     smart_explore_sub_categories: bool,
+    request_id: Option<String>,
 ) -> CommandResult<LegacyJsonImportResult> {
+    let request_id = request_id.unwrap_or_default();
+    let app_for_progress = app.clone();
     state
         .core
-        .import_legacy_json_url(&url, smart_explore_sub_categories)
+        .import_legacy_json_url_with_progress(
+            &url,
+            smart_explore_sub_categories,
+            move |progress: LegacyJsonImportProgress| {
+                let app = app_for_progress.clone();
+                let request_id = request_id.clone();
+                async move {
+                    emit_legacy_import_progress(&app, &request_id, progress);
+                }
+            },
+        )
         .await
         .map_err(map_err)
 }

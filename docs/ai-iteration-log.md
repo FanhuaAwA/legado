@@ -1,5 +1,46 @@
 # AI Iteration Log
 
+## 2026-06-15 PERF-LEGACY-IMPORT-URL-PROGRESS
+
+任务 ID：`PERF-2026-06-15-LEGACY-IMPORT-URL-PROGRESS`
+
+本轮目标：继续按项目文档处理“大量书源导入时长时间等待”的导入体验问题，补齐 URL/Route B 导入进度缺口。此前 Tauri text 导入已有 `requestId` 和进度事件，但 URL 命令、reader-core URL facade 与 WS router 没有完整复用。
+
+Review 发现：
+
+- `ReaderCore::import_legacy_json_url()` 下载完成后调用无进度 `import_legacy_json_text()`，没有把分批导入 progress callback 贯通到 URL 链路。
+- Tauri `booksource_import_legacy_json_url` 只返回最终结果，没有可选 `requestId`。
+- WS router 的 text/url 导入也走无进度兼容路径，远端页面无法收到 `booksource:import-progress`。
+
+实现：
+
+- reader-core 新增 `import_legacy_json_url_with_progress()`，先发初始进度，再把下载文本交给 `import_legacy_json_text_with_progress()`。
+- `src-tauri/src/commands/source.rs` 抽出 `emit_legacy_import_progress()`，text/url 命令复用同一事件 payload。
+- Tauri URL 命令新增可选 `requestId`。
+- WS router text/url 导入解析可选 `requestId` 并发送 `booksource:import-progress`。
+- `src/composables/useBookSource.ts` 的 `importLegacyJsonUrl()` 支持可选 `requestId`。
+- Route B 规范同步更新 URL 导入参数和 import progress 事件。
+
+预期收益：
+
+- URL 导入大型开源阅读/Legado JSON 包时，不再只能等待最终结果；Route B 和 Tauri IPC 可以共享同一进度事件契约。
+- 前端现有安装页仍可继续用 text 导入进度；未来如果直接调用 URL 命令，也可以传 `requestId` 获得进度。
+
+验证：
+
+- `cmd /c pnpm.cmd lint`：PASS。
+- `cmd /c pnpm.cmd build`：PASS（仅既有 vconsole eval / large chunk / plugin timing warning）。
+- `cargo fmt --all -- --check`：PASS。
+- `cargo check -p reader-core`：PASS。
+- `cargo check -p legado-tauri`：PASS。
+- `cargo check -p legado-headless`：PASS。
+- `cargo test -p reader-core import_legacy_json_url_reports_progress -- --nocapture`：PASS。
+- `cargo test -p legado-tauri --test ws_router booksource_import_legacy_json_text_accepts_request_id_in_ws_router -- --nocapture`：PASS。
+- `node scripts/ci/check-command-contract.mjs --json`：PASS。
+- `git diff --check`：PASS。
+
+Gate 报告：`reports/gates/2026-06-15-PERF-LEGACY-IMPORT-URL-PROGRESS/summary.md`。
+
 ## 2026-06-15 PERF-SOURCE-RELOAD-COALESCE
 
 任务 ID：`PERF-2026-06-15-SOURCE-RELOAD-COALESCE`

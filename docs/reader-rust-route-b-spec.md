@@ -380,7 +380,7 @@ booksource_delete(fileName, sourceDir?) -> void
 booksource_delete_batch(items) -> BookSourceBatchDeleteResult
 booksource_toggle(fileName, enabled, sourceDir?) -> void
 booksource_import_legacy_json_text(content, smartExploreSubCategories, requestId?) -> LegacyJsonImportResult
-booksource_import_legacy_json_url(url, smartExploreSubCategories) -> LegacyJsonImportResult
+booksource_import_legacy_json_url(url, smartExploreSubCategories, requestId?) -> LegacyJsonImportResult
 ```
 
 事件：
@@ -388,6 +388,9 @@ booksource_import_legacy_json_url(url, smartExploreSubCategories) -> LegacyJsonI
 ```text
 booksource:batch
 payload: { requestId, items, done, total?, error? }
+
+booksource:import-progress
+payload: { requestId, processed, total, imported, skipped, errors, fileName?, done }
 ```
 
 ### 11.2 书源执行

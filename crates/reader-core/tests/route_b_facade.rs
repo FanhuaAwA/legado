@@ -78,6 +78,35 @@ async fn content() -> Html<&'static str> {
     )
 }
 
+async fn legacy_import_json() -> &'static str {
+    r#"
+    [
+      {
+        "bookSourceName": "URL Progress Fixture 1",
+        "bookSourceUrl": "https://url-progress.example/1",
+        "enabled": true,
+        "ruleSearch": {
+          "bookList": "$[*]",
+          "name": "name",
+          "author": "author",
+          "bookUrl": "url"
+        }
+      },
+      {
+        "bookSourceName": "URL Progress Fixture 2",
+        "bookSourceUrl": "https://url-progress.example/2",
+        "enabled": true,
+        "ruleSearch": {
+          "bookList": "$[*]",
+          "name": "name",
+          "author": "author",
+          "bookUrl": "url"
+        }
+      }
+    ]
+    "#
+}
+
 async fn prefetch_toc() -> Html<&'static str> {
     Html(
         r#"
@@ -165,6 +194,53 @@ async fn import_legacy_json_text_reports_progress_batches() {
     assert_eq!(final_event.total, 30);
     assert_eq!(final_event.imported, 30);
     assert!(final_event.done);
+}
+
+#[tokio::test]
+async fn import_legacy_json_url_reports_progress() {
+    let temp = tempfile::tempdir().unwrap();
+    let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
+        .await
+        .unwrap();
+
+    let app = Router::new().route("/legacy-sources.json", get(legacy_import_json));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let progress_events = Arc::new(Mutex::new(Vec::new()));
+    let progress_events_for_cb = progress_events.clone();
+    let result = core
+        .import_legacy_json_url_with_progress(
+            &format!("http://{addr}/legacy-sources.json"),
+            false,
+            move |progress| {
+                let progress_events = progress_events_for_cb.clone();
+                async move {
+                    progress_events.lock().unwrap().push(progress);
+                }
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.imported, 2);
+    let events = progress_events.lock().unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|progress| progress.processed == 0 && progress.total == 0 && !progress.done),
+        "URL import should emit an initial download/import-start progress event: {events:?}"
+    );
+    let final_event = events.last().expect("progress should be emitted");
+    assert_eq!(final_event.processed, 2);
+    assert_eq!(final_event.total, 2);
+    assert_eq!(final_event.imported, 2);
+    assert!(final_event.done);
+
+    server.abort();
 }
 
 #[tokio::test]

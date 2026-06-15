@@ -137,6 +137,35 @@ async fn booksource_list_streaming_is_routed() {
 }
 
 #[tokio::test]
+async fn booksource_import_legacy_json_text_accepts_request_id_in_ws_router() {
+    let (app, _dir) = test_app().await;
+    let content = json!({
+        "bookSourceName": "WS Import Progress Fixture",
+        "bookSourceUrl": "https://ws-import-progress.example/source",
+        "enabled": true,
+        "ruleSearch": {
+            "bookList": "$[*]",
+            "name": "name",
+            "author": "author",
+            "bookUrl": "url"
+        }
+    })
+    .to_string();
+    let value = router::dispatch(
+        app.handle(),
+        "booksource_import_legacy_json_text",
+        &json!({
+            "content": content,
+            "smartExploreSubCategories": false,
+            "requestId": "ws-import-progress-test"
+        }),
+    )
+    .await
+    .expect("booksource_import_legacy_json_text 应接受 requestId 并进入 WS 路由");
+    assert_eq!(value["imported"], 1);
+}
+
+#[tokio::test]
 async fn booksource_search_accepts_task_id_in_ws_router() {
     let (app, _dir) = test_app().await;
     let err = router::dispatch(

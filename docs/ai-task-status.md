@@ -1,5 +1,40 @@
 # AI Task Status
 
+## 2026-06-15 PERF-LEGACY-IMPORT-URL-PROGRESS 状态更新
+
+本轮状态：`local-gate-pass`；将追加到当前性能优化草稿 PR，远端 Quality Gate 状态以 GitHub Actions 为准。
+
+任务 ID：`PERF-2026-06-15-LEGACY-IMPORT-URL-PROGRESS`。本轮继续处理“大型开源阅读/Legado JSON 书源 URL 导入长时间无反馈”的导入链路；范围覆盖 reader-core URL 导入、Tauri IPC、Route B WS router 和前端命令封装，不改变导入结果结构、书源规则执行语义、文件命名或第三方书源样本。
+
+Review 发现的问题：
+
+- `ReaderCore::import_legacy_json_url()` 下载远程 JSON 后调用无进度的 `import_legacy_json_text()`，URL 导入链路没有复用已实现的分批 progress callback。
+- Tauri `booksource_import_legacy_json_url` 命令没有可选 `requestId`，无法像 text 导入一样通过 `booksource:import-progress` 事件向 UI 回传进度。
+- WS router 的 `booksource_import_legacy_json_text` / `booksource_import_legacy_json_url` 仍走无进度兼容路径，Route B 远端调用会长时间只等最终结果。
+
+关键修改：
+
+- reader-core 新增 `import_legacy_json_url_with_progress()`，URL 下载开始时先上报初始 progress，下载完成后复用 `import_legacy_json_text_with_progress()` 的分批导入进度。
+- Tauri URL 导入命令新增可选 `requestId`，并复用同一个 `booksource:import-progress` 事件 payload。
+- WS router 的 text/url 导入均解析可选 `requestId`，并通过 app event 发送 import progress，保持 Route B 命令契约一致。
+- 前端 `importLegacyJsonUrl()` 支持可选 `requestId`；旧调用不传参数仍保持兼容。
+- `docs/reader-rust-route-b-spec.md` 同步更新 URL 导入可选 `requestId` 和 `booksource:import-progress` 事件契约。
+
+已通过本地 gate：
+
+- `cmd /c pnpm.cmd lint`
+- `cmd /c pnpm.cmd build`
+- `cargo fmt --all -- --check`
+- `cargo check -p reader-core`
+- `cargo check -p legado-tauri`
+- `cargo check -p legado-headless`
+- `cargo test -p reader-core import_legacy_json_url_reports_progress -- --nocapture`
+- `cargo test -p legado-tauri --test ws_router booksource_import_legacy_json_text_accepts_request_id_in_ws_router -- --nocapture`
+- `node scripts/ci/check-command-contract.mjs --json`
+- `git diff --check`
+
+Gate 报告：`reports/gates/2026-06-15-PERF-LEGACY-IMPORT-URL-PROGRESS/summary.md`。
+
 ## 2026-06-15 PERF-SOURCE-RELOAD-COALESCE 状态更新
 
 本轮状态：`local-gate-pass`；将追加到当前性能优化草稿 PR，远端 Quality Gate 状态以 GitHub Actions 为准。

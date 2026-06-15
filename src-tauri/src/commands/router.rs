@@ -186,22 +186,60 @@ pub async fn dispatch<R: tauri::Runtime>(
             reply(source::booksource_toggle(state, file_name, enabled, source_dir).await)
         }
         "booksource_import_legacy_json_text" => {
-            let (content, smart_explore_sub_categories) =
-                parsed!(raw, { content: String, smart_explore_sub_categories: bool });
+            let (content, smart_explore_sub_categories, request_id) = parsed!(
+                raw,
+                {
+                    content: String,
+                    smart_explore_sub_categories: bool,
+                    request_id: Option<String>
+                }
+            );
+            let request_id = request_id.unwrap_or_default();
+            let app_for_progress = app.clone();
             let result = state
                 .core
-                .import_legacy_json_text(&content, smart_explore_sub_categories)
+                .import_legacy_json_text_with_progress(
+                    &content,
+                    smart_explore_sub_categories,
+                    move |progress| {
+                        let app = app_for_progress.clone();
+                        let request_id = request_id.clone();
+                        async move {
+                            source::emit_legacy_import_progress(&app, &request_id, progress);
+                        }
+                    },
+                )
                 .await
                 .map_err(|err| err.into_command_error());
             reply(result)
         }
         "booksource_import_legacy_json_url" => {
-            let (url, smart_explore_sub_categories) =
-                parsed!(raw, { url: String, smart_explore_sub_categories: bool });
-            reply(
-                source::booksource_import_legacy_json_url(state, url, smart_explore_sub_categories)
-                    .await,
-            )
+            let (url, smart_explore_sub_categories, request_id) = parsed!(
+                raw,
+                {
+                    url: String,
+                    smart_explore_sub_categories: bool,
+                    request_id: Option<String>
+                }
+            );
+            let request_id = request_id.unwrap_or_default();
+            let app_for_progress = app.clone();
+            let result = state
+                .core
+                .import_legacy_json_url_with_progress(
+                    &url,
+                    smart_explore_sub_categories,
+                    move |progress| {
+                        let app = app_for_progress.clone();
+                        let request_id = request_id.clone();
+                        async move {
+                            source::emit_legacy_import_progress(&app, &request_id, progress);
+                        }
+                    },
+                )
+                .await
+                .map_err(|err| err.into_command_error());
+            reply(result)
         }
         "booksource_save_draft" => {
             let (file_name, content) = parsed!(raw, { file_name: String, content: String });

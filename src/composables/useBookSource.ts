@@ -403,10 +403,11 @@ export async function importLegacyJsonText(
 export async function importLegacyJsonUrl(
   url: string,
   smartExploreSubCategories = false,
+  requestId?: string | null,
 ): Promise<LegacyJsonImportResult> {
   return invokeWithTimeout<LegacyJsonImportResult>(
     "booksource_import_legacy_json_url",
-    { url, smartExploreSubCategories },
+    { url, smartExploreSubCategories, requestId: requestId ?? null },
     70000,
   );
 }
