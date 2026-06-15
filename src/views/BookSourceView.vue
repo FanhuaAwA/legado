@@ -32,6 +32,16 @@ const { onlineRepoDeepLinkRequest, bookSourceImportDeepLinkRequest } = storeToRe
 
 type BookSourceTab = "installed" | "online" | "debug" | "test" | "ai";
 const BOOK_SOURCE_TABS: BookSourceTab[] = ["installed", "online", "debug", "test", "ai"];
+interface BookSourceReloadPayload {
+  scope?: "all" | "single";
+  fileName?: string;
+  sourceDir?: string;
+  refreshStarted?: boolean;
+}
+
+function sourceEventKey(fileName: string, sourceDir?: string): string {
+  return sourceDir ? `${sourceDir}::${fileName}` : fileName;
+}
 
 const InstalledSourcesTab = defineAsyncComponent(
   () => import("../components/booksource/InstalledSourcesTab.vue"),
@@ -270,7 +280,7 @@ function handleMobileMenuSelect(key: string) {
       installedRef.value?.openEditor(undefined, "video");
       break;
     case "reload":
-      installedRef.value?.reloadAllSources();
+      void handleForceReload();
       break;
   }
 }
@@ -302,22 +312,30 @@ function handleOnlineMenuSelect(key: string) {
 }
 
 async function handleForceReload() {
-  if (installedRef.value) {
-    await installedRef.value.reloadAllSources();
-    return;
-  }
-  await loadSources({ force: true });
-  await eventEmit("app:booksource-reload", { scope: "all" });
+  await handleInstalledReload({ scope: "all" });
+  message.success("已重载所有书源");
 }
 
 /**
  * 子标签页（导入/删除/启停/保存/安装）后的统一刷新：除刷新本页书源列表外，
  * 还广播 app:booksource-reload，让搜索/发现/书架页即时同步，无需重启应用。
  */
-async function handleInstalledReload() {
+async function handleInstalledReload(payload: BookSourceReloadPayload = { scope: "all" }) {
+  const scope = payload.scope === "single" && payload.fileName ? "single" : "all";
+  if (scope === "single" && payload.fileName) {
+    bookSourceStore.invalidateCapability(sourceEventKey(payload.fileName, payload.sourceDir));
+  } else {
+    bookSourceStore.invalidateAllCapabilities();
+  }
   bookSourceStore.markSourcesStale();
-  await loadSources({ force: true });
-  await eventEmit("app:booksource-reload", { scope: "all" });
+  const loadPromise = loadSources({ force: true });
+  await eventEmit<BookSourceReloadPayload>("app:booksource-reload", {
+    scope,
+    fileName: payload.fileName,
+    sourceDir: payload.sourceDir,
+    refreshStarted: true,
+  });
+  await loadPromise;
 }
 
 // ── 初始化 ──
@@ -433,9 +451,7 @@ onUnmounted(() => {
             >
               <n-button size="small" type="primary">新建书源</n-button>
             </n-dropdown>
-            <n-button size="small" :loading="loading" @click="installedRef?.reloadAllSources()"
-              >全部重载</n-button
-            >
+            <n-button size="small" :loading="loading" @click="handleForceReload">全部重载</n-button>
           </MobileToolbarMenu>
         </template>
         <template v-else-if="activeTab === 'online'">

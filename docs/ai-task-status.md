@@ -1,16 +1,48 @@
 # AI Task Status
 
+## 2026-06-15 PERF-SOURCE-RELOAD-COALESCE 状态更新
+
+本轮状态：`local-gate-pass`；将追加到当前性能优化草稿 PR，远端 Quality Gate 状态以 GitHub Actions 为准。
+
+任务 ID：`PERF-2026-06-15-SOURCE-RELOAD-COALESCE`。本轮继续处理“大量书源导入/刷新后，已访问的搜索/发现/书源管理视图重复触发书源列表扫描”的 keep-alive 链路；范围限定在前端事件广播、视图刷新协作和 store in-flight 复用，不改变后端命令契约、书源规则执行、搜索结果结构或第三方书源样本。
+
+Review 发现的问题：
+
+- `BookSourceView` 在子标签页 reload 后先执行本页 `loadSources({ force: true })`，完成后再广播 `app:booksource-reload`；已访问的 Search/Explore 因 keep-alive 未卸载，会收到广播后再各自 force load 一次。
+- `InstalledSourcesTab` 的重载、单源重载和升级路径会在 `emits("reload")` 后自己再发 `app:booksource-reload`，和父视图广播叠加。
+- `bookSourceStore.reloadSources()` 会把 `_loadInFlight` 清空，显式 reload 可能绕过 store 单飞保护并发开第二次列表扫描。
+- single 刷新路径很多只传 `fileName`，在多目录同名书源场景下容易扩大能力缓存失效范围。
+
+关键修改：
+
+- `InstalledSourcesTab` 不再直接广播跨视图 reload，只向父视图发带 `scope/fileName/sourceDir` 的 reload payload。
+- `BookSourceView` 统一负责跨视图广播；它会先失效缓存、标记 stale、启动本页 force load，再广播带 `refreshStarted: true` 的 `app:booksource-reload`，让 Search/Explore 复用同一轮 store in-flight 或命中新鲜缓存。
+- Search/Explore 收到 `refreshStarted` 后不再 `markSourcesStale()` + force load，只做必要的本视图缓存失效/同步并调用普通 `loadSources()` join 当前加载。
+- `bookSourceStore.reloadSources()` 不再清空 `_loadInFlight`，显式 reload 也复用正在进行的列表扫描。
+- single reload 的能力失效尽量使用 `sourceDir::fileName`，没有目录时保留旧 fileName 兜底。
+
+已通过本地 gate：
+
+- `cmd /c pnpm.cmd lint`
+- `cmd /c pnpm.cmd build`
+- `git diff --check`
+
+Gate 报告：`reports/gates/2026-06-15-PERF-SOURCE-RELOAD-COALESCE/summary.md`。
+
 ## 2026-06-15 PERF-SEARCH-AGGREGATE-INCREMENTAL 状态更新
+
 本轮状态：`local-gate-pass`；将追加到当前性能优化草稿 PR，远端 Quality Gate 状态以 GitHub Actions 为准。
 
 任务 ID：`PERF-2026-06-15-SEARCH-AGGREGATE-INCREMENTAL`。本轮继续处理“大量书源搜索时，单源结果陆续返回导致页面持续卡顿”的前端公共链路；范围限定在搜索页聚合模式和聚合组件，不改变搜索命令、书源规则执行、结果结构、并发/超时配置或第三方书源样本。
 
 Review 发现的问题：
+
 - `SearchView.vue` 原先通过 `aggregatedTaggedResults` computed 在每次响应式更新时遍历当前全部 active sources 和全部结果，生成扁平 tagged 列表。
 - `AggregatedSearchResults.vue` 收到扁平列表后，会重新做同书分组、相似度计算和排序；当 1000+ 书源逐个返回时，这部分会随结果流入不断重复扫描全量结果。
 - 完成数、原始结果数、有结果书源数也通过多个 computed 反复遍历 active sources，会把“每个源返回一次”的更新放大成多次主线程全量计算。
 
 关键修改：
+
 - 新增 `src/utils/searchAggregation.ts`，复用原 Dice/bigram 相似度与作者兜底规则，并提供增量分组、排序和兼容的一次性聚合函数。
 - `AggregatedSearchResults.vue` 新增可选 `groups` prop；搜索页可传入预聚合结果，旧的 `results` 调用仍走兼容聚合路径。
 - `SearchView.vue` 改为每个源返回时增量合并到 `aggregatedGroupBuffer`，并用 `requestAnimationFrame` / 16ms timeout 合并发布 UI，避免每个源结果都触发全量扁平化和全量分组。
@@ -18,6 +50,7 @@ Review 发现的问题：
 - 保留按当前限定书源判断 `hasSearched` 的交互语义：切换到未参与本轮搜索的单源时仍显示开始提示，而不是误报“暂无结果”。
 
 已通过本地 gate：
+
 - `cmd /c pnpm.cmd lint`
 - `cmd /c pnpm.cmd build`
 - `git diff --check`

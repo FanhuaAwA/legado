@@ -1,5 +1,40 @@
 # AI Iteration Log
 
+## 2026-06-15 PERF-SOURCE-RELOAD-COALESCE
+
+任务 ID：`PERF-2026-06-15-SOURCE-RELOAD-COALESCE`
+
+本轮目标：继续按项目文档处理“大量书源导入/刷新后，依赖书源列表的视图重复加载”的前端 keep-alive 链路。上一轮已经压缩列表扫描和搜索聚合成本，本轮减少已访问视图之间的重复 force reload。
+
+Review 发现：
+
+- App 访问过的视图会保持挂载并只用 `v-show` 隐藏，因此 BookSource/Search/Explore 的事件监听会同时活着。
+- `BookSourceView` 原先在子标签页 reload 后先等本页 force load 完成，再广播 `app:booksource-reload`；Search/Explore 收到后会再 mark stale 并 force load。
+- `InstalledSourcesTab` 的部分动作同时 `emits("reload")` 和直接广播 `app:booksource-reload`，造成父子双广播。
+- `bookSourceStore.reloadSources()` 会清空 `_loadInFlight`，可能绕过 store 的单飞保护。
+
+实现：
+
+- `InstalledSourcesTab` 的 reload 事件改为携带可选 `scope/fileName/sourceDir` payload，并移除直接跨视图广播。
+- `BookSourceView` 作为唯一跨视图广播者：先做能力失效、mark stale、启动 force load，再广播 `refreshStarted: true`。
+- Search/Explore 收到 `refreshStarted` 时不再重复 force load；Search 仅同步能力失效并 join 普通 `loadSources()`，Explore 保留清理发现缓存和 bump 版本语义后 join 普通 `loadSources()`。
+- `reloadSources()` 不再清空 `_loadInFlight`，显式重载也复用正在进行的扫描。
+- single 刷新携带 `sourceDir`，能力失效优先使用 `sourceDir::fileName`。
+
+预期收益：
+
+- 从 BookSource 页导入、删除、重载、升级书源后，已访问的 Search/Explore 不再额外启动第二轮 force 列表扫描。
+- 子组件不再和父组件重复广播同一个 reload。
+- 正在进行的列表扫描不会被 `reloadSources()` 直接打断成并发扫描。
+
+验证：
+
+- `cmd /c pnpm.cmd lint`：PASS。
+- `cmd /c pnpm.cmd build`：PASS（仅既有 vconsole eval / large chunk / plugin timing warning）。
+- `git diff --check`：PASS。
+
+Gate 报告：`reports/gates/2026-06-15-PERF-SOURCE-RELOAD-COALESCE/summary.md`。
+
 ## 2026-06-15 PERF-SEARCH-AGGREGATE-INCREMENTAL
 
 任务 ID：`PERF-2026-06-15-SEARCH-AGGREGATE-INCREMENTAL`
@@ -7,11 +42,13 @@
 本轮目标：继续按项目文档处理“大量书源搜索/依赖书源功能卡顿”的前端搜索链路，聚焦 Review 发现的聚合搜索主线程重复全量计算问题。
 
 Review 发现：
+
 - 搜索页聚合模式会在 `aggregatedTaggedResults` computed 中为每次更新遍历 active sources 和全部搜索结果，生成扁平 tagged results。
 - 聚合结果组件再对扁平结果重新做同书分组、相似度计算和排序；当大量书源逐个返回时，会反复处理已经处理过的历史结果。
 - 搜索进度统计也通过多个 computed 扫描 active source 列表，进一步放大结果流入期间的响应式计算量。
 
 实现：
+
 - 新增 `src/utils/searchAggregation.ts`，把原聚合组件中的 Dice/bigram 相似度、同书判断、分组和排序逻辑抽成可复用工具。
 - `AggregatedSearchResults.vue` 支持传入预聚合 `groups`，同时保留旧 `results` prop 的兼容路径，避免破坏其他调用。
 - `SearchView.vue` 在单源返回时把结果转换为 tagged items 并增量合并到 `aggregatedGroupBuffer`，再按 animation frame 合并发布到 `aggregatedGroups`。
@@ -19,11 +56,13 @@ Review 发现：
 - `hasSearched` 改为显式状态，并补充当前限定源感知，保持切换到未搜索单源时的提示语义。
 
 预期收益：
+
 - 聚合模式不再在每个源返回时重新扁平化全部结果、重新分组全部结果，降低大量书源搜索期间的主线程长任务概率。
 - 统计数字从 active source 全量扫描变为随结果到达增量更新，减少 UI 响应式重算。
 - 聚合组件仍兼容旧调用，后续其他页面可逐步迁移到预聚合 `groups`。
 
 验证：
+
 - `cmd /c pnpm.cmd lint`：PASS。
 - `cmd /c pnpm.cmd build`：PASS（仅既有 vconsole eval / large chunk / plugin timing warning）。
 - `git diff --check`：PASS。

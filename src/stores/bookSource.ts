@@ -331,7 +331,6 @@ export const useBookSourceStore = defineStore("bookSource", () => {
   async function reloadSources(): Promise<void> {
     _sourcesDirty = true;
     _sourcesLoadedAt = 0;
-    _loadInFlight = null;
     await loadSources({ force: true });
   }
 

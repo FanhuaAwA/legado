@@ -6,7 +6,7 @@ import { storeToRefs } from "pinia";
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useBackAwareDialog as useDialog } from "@/composables/useBackAwareDialog";
 import { isTauri } from "@/composables/useEnv";
-import { eventEmit, eventListen } from "@/composables/useEventBus";
+import { eventListen } from "@/composables/useEventBus";
 import { invokeWithTimeout } from "@/composables/useInvoke";
 import { classifyLegadoInstallTarget } from "@/composables/useLegadoDeepLink";
 import { useOverlay } from "@/composables/useOverlay";
@@ -52,7 +52,7 @@ const props = defineProps<{
 }>();
 
 const emits = defineEmits<{
-  reload: [];
+  reload: [payload?: { scope?: "all" | "single"; fileName?: string; sourceDir?: string }];
   navigateTab: [tab: string];
   selectDebugSource: [source: BookSourceMeta];
 }>();
@@ -1180,7 +1180,7 @@ function confirmDelete(src: BookSourceMeta) {
     onPositiveClick: async () => {
       try {
         await deleteBookSource(src.fileName, src.sourceDir);
-        emits("reload");
+        emits("reload", { scope: "single", fileName: src.fileName, sourceDir: src.sourceDir });
         message.success("已删除");
       } catch (e: unknown) {
         message.error(`删除失败: ${e instanceof Error ? e.message : String(e)}`);
@@ -1191,8 +1191,7 @@ function confirmDelete(src: BookSourceMeta) {
 
 async function reloadAllSources() {
   try {
-    emits("reload");
-    await eventEmit("app:booksource-reload", { scope: "all" });
+    emits("reload", { scope: "all" });
     message.success("已重载所有书源");
   } catch {
     /* ignore */
@@ -1202,8 +1201,7 @@ async function reloadAllSources() {
 async function reloadSingleSource(src: BookSourceMeta) {
   try {
     bookSourceStore.invalidateCapability(src.fileName);
-    emits("reload");
-    await eventEmit("app:booksource-reload", {
+    emits("reload", {
       scope: "single",
       fileName: src.fileName,
       sourceDir: src.sourceDir,
@@ -1221,8 +1219,7 @@ async function applySourceUpdate(src: BookSourceMeta) {
   updatingSourceSet.value.add(src.uuid);
   try {
     await bookSourceStore.applyUpdate(src.fileName, src.sourceDir);
-    emits("reload");
-    await eventEmit("app:booksource-reload", {
+    emits("reload", {
       scope: "single",
       fileName: src.fileName,
       sourceDir: src.sourceDir,

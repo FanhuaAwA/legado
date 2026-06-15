@@ -127,6 +127,10 @@ function sourceKeyOf(source: BookSourceMeta): string {
   return source.sourceKey || `${source.sourceDir}::${source.fileName}`;
 }
 
+function sourceEventKey(fileName: string, sourceDir?: string): string {
+  return sourceDir ? `${sourceDir}::${fileName}` : fileName;
+}
+
 function setSourceLimit(sourceId: string | null): boolean {
   if (!sourceId) {
     navigationStore.searchInitSource = null;
@@ -665,18 +669,26 @@ onMounted(async () => {
     }),
   );
   unlisteners.push(
-    await eventListen<{ scope: string; fileName?: string; sourceDir?: string }>(
-      "app:booksource-reload",
-      (event) => {
-        if (event.payload.scope === "all") {
-          bookSourceStore.invalidateAllCapabilities();
-        } else if (event.payload.scope === "single" && event.payload.fileName) {
-          bookSourceStore.invalidateCapability(event.payload.fileName);
-        }
+    await eventListen<{
+      scope: string;
+      fileName?: string;
+      sourceDir?: string;
+      refreshStarted?: boolean;
+    }>("app:booksource-reload", (event) => {
+      if (event.payload.scope === "all") {
+        bookSourceStore.invalidateAllCapabilities();
+      } else if (event.payload.scope === "single" && event.payload.fileName) {
+        bookSourceStore.invalidateCapability(
+          sourceEventKey(event.payload.fileName, event.payload.sourceDir),
+        );
+      }
+      if (event.payload.refreshStarted) {
+        void bookSourceStore.loadSources();
+      } else {
         bookSourceStore.markSourcesStale();
         void bookSourceStore.loadSources({ force: true });
-      },
-    ),
+      }
+    }),
   );
   unlisteners.push(
     await eventListen<{ view?: string }>("app:view-reload", async (event) => {

@@ -522,6 +522,7 @@ async function handleTabMenuSelect(key: string) {
           await eventEmit("app:booksource-reload", {
             scope: "single",
             fileName: src.fileName,
+            sourceDir: src.sourceDir,
           });
           message.success("已删除");
         } catch (e: unknown) {
@@ -580,14 +581,26 @@ const unlisteners: (() => void)[] = [];
  * - 仅当该书源在刷新前后都可供发现时才 bump 版本（内容变化场景）；
  *   enable/disable 切换时 SourceExploreSection 会由 v-for 重新挂载/卸载，无需手动 bump。
  */
-async function refreshSingleSource(fileName: string) {
+async function refreshSingleSource(
+  fileName: string,
+  options: { sourceDir?: string; refreshStarted?: boolean } = {},
+) {
+  const targetKey = options.sourceDir ? `${options.sourceDir}::${fileName}` : fileName;
   const beforeKeys = new Set(
-    bookSourceStore.explorableSources.filter((s) => s.fileName === fileName).map(sourceKeyOf),
+    bookSourceStore.explorableSources
+      .filter((source) =>
+        options.sourceDir ? sourceKeyOf(source) === targetKey : source.fileName === fileName,
+      )
+      .map(sourceKeyOf),
   );
-  bookSourceStore.invalidateCapability(fileName);
+  bookSourceStore.invalidateCapability(targetKey);
   await clearExploreCache(fileName);
-  bookSourceStore.markSourcesStale();
-  await bookSourceStore.loadSources({ force: true });
+  if (options.refreshStarted) {
+    await bookSourceStore.loadSources();
+  } else {
+    bookSourceStore.markSourcesStale();
+    await bookSourceStore.loadSources({ force: true });
+  }
   // 只有"内容变更但仍可发现"时才 bump（新挂载的 Section 会在 onMounted 中自动加载）
   for (const source of bookSourceStore.explorableSources) {
     const key = sourceKeyOf(source);
@@ -598,12 +611,16 @@ async function refreshSingleSource(fileName: string) {
 }
 
 /** 全量重置（用于"重载全部"或无法确定具体文件的场景） */
-async function refreshAllSources() {
+async function refreshAllSources(options: { refreshStarted?: boolean } = {}) {
   bookSourceStore.invalidateAllCapabilities();
   bumpAllSourceRefreshVersions();
   await clearExploreCache();
-  bookSourceStore.markSourcesStale();
-  await bookSourceStore.loadSources({ force: true });
+  if (options.refreshStarted) {
+    await bookSourceStore.loadSources();
+  } else {
+    bookSourceStore.markSourcesStale();
+    await bookSourceStore.loadSources({ force: true });
+  }
 }
 
 onMounted(async () => {
@@ -658,17 +675,22 @@ onMounted(async () => {
       ),
     );
     unlisteners.push(
-      await eventListen<{ scope?: string; fileName?: string; sourceDir?: string }>(
-        "app:booksource-reload",
-        async (event) => {
-          const { scope, fileName } = event.payload ?? {};
-          if (scope === "single" && fileName) {
-            await refreshSingleSource(fileName);
-          } else {
-            await refreshAllSources();
-          }
-        },
-      ),
+      await eventListen<{
+        scope?: string;
+        fileName?: string;
+        sourceDir?: string;
+        refreshStarted?: boolean;
+      }>("app:booksource-reload", async (event) => {
+        const { scope, fileName, refreshStarted } = event.payload ?? {};
+        if (scope === "single" && fileName) {
+          await refreshSingleSource(fileName, {
+            sourceDir: event.payload?.sourceDir,
+            refreshStarted,
+          });
+        } else {
+          await refreshAllSources({ refreshStarted });
+        }
+      }),
     );
     unlisteners.push(
       await eventListen<{ view?: string }>("app:view-reload", async (event) => {
