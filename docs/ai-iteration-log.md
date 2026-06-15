@@ -1,5 +1,35 @@
 # AI Iteration Log
 
+## 2026-06-15 PERF-SEARCH-AGGREGATE-INCREMENTAL
+
+任务 ID：`PERF-2026-06-15-SEARCH-AGGREGATE-INCREMENTAL`
+
+本轮目标：继续按项目文档处理“大量书源搜索/依赖书源功能卡顿”的前端搜索链路，聚焦 Review 发现的聚合搜索主线程重复全量计算问题。
+
+Review 发现：
+- 搜索页聚合模式会在 `aggregatedTaggedResults` computed 中为每次更新遍历 active sources 和全部搜索结果，生成扁平 tagged results。
+- 聚合结果组件再对扁平结果重新做同书分组、相似度计算和排序；当大量书源逐个返回时，会反复处理已经处理过的历史结果。
+- 搜索进度统计也通过多个 computed 扫描 active source 列表，进一步放大结果流入期间的响应式计算量。
+
+实现：
+- 新增 `src/utils/searchAggregation.ts`，把原聚合组件中的 Dice/bigram 相似度、同书判断、分组和排序逻辑抽成可复用工具。
+- `AggregatedSearchResults.vue` 支持传入预聚合 `groups`，同时保留旧 `results` prop 的兼容路径，避免破坏其他调用。
+- `SearchView.vue` 在单源返回时把结果转换为 tagged items 并增量合并到 `aggregatedGroupBuffer`，再按 animation frame 合并发布到 `aggregatedGroups`。
+- 搜索完成数、原始结果总数、有结果书源数改为基于 source key 的 Set/Map 增量维护。
+- `hasSearched` 改为显式状态，并补充当前限定源感知，保持切换到未搜索单源时的提示语义。
+
+预期收益：
+- 聚合模式不再在每个源返回时重新扁平化全部结果、重新分组全部结果，降低大量书源搜索期间的主线程长任务概率。
+- 统计数字从 active source 全量扫描变为随结果到达增量更新，减少 UI 响应式重算。
+- 聚合组件仍兼容旧调用，后续其他页面可逐步迁移到预聚合 `groups`。
+
+验证：
+- `cmd /c pnpm.cmd lint`：PASS。
+- `cmd /c pnpm.cmd build`：PASS（仅既有 vconsole eval / large chunk / plugin timing warning）。
+- `git diff --check`：PASS。
+
+Gate 报告：`reports/gates/2026-06-15-PERF-SEARCH-AGGREGATE-INCREMENTAL/summary.md`。
+
 ## 2026-06-15 PERF-SOURCE-STREAM-SORT-DEFER
 
 任务 ID：`PERF-2026-06-15-SOURCE-STREAM-SORT-DEFER`

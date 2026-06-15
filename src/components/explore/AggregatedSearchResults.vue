@@ -3,12 +3,14 @@ import { computed } from "vue";
 import type { BookItem } from "@/stores";
 import type { TaggedBookItem, AggregatedBook } from "./types";
 export type { TaggedBookItem, AggregatedBook };
+import { aggregateTaggedResults } from "@/utils/searchAggregation";
 import AppEmpty from "../base/AppEmpty.vue";
 import StackedBookCard from "./StackedBookCard.vue";
 
 const props = defineProps<{
   keyword: string;
-  results: TaggedBookItem[];
+  results?: TaggedBookItem[];
+  groups?: AggregatedBook[];
   showCovers?: boolean;
   loading?: boolean;
   emptyDescription?: string;
@@ -18,104 +20,12 @@ const emit = defineEmits<{
   (e: "select", book: BookItem, fileName: string, sourceDir?: string): void;
 }>();
 
-// ── 文字相似度（Dice 系数，基于 bigram） ─────────────────────────────────
-function bigrams(str: string): Set<string> {
-  const s = str.toLowerCase().replace(/\s+/g, "");
-  const set = new Set<string>();
-  for (let i = 0; i < s.length - 1; i++) {
-    set.add(s.substring(i, i + 2));
-  }
-  return set;
-}
-
-function diceSimilarity(a: string, b: string): number {
-  if (!a || !b) {
-    return 0;
-  }
-  const na = a.toLowerCase().replace(/\s+/g, "");
-  const nb = b.toLowerCase().replace(/\s+/g, "");
-  if (na === nb) {
-    return 1;
-  }
-  if (na.length < 2 || nb.length < 2) {
-    // 单字符退化为包含判断
-    return na.includes(nb) || nb.includes(na) ? 0.8 : 0;
-  }
-  const bg1 = bigrams(a);
-  const bg2 = bigrams(b);
-  let intersection = 0;
-  bg1.forEach((g) => {
-    if (bg2.has(g)) {
-      intersection++;
-    }
-  });
-  return (2 * intersection) / (bg1.size + bg2.size);
-}
-
-/** 判断两本书是否为同一本（名称相似度高） */
-function isSameBook(a: BookItem, b: BookItem): boolean {
-  const nameA = a.name.toLowerCase().replace(/\s+/g, "");
-  const nameB = b.name.toLowerCase().replace(/\s+/g, "");
-  if (nameA === nameB) {
-    return true;
-  }
-  // 名称相似度 >= 0.8 且 作者相同(如果都有) → 视为同一本书
-  const sim = diceSimilarity(a.name, b.name);
-  if (sim >= 0.85) {
-    return true;
-  }
-  if (sim >= 0.7 && a.author && b.author && a.author.trim() === b.author.trim()) {
-    return true;
-  }
-  return false;
-}
-
 /** 聚合 & 排序 */
 const aggregatedBooks = computed<AggregatedBook[]>(() => {
-  const kw = props.keyword.trim();
-  if (!kw || !props.results.length) {
-    return [];
+  if (props.groups) {
+    return props.groups;
   }
-
-  // 1. 按名称聚合
-  const groups: AggregatedBook[] = [];
-  for (const item of props.results) {
-    let matched = false;
-    for (const group of groups) {
-      if (isSameBook(group.primary.book, item.book)) {
-        group.sources.push(item);
-        // 如果新条目封面更全，替换主条目
-        if (!group.primary.book.coverUrl && item.book.coverUrl) {
-          group.primary = item;
-        }
-        matched = true;
-        break;
-      }
-    }
-    if (!matched) {
-      groups.push({
-        primary: item,
-        sources: [item],
-        similarity: diceSimilarity(item.book.name, kw),
-      });
-    }
-  }
-
-  // 2. 重新计算每组的最高相似度
-  for (const g of groups) {
-    let maxSim = 0;
-    for (const s of g.sources) {
-      const sim = diceSimilarity(s.book.name, kw);
-      if (sim > maxSim) {
-        maxSim = sim;
-      }
-    }
-    g.similarity = maxSim;
-  }
-
-  // 3. 按相似度降序排列
-  groups.sort((a, b) => b.similarity - a.similarity);
-  return groups;
+  return aggregateTaggedResults(props.results ?? [], props.keyword);
 });
 </script>
 

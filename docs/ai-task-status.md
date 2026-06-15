@@ -1,5 +1,29 @@
 # AI Task Status
 
+## 2026-06-15 PERF-SEARCH-AGGREGATE-INCREMENTAL 状态更新
+本轮状态：`local-gate-pass`；将追加到当前性能优化草稿 PR，远端 Quality Gate 状态以 GitHub Actions 为准。
+
+任务 ID：`PERF-2026-06-15-SEARCH-AGGREGATE-INCREMENTAL`。本轮继续处理“大量书源搜索时，单源结果陆续返回导致页面持续卡顿”的前端公共链路；范围限定在搜索页聚合模式和聚合组件，不改变搜索命令、书源规则执行、结果结构、并发/超时配置或第三方书源样本。
+
+Review 发现的问题：
+- `SearchView.vue` 原先通过 `aggregatedTaggedResults` computed 在每次响应式更新时遍历当前全部 active sources 和全部结果，生成扁平 tagged 列表。
+- `AggregatedSearchResults.vue` 收到扁平列表后，会重新做同书分组、相似度计算和排序；当 1000+ 书源逐个返回时，这部分会随结果流入不断重复扫描全量结果。
+- 完成数、原始结果数、有结果书源数也通过多个 computed 反复遍历 active sources，会把“每个源返回一次”的更新放大成多次主线程全量计算。
+
+关键修改：
+- 新增 `src/utils/searchAggregation.ts`，复用原 Dice/bigram 相似度与作者兜底规则，并提供增量分组、排序和兼容的一次性聚合函数。
+- `AggregatedSearchResults.vue` 新增可选 `groups` prop；搜索页可传入预聚合结果，旧的 `results` 调用仍走兼容聚合路径。
+- `SearchView.vue` 改为每个源返回时增量合并到 `aggregatedGroupBuffer`，并用 `requestAnimationFrame` / 16ms timeout 合并发布 UI，避免每个源结果都触发全量扁平化和全量分组。
+- 搜索完成数、原始结果总数、有结果书源数改为随源返回/停止搜索增量维护，减少 active source 列表上的重复 computed 扫描。
+- 保留按当前限定书源判断 `hasSearched` 的交互语义：切换到未参与本轮搜索的单源时仍显示开始提示，而不是误报“暂无结果”。
+
+已通过本地 gate：
+- `cmd /c pnpm.cmd lint`
+- `cmd /c pnpm.cmd build`
+- `git diff --check`
+
+Gate 报告：`reports/gates/2026-06-15-PERF-SEARCH-AGGREGATE-INCREMENTAL/summary.md`。
+
 ## 2026-06-15 PERF-SOURCE-STREAM-SORT-DEFER 状态更新
 
 本轮状态：`local-gate-pass`；将追加到 `master`，远端 Quality Gate 和自动发布状态以 GitHub Actions 为准。

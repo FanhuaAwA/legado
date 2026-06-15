@@ -3,9 +3,9 @@
 import { Image, ImageOff, LayoutGrid, List, Search } from "lucide-vue-next";
 import { useMessage, type SelectOption } from "naive-ui";
 import { storeToRefs } from "pinia";
-import { ref, reactive, computed, onMounted, onUnmounted, watch } from "vue";
+import { ref, reactive, computed, onMounted, onUnmounted, watch, shallowRef } from "vue";
 import type { CardSizeKey } from "@/composables/useViewCardDensity";
-import type { TaggedBookItem, BookSourceMeta, BookItem } from "@/types";
+import type { TaggedBookItem, BookSourceMeta, BookItem, AggregatedBook } from "@/types";
 import { useBookDetailDrawerState } from "@/composables/useBookDetailDrawerState";
 import { eventListen } from "@/composables/useEventBus";
 import { useInlineBookReader } from "@/composables/useInlineBookReader";
@@ -18,6 +18,7 @@ import {
   usePrivacyModeStore,
   useScriptBridgeStore,
 } from "@/stores";
+import { appendTaggedResultsToGroups, sortAggregatedGroups } from "@/utils/searchAggregation";
 import { safeRandomUUID } from "@/utils/uuid";
 import AppEmpty from "../components/base/AppEmpty.vue";
 import AggregatedSearchResults from "../components/explore/AggregatedSearchResults.vue";
@@ -130,6 +131,7 @@ function setSourceLimit(sourceId: string | null): boolean {
   if (!sourceId) {
     navigationStore.searchInitSource = null;
     limitedSource.value = null;
+    updateHasSearchedForScope();
     return true;
   }
 
@@ -143,6 +145,7 @@ function setSourceLimit(sourceId: string | null): boolean {
   navigationStore.searchInitSource = null;
   limitedSource.value = found;
   selectedSearchType.value = normalizeSourceType(found.sourceType);
+  updateHasSearchedForScope();
   return true;
 }
 
@@ -285,64 +288,115 @@ const searchStates = reactive<Record<string, SourceSearchState>>({});
 const activeSearchToken = ref(0);
 let currentSearchRun: SearchRun | null = null;
 
-/** 聚合模式下的扁平结果列表（带书源标记） */
-const aggregatedTaggedResults = computed<TaggedBookItem[]>(() => {
-  const items: TaggedBookItem[] = [];
-  for (const src of activeSources.value) {
-    const state = searchStates[sourceKeyOf(src)];
-    if (!state) {
-      continue;
-    }
-    for (const book of state.results) {
-      items.push({
-        book,
-        fileName: src.fileName,
-        sourceDir: src.sourceDir,
-        sourceName: src.name,
-        sourceLogo: src.logo,
-      });
-    }
-  }
-  return items;
-});
+const hasSearched = ref(false);
+const aggregatedGroups = shallowRef<AggregatedBook[]>([]);
+const completedSourceCount = ref(0);
+const totalRawResultCount = ref(0);
+const sourcesWithResultCount = ref(0);
+const completedSourceKeys = new Set<string>();
+const sourceResultCounts = new Map<string, number>();
+let aggregatedGroupBuffer: AggregatedBook[] = [];
+let aggregationPublishHandle: number | null = null;
+let aggregationPublishViaFrame = false;
 
 /** 聚合模式下是否仍有书源在搜索中 */
-const aggregatedLoading = computed(() =>
-  bookSourceStore.loading && searchRunning.value
-    ? true
-    : activeSources.value.some((s) => searchStates[sourceKeyOf(s)]?.loading),
-);
+const aggregatedLoading = computed(() => searchRunning.value);
 
-/** 是否已触发过搜索 */
-const hasSearched = computed(
-  () =>
-    searchRunning.value ||
-    activeSources.value.some((source) => Boolean(searchStates[sourceKeyOf(source)])),
-);
+function updateHasSearchedForScope() {
+  if (searchRunning.value) {
+    hasSearched.value = true;
+    return;
+  }
+  const limited = limitedSource.value;
+  if (!limited) {
+    hasSearched.value = sourceResultCounts.size > 0 || completedSourceKeys.size > 0;
+    return;
+  }
+  const key = sourceKeyOf(limited);
+  hasSearched.value = sourceResultCounts.has(key) || completedSourceKeys.has(key);
+}
 
-/** 已完成（不再 loading）的书源数 */
-const completedSourceCount = computed(
-  () =>
-    activeSources.value.filter((s) => {
-      const state = searchStates[sourceKeyOf(s)];
-      return state && !state.loading;
-    }).length,
-);
+function cancelAggregatedGroupPublish() {
+  if (aggregationPublishHandle === null) {
+    return;
+  }
+  if (typeof window !== "undefined" && aggregationPublishViaFrame) {
+    window.cancelAnimationFrame(aggregationPublishHandle);
+  } else if (typeof window !== "undefined") {
+    window.clearTimeout(aggregationPublishHandle);
+  } else {
+    globalThis.clearTimeout(aggregationPublishHandle);
+  }
+  aggregationPublishHandle = null;
+  aggregationPublishViaFrame = false;
+}
 
-/** 目前累计原始结果条数（搜索中实时更新） */
-const totalRawResultCount = computed(() =>
-  activeSources.value.reduce(
-    (sum, s) => sum + (searchStates[sourceKeyOf(s)]?.results.length ?? 0),
-    0,
-  ),
-);
+function scheduleAggregatedGroupPublish() {
+  if (aggregationPublishHandle !== null) {
+    return;
+  }
+  const publish = () => {
+    aggregationPublishHandle = null;
+    aggregationPublishViaFrame = false;
+    sortAggregatedGroups(aggregatedGroupBuffer);
+    aggregatedGroups.value = aggregatedGroupBuffer.slice();
+  };
+  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    aggregationPublishViaFrame = true;
+    aggregationPublishHandle = window.requestAnimationFrame(publish);
+  } else if (typeof window !== "undefined") {
+    aggregationPublishViaFrame = false;
+    aggregationPublishHandle = window.setTimeout(publish, 16);
+  } else {
+    aggregationPublishViaFrame = false;
+    aggregationPublishHandle = globalThis.setTimeout(publish, 16) as unknown as number;
+  }
+}
 
-/** 有搜索结果的书源数 */
-const sourcesWithResultCount = computed(
-  () =>
-    activeSources.value.filter((s) => (searchStates[sourceKeyOf(s)]?.results.length ?? 0) > 0)
-      .length,
-);
+function resetSearchDerivedState() {
+  cancelAggregatedGroupPublish();
+  aggregatedGroupBuffer = [];
+  aggregatedGroups.value = [];
+  completedSourceKeys.clear();
+  sourceResultCounts.clear();
+  completedSourceCount.value = 0;
+  totalRawResultCount.value = 0;
+  sourcesWithResultCount.value = 0;
+}
+
+function markSourceCompleted(key: string) {
+  if (completedSourceKeys.has(key)) {
+    return;
+  }
+  completedSourceKeys.add(key);
+  completedSourceCount.value += 1;
+}
+
+function applySourceResults(run: SearchRun, src: BookSourceMeta, results: BookItem[]) {
+  const key = sourceKeyOf(src);
+  searchStates[key].results = results;
+
+  const oldCount = sourceResultCounts.get(key) ?? 0;
+  if (oldCount > 0) {
+    sourcesWithResultCount.value -= 1;
+    totalRawResultCount.value -= oldCount;
+  }
+  sourceResultCounts.set(key, results.length);
+  if (results.length > 0) {
+    sourcesWithResultCount.value += 1;
+    totalRawResultCount.value += results.length;
+  }
+
+  const taggedResults: TaggedBookItem[] = results.map((book) => ({
+    book,
+    fileName: src.fileName,
+    sourceDir: src.sourceDir,
+    sourceName: src.name,
+    sourceLogo: src.logo,
+  }));
+  appendTaggedResultsToGroups(aggregatedGroupBuffer, taggedResults, run.keyword);
+  scheduleAggregatedGroupPublish();
+}
 
 /** 立即终止当前搜索，清除所有进行中状态 */
 function stopSearch() {
@@ -360,6 +414,7 @@ function stopSearch() {
     const key = sourceKeyOf(src);
     if (searchStates[key]?.loading) {
       searchStates[key].loading = false;
+      markSourceCompleted(key);
     }
   }
 }
@@ -391,7 +446,7 @@ async function searchOneSource(run: SearchRun, src: BookSourceMeta) {
     if (currentSearchRun !== run || run.token !== activeSearchToken.value) {
       return;
     }
-    searchStates[key].results = Array.isArray(raw) ? (raw as BookItem[]) : [];
+    applySourceResults(run, src, Array.isArray(raw) ? (raw as BookItem[]) : []);
   } catch (e: unknown) {
     if (currentSearchRun !== run || run.token !== activeSearchToken.value) {
       return;
@@ -402,6 +457,7 @@ async function searchOneSource(run: SearchRun, src: BookSourceMeta) {
     run.activeWorkers = Math.max(0, run.activeWorkers - 1);
     if (currentSearchRun === run && run.token === activeSearchToken.value) {
       searchStates[key].loading = false;
+      markSourceCompleted(key);
       pumpSearchQueue(run);
       finishSearchIfIdle(run);
     }
@@ -438,6 +494,8 @@ function enqueueSearchSources(run: SearchRun, nextSources: readonly BookSourceMe
     run.queuedKeys.add(key);
     run.pending.push(src);
     searchStates[key] = { loading: true, results: [], error: "" };
+    completedSourceKeys.delete(key);
+    sourceResultCounts.set(key, 0);
   }
   pumpSearchQueue(run);
   finishSearchIfIdle(run);
@@ -462,6 +520,8 @@ async function doSearch(page = 1) {
   activeSearchToken.value = requestToken;
   searchPage.value = page;
   searchRunning.value = true;
+  hasSearched.value = true;
+  resetSearchDerivedState();
 
   const run: SearchRun = {
     token: requestToken,
@@ -629,6 +689,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   activeSearchToken.value += 1;
+  cancelAggregatedGroupPublish();
   unlisteners.forEach((fn) => fn());
 });
 </script>
@@ -788,7 +849,7 @@ onUnmounted(() => {
           <AggregatedSearchResults
             v-if="hasSearched"
             :keyword="searchKeyword"
-            :results="aggregatedTaggedResults"
+            :groups="aggregatedGroups"
             :show-covers="showCovers"
             :loading="aggregatedLoading"
             :empty-description="aggregatedEmptyDescription"
