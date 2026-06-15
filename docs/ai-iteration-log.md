@@ -1,5 +1,46 @@
 # AI Iteration Log
 
+## 2026-06-15 PERF-JS-PREFETCH-CANCEL-COOPERATIVE
+
+Task ID: `PERF-2026-06-15-JS-PREFETCH-CANCEL-COOPERATIVE`
+
+Goal: continue source-dependent performance maintenance for background bookshelf prefetch. Prefetch already had a task token, but cancellation did not reach the JS content fetch running inside each chapter.
+
+Review findings:
+
+- `prefetch_chapters_inner()` checked `cancel_token` before each chapter, then called plain `chapter_content()`.
+- After `chapter_content_with_cancel()` was introduced, prefetch still needed to pass its token into that method.
+- A first regression test exposed another issue: cancellation errors from content fetch were caught by the retry loop and followed by retry backoff sleep.
+- The inter-chapter throttle was also a fixed sleep, so cancellation during the delay could wait for the full throttle window.
+
+Implementation:
+
+- Prefetch now calls `chapter_content_with_cancel()` with the active token.
+- Added `cancellable_sleep()` and used it for retry backoff and inter-chapter throttling.
+- If a content fetch returns an error after cancellation, prefetch now returns cancellation immediately instead of retrying.
+- Added `prefetch_chapters_cancel_token_interrupts_js_content` to cover cancellation through the prefetch wrapper.
+
+Expected benefit:
+
+- Cancelling chapter prefetch no longer waits for a runaway JS content rule, retry backoff, or the inter-chapter throttle to finish.
+- Background caching releases JS blocking worker capacity sooner after the user cancels a prefetch job.
+
+Verification:
+
+- `cargo fmt --all -- --check` - PASS
+- `cargo test -p reader-core cancel_token_interrupts -- --nocapture` - PASS
+- `cargo check -p reader-core` - PASS
+- `cargo check -p legado-tauri` - PASS
+- `cmd /c pnpm.cmd lint` - PASS
+- `node scripts/ci/check-command-contract.mjs --json` - PASS
+- `git diff --check` - PASS
+
+Gate report: `reports/gates/2026-06-15-PERF-JS-PREFETCH-CANCEL-COOPERATIVE/summary.md`.
+
+Residual risk:
+
+- Already in-flight synchronous HTTP requests are still bounded by request timeout rather than force-aborted.
+
 ## 2026-06-15 PERF-JS-CHAPTER-CANCEL-COOPERATIVE
 
 Task ID: `PERF-2026-06-15-JS-CHAPTER-CANCEL-COOPERATIVE`

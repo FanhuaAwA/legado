@@ -2237,7 +2237,12 @@ impl ReaderCore {
             let mut content = Err(ReaderCoreError::Message("未尝试".into()));
             for attempt in 0..=max_retries {
                 match self
-                    .chapter_content(file_name, &chapter.url, source_dir)
+                    .chapter_content_with_cancel(
+                        file_name,
+                        &chapter.url,
+                        source_dir,
+                        Some(cancel_token.clone()),
+                    )
                     .await
                 {
                     Ok(c) => {
@@ -2245,6 +2250,9 @@ impl ReaderCore {
                         break;
                     }
                     Err(e) => {
+                        if cancel_token.load(Ordering::SeqCst) {
+                            return Err(ReaderCoreError::Message("任务已取消".to_string()));
+                        }
                         tracing::warn!(
                             "prefetch retry {}/{} for chapter {}: {e}",
                             attempt + 1,
@@ -2252,10 +2260,11 @@ impl ReaderCore {
                             chapter_idx
                         );
                         // 失败退避，避免对书源连续高频重试。
-                        tokio::time::sleep(std::time::Duration::from_millis(
-                            1000 * (attempt as u64 + 1),
-                        ))
-                        .await;
+                        cancellable_sleep(
+                            Duration::from_millis(1000 * (attempt as u64 + 1)),
+                            cancel_token,
+                        )
+                        .await?;
                     }
                 }
             }
@@ -2268,7 +2277,8 @@ impl ReaderCore {
             }
             // 每章间等待，避免请求过于密集
             if fetched < total && total > 1 {
-                tokio::time::sleep(std::time::Duration::from_millis(inter_chapter_delay_ms)).await;
+                cancellable_sleep(Duration::from_millis(inter_chapter_delay_ms), cancel_token)
+                    .await?;
             }
         }
         Ok(fetched)
@@ -4296,6 +4306,25 @@ fn legado_browser_action_script(expression: &str) -> Result<String, ReaderCoreEr
 
 fn js_join_error(err: tokio::task::JoinError) -> ReaderCoreError {
     ReaderCoreError::Message(format!("JS 书源任务执行失败: {err}"))
+}
+
+async fn cancellable_sleep(
+    duration: Duration,
+    cancel_token: &Arc<AtomicBool>,
+) -> Result<(), ReaderCoreError> {
+    let mut remaining = duration;
+    while remaining > Duration::ZERO {
+        if cancel_token.load(Ordering::SeqCst) {
+            return Err(ReaderCoreError::Message("任务已取消".to_string()));
+        }
+        let slice = remaining.min(Duration::from_millis(50));
+        tokio::time::sleep(slice).await;
+        remaining = remaining.saturating_sub(slice);
+    }
+    if cancel_token.load(Ordering::SeqCst) {
+        return Err(ReaderCoreError::Message("任务已取消".to_string()));
+    }
+    Ok(())
 }
 
 fn read_js_meta_values(content: &str, key: &str) -> Vec<String> {

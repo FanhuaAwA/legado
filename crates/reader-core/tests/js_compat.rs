@@ -5,7 +5,7 @@ use axum::{
     Router,
 };
 use reader_core::parser::js::{eval_js, set_js_engine_timeout_secs, with_js_source};
-use reader_core::{ReaderCore, ReaderCoreOptions};
+use reader_core::{AddBookPayload, CachedChapter, ReaderCore, ReaderCoreOptions};
 use serde_json::json;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -502,6 +502,77 @@ async function chapterContent() {
         Some(cancel_token.clone()),
     );
     assert_runaway_future_cancelled(content, cancel_token).await;
+}
+
+#[tokio::test]
+async fn prefetch_chapters_cancel_token_interrupts_js_content() {
+    let _timeout = set_js_engine_timeout_for_test(3);
+    let temp = tempfile::tempdir().unwrap();
+    let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
+        .await
+        .unwrap();
+    let file_name = "runaway-prefetch.js";
+    core.save_js_source(
+        file_name,
+        r#"// @name        Runaway Prefetch
+// @url         https://example.invalid
+// @enabled     true
+
+async function chapterContent() {
+  while (true) {}
+}
+"#,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let shelf = core
+        .shelf_add(
+            AddBookPayload {
+                name: "Runaway Prefetch".to_string(),
+                author: None,
+                cover_url: None,
+                intro: None,
+                kind: None,
+                group_id: None,
+                book_url: "https://example.invalid/book".to_string(),
+                source_dir: None,
+                last_chapter: Some("Runaway Chapter".to_string()),
+                source_type: Some("novel".to_string()),
+            },
+            file_name,
+            "Runaway Prefetch",
+        )
+        .await
+        .unwrap();
+    core.shelf_save_chapters(
+        &shelf.id,
+        vec![CachedChapter {
+            index: 0,
+            name: "Runaway Chapter".to_string(),
+            url: "https://example.invalid/chapter".to_string(),
+            group: None,
+            vip: None,
+            price: None,
+            currency: None,
+        }],
+    )
+    .await
+    .unwrap();
+
+    let cancel_token = Arc::new(AtomicBool::new(false));
+    let prefetch = core.prefetch_chapters(
+        &shelf.id,
+        file_name,
+        None,
+        Some(0),
+        Some(1),
+        Some(cancel_token.clone()),
+        Option::<fn(i32, i32, i32)>::None,
+    );
+    assert_runaway_future_cancelled(prefetch, cancel_token).await;
+    assert_eq!(core.shelf_get_content(&shelf.id, 0).await.unwrap(), None);
 }
 
 #[tokio::test]

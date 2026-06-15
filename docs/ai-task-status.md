@@ -1,5 +1,37 @@
 # AI Task Status
 
+## 2026-06-15 PERF-JS-PREFETCH-CANCEL-COOPERATIVE status update
+
+Status: `local-gate-pass`; this entry will be added to the current performance PR after push. Remote Quality Gate remains governed by GitHub Actions.
+
+Task ID: `PERF-2026-06-15-JS-PREFETCH-CANCEL-COOPERATIVE`. This round continues cancellation review for source-dependent background work by propagating bookshelf prefetch cancellation into per-chapter JS content execution and retry waits.
+
+Review findings:
+
+- `prefetch_chapters_inner()` checked cancellation between chapters, but called plain `chapter_content()` for each chapter.
+- When cancelled during a JS-backed content fetch, the content error could be caught by the retry loop and followed by retry backoff sleep instead of returning promptly.
+- The fixed chapter list/content cancellation tests did not cover the prefetch wrapper, so a regression could reintroduce delayed cancellation in background caching.
+
+Key changes:
+
+- Prefetch now calls `chapter_content_with_cancel()` with the active prefetch token.
+- Retry backoff and inter-chapter throttling now use cancellable sleep slices instead of one long sleep.
+- Added a prefetch regression test that starts a JS chapter content infinite loop and verifies cancellation interrupts the prefetch operation before the engine timeout.
+
+Passed local gate:
+
+- `cargo fmt --all -- --check`
+- `cargo test -p reader-core cancel_token_interrupts -- --nocapture`
+- `cargo check -p reader-core`
+- `cargo check -p legado-tauri`
+- `cmd /c pnpm.cmd lint`
+- `node scripts/ci/check-command-contract.mjs --json`
+- `git diff --check`
+
+Gate report: `reports/gates/2026-06-15-PERF-JS-PREFETCH-CANCEL-COOPERATIVE/summary.md`.
+
+Residual risk: already in-flight synchronous HTTP requests remain bounded by request timeout; this round makes prefetch retries and delay windows cooperative after cancellation.
+
 ## 2026-06-15 PERF-JS-CHAPTER-CANCEL-COOPERATIVE status update
 
 Status: `local-gate-pass`; this entry will be added to the current performance PR after push. Remote Quality Gate remains governed by GitHub Actions.
