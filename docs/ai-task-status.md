@@ -1,5 +1,38 @@
 # AI Task Status
 
+## 2026-06-15 PERF-JS-CHAPTER-CANCEL-COOPERATIVE status update
+
+Status: `local-gate-pass`; this entry will be added to the current performance PR after push. Remote Quality Gate remains governed by GitHub Actions.
+
+Task ID: `PERF-2026-06-15-JS-CHAPTER-CANCEL-COOPERATIVE`. This round continues the source-dependent cancellation review by extending the JS cooperative cancellation path from search to chapter list and chapter content commands.
+
+Review findings:
+
+- `booksource_chapter_list` and `booksource_chapter_content` accepted `task_id`, but only checked it before starting the command.
+- Unlike search, these commands did not race the active work against `wait_for_cancel()`, so UI cancellation could wait for the whole chapter list/content operation to finish.
+- reader-core JS chapter list/content execution still called the no-token JS runtime methods, so runaway JS could continue on blocking workers after cancellation.
+
+Key changes:
+
+- Added `chapter_list_with_cancel()` and `chapter_content_with_cancel()` in reader-core facade and JS source runtime.
+- Updated Tauri chapter list/content commands to pass the task token into reader-core and return `CANCELLED` promptly via `tokio::select!`.
+- Reused the JS thread-local cancellation token and QuickJS interrupt path introduced for search.
+- Refactored the runaway JS cancellation test helper and added coverage for search, chapter list, and chapter content.
+
+Passed local gate:
+
+- `cargo fmt --all -- --check`
+- `cargo test -p reader-core cancel_token_interrupts_runaway_source -- --nocapture`
+- `cargo check -p reader-core`
+- `cargo check -p legado-tauri`
+- `cmd /c pnpm.cmd lint`
+- `node scripts/ci/check-command-contract.mjs --json`
+- `git diff --check`
+
+Gate report: `reports/gates/2026-06-15-PERF-JS-CHAPTER-CANCEL-COOPERATIVE/summary.md`.
+
+Residual risk: already in-flight `reqwest::blocking` requests still complete on configured timeout; this round extends cooperative cancellation to more source-dependent JS commands but does not forcibly abort synchronous network requests mid-flight.
+
 ## 2026-06-15 PERF-JS-SEARCH-CANCEL-COOPERATIVE status update
 
 Status: `local-gate-pass`; this entry will be added to the current performance PR after push. Remote Quality Gate remains governed by GitHub Actions.

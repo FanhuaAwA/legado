@@ -1,5 +1,46 @@
 # AI Iteration Log
 
+## 2026-06-15 PERF-JS-CHAPTER-CANCEL-COOPERATIVE
+
+Task ID: `PERF-2026-06-15-JS-CHAPTER-CANCEL-COOPERATIVE`
+
+Goal: continue the documented large-source performance work by applying the same cooperative cancellation model to JS chapter list and chapter content paths. These are source-dependent operations used after search and can be hit by heavy or broken JS sources.
+
+Review findings:
+
+- `booksource_chapter_list` and `booksource_chapter_content` registered task tokens, but did not use `tokio::select!` to return promptly after `booksource_cancel`.
+- `ReaderCore::chapter_list()` and `ReaderCore::chapter_content()` had no cancellation-token variants.
+- `JsSourceRuntime::chapter_list()` and `chapter_content()` always called the no-token `call_first()` path, leaving runaway JS dependent on the engine timeout.
+
+Implementation:
+
+- Added token-aware reader-core facade methods for chapter list and chapter content while keeping the old methods as compatible wrappers.
+- Added token-aware JS runtime methods for `chapterList`/`toc` and `chapterContent`/`content`.
+- Updated Tauri chapter list/content commands to race work against `wait_for_cancel()` and pass the same task token into reader-core.
+- Refactored the runaway JS cancellation test helper so search, chapter list, and chapter content share the same prompt-cancellation assertion.
+
+Expected benefit:
+
+- Cancelling a source-dependent chapter list or chapter content operation now releases UI wait and JS blocking worker capacity sooner.
+- Broken JS chapter rules are interrupted through the same QuickJS polling mechanism as cancelled searches.
+- The command contract stays unchanged: callers still pass optional `taskId` and receive the existing `CANCELLED` error shape.
+
+Verification:
+
+- `cargo fmt --all -- --check` - PASS
+- `cargo test -p reader-core cancel_token_interrupts_runaway_source -- --nocapture` - PASS
+- `cargo check -p reader-core` - PASS
+- `cargo check -p legado-tauri` - PASS
+- `cmd /c pnpm.cmd lint` - PASS
+- `node scripts/ci/check-command-contract.mjs --json` - PASS
+- `git diff --check` - PASS
+
+Gate report: `reports/gates/2026-06-15-PERF-JS-CHAPTER-CANCEL-COOPERATIVE/summary.md`.
+
+Residual risk:
+
+- Already in-flight synchronous HTTP requests are still bounded by request timeout rather than force-aborted.
+
 ## 2026-06-15 PERF-JS-SEARCH-CANCEL-COOPERATIVE
 
 Task ID: `PERF-2026-06-15-JS-SEARCH-CANCEL-COOPERATIVE`

@@ -61,20 +61,36 @@ impl JsSourceRuntime {
     }
 
     pub fn chapter_list(&self, toc_url: &str) -> Result<Vec<ChapterItem>, ReaderCoreError> {
+        self.chapter_list_with_cancel(toc_url, None)
+    }
+
+    pub fn chapter_list_with_cancel(
+        &self,
+        toc_url: &str,
+        cancel_token: Option<Arc<AtomicBool>>,
+    ) -> Result<Vec<ChapterItem>, ReaderCoreError> {
         let raw = self.call_first(
             &["chapterList", "toc"],
             &[JsSourceArg::String(toc_url.to_string())],
-            None,
+            cancel_token,
         )?;
         serde_json::from_value(expect_json(raw, "chapterList")?)
             .map_err(|err| js_shape_error(&self.file_name, "chapterList", err))
     }
 
     pub fn chapter_content(&self, chapter_url: &str) -> Result<String, ReaderCoreError> {
+        self.chapter_content_with_cancel(chapter_url, None)
+    }
+
+    pub fn chapter_content_with_cancel(
+        &self,
+        chapter_url: &str,
+        cancel_token: Option<Arc<AtomicBool>>,
+    ) -> Result<String, ReaderCoreError> {
         let raw = self.call_first(
             &["chapterContent", "content"],
             &[JsSourceArg::String(chapter_url.to_string())],
-            None,
+            cancel_token,
         )?;
         Ok(match serde_json::from_str::<Value>(&raw) {
             Ok(Value::String(value)) => value,

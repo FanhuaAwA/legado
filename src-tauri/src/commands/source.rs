@@ -398,11 +398,26 @@ pub async fn booksource_chapter_list(
             return Err(cancelled_error());
         }
     }
-    let result = state
-        .core
-        .chapter_list(&file_name, &book_url, source_dir.as_deref())
-        .await
-        .map_err(map_err);
+    let result = if let Some(t) = token.clone() {
+        let chapter_token = Some(t.clone());
+        tokio::select! {
+            result = state.core.chapter_list_with_cancel(
+                &file_name,
+                &book_url,
+                source_dir.as_deref(),
+                chapter_token,
+            ) => {
+                result.map_err(map_err)
+            }
+            _ = wait_for_cancel(t) => Err(cancelled_error()),
+        }
+    } else {
+        state
+            .core
+            .chapter_list_with_cancel(&file_name, &book_url, source_dir.as_deref(), None)
+            .await
+            .map_err(map_err)
+    };
     if let Some(tid) = task_id.as_deref() {
         state.tasks.remove(tid);
     }
@@ -424,11 +439,26 @@ pub async fn booksource_chapter_content(
             return Err(cancelled_error());
         }
     }
-    let result = state
-        .core
-        .chapter_content(&file_name, &chapter_url, source_dir.as_deref())
-        .await
-        .map_err(map_err);
+    let result = if let Some(t) = token.clone() {
+        let content_token = Some(t.clone());
+        tokio::select! {
+            result = state.core.chapter_content_with_cancel(
+                &file_name,
+                &chapter_url,
+                source_dir.as_deref(),
+                content_token,
+            ) => {
+                result.map_err(map_err)
+            }
+            _ = wait_for_cancel(t) => Err(cancelled_error()),
+        }
+    } else {
+        state
+            .core
+            .chapter_content_with_cancel(&file_name, &chapter_url, source_dir.as_deref(), None)
+            .await
+            .map_err(map_err)
+    };
     if let Some(tid) = task_id.as_deref() {
         state.tasks.remove(tid);
     }

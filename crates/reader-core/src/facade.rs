@@ -1644,12 +1644,32 @@ impl ReaderCore {
         book_url: &str,
         source_dir: Option<&str>,
     ) -> Result<Vec<ChapterItem>, ReaderCoreError> {
+        self.chapter_list_with_cancel(file_name, book_url, source_dir, None)
+            .await
+    }
+
+    pub async fn chapter_list_with_cancel(
+        &self,
+        file_name: &str,
+        book_url: &str,
+        source_dir: Option<&str>,
+        cancel_token: Option<Arc<AtomicBool>>,
+    ) -> Result<Vec<ChapterItem>, ReaderCoreError> {
+        if cancel_token
+            .as_ref()
+            .map(|token| token.load(Ordering::SeqCst))
+            .unwrap_or(false)
+        {
+            return Err(ReaderCoreError::Message("任务已取消".to_string()));
+        }
         if !self.is_legado_file(file_name, source_dir) {
             let runtime = self.require_js_runtime(file_name, source_dir).await?;
             let book_url = book_url.to_string();
-            return tokio::task::spawn_blocking(move || runtime.chapter_list(&book_url))
-                .await
-                .map_err(js_join_error)?;
+            return tokio::task::spawn_blocking(move || {
+                runtime.chapter_list_with_cancel(&book_url, cancel_token)
+            })
+            .await
+            .map_err(js_join_error)?;
         }
         let source = self.require_legado_source(file_name).await?;
         let list = self
@@ -1665,12 +1685,32 @@ impl ReaderCore {
         chapter_url: &str,
         source_dir: Option<&str>,
     ) -> Result<String, ReaderCoreError> {
+        self.chapter_content_with_cancel(file_name, chapter_url, source_dir, None)
+            .await
+    }
+
+    pub async fn chapter_content_with_cancel(
+        &self,
+        file_name: &str,
+        chapter_url: &str,
+        source_dir: Option<&str>,
+        cancel_token: Option<Arc<AtomicBool>>,
+    ) -> Result<String, ReaderCoreError> {
+        if cancel_token
+            .as_ref()
+            .map(|token| token.load(Ordering::SeqCst))
+            .unwrap_or(false)
+        {
+            return Err(ReaderCoreError::Message("任务已取消".to_string()));
+        }
         if !self.is_legado_file(file_name, source_dir) {
             let runtime = self.require_js_runtime(file_name, source_dir).await?;
             let chapter_url = chapter_url.to_string();
-            return tokio::task::spawn_blocking(move || runtime.chapter_content(&chapter_url))
-                .await
-                .map_err(js_join_error)?;
+            return tokio::task::spawn_blocking(move || {
+                runtime.chapter_content_with_cancel(&chapter_url, cancel_token)
+            })
+            .await
+            .map_err(js_join_error)?;
         }
         let source = self.require_legado_source(file_name).await?;
         self.book_service

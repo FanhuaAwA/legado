@@ -7,6 +7,7 @@ use axum::{
 use reader_core::parser::js::{eval_js, set_js_engine_timeout_secs, with_js_source};
 use reader_core::{ReaderCore, ReaderCoreOptions};
 use serde_json::json;
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -361,10 +362,54 @@ function replyParagraphComment(chapterUrl, rangeKey, commentId, content) {{
     server.abort();
 }
 
+struct JsEngineTimeoutRestore;
+
+impl Drop for JsEngineTimeoutRestore {
+    fn drop(&mut self) {
+        set_js_engine_timeout_secs(0);
+    }
+}
+
+fn set_js_engine_timeout_for_test(secs: u64) -> JsEngineTimeoutRestore {
+    set_js_engine_timeout_secs(secs);
+    JsEngineTimeoutRestore
+}
+
+async fn assert_runaway_future_cancelled<T>(
+    future: impl Future<Output = Result<T, reader_core::ReaderCoreError>>,
+    cancel_token: Arc<AtomicBool>,
+) where
+    T: std::fmt::Debug,
+{
+    tokio::pin!(future);
+
+    tokio::select! {
+        result = &mut future => {
+            panic!("runaway JS future finished before cancellation: {result:?}");
+        },
+        _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+    }
+
+    let cancel_started = Instant::now();
+    cancel_token.store(true, Ordering::SeqCst);
+    let timed = tokio::time::timeout(Duration::from_secs(2), &mut future).await;
+    let result =
+        timed.expect("runaway JS future should observe cancellation before the engine timeout");
+
+    assert!(
+        result.is_err(),
+        "cancelled runaway JS future should fail, got {result:?}"
+    );
+    assert!(
+        cancel_started.elapsed() < Duration::from_secs(1),
+        "JS cancellation should be prompt, elapsed={:?}",
+        cancel_started.elapsed()
+    );
+}
+
 #[tokio::test]
 async fn js_search_cancel_token_interrupts_runaway_source() {
-    set_js_engine_timeout_secs(3);
-
+    let _timeout = set_js_engine_timeout_for_test(3);
     let temp = tempfile::tempdir().unwrap();
     let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
         .await
@@ -392,33 +437,71 @@ async function search() {
         None,
         Some(cancel_token.clone()),
     );
-    tokio::pin!(search);
+    assert_runaway_future_cancelled(search, cancel_token).await;
+}
 
-    tokio::select! {
-        result = &mut search => {
-            set_js_engine_timeout_secs(0);
-            panic!("runaway search finished before cancellation: {result:?}");
-        },
-        _ = tokio::time::sleep(Duration::from_millis(50)) => {}
-    }
+#[tokio::test]
+async fn js_chapter_list_cancel_token_interrupts_runaway_source() {
+    let _timeout = set_js_engine_timeout_for_test(3);
+    let temp = tempfile::tempdir().unwrap();
+    let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
+        .await
+        .unwrap();
+    core.save_js_source(
+        "runaway-toc.js",
+        r#"// @name        Runaway Toc
+// @url         https://example.invalid
+// @enabled     true
 
-    let cancel_started = Instant::now();
-    cancel_token.store(true, Ordering::SeqCst);
-    let timed = tokio::time::timeout(Duration::from_secs(2), &mut search).await;
+async function chapterList() {
+  while (true) {}
+}
+"#,
+        None,
+    )
+    .await
+    .unwrap();
 
-    set_js_engine_timeout_secs(0);
-    let result =
-        timed.expect("runaway JS search should observe cancellation before the engine timeout");
-
-    assert!(
-        result.is_err(),
-        "cancelled runaway search should fail, got {result:?}"
+    let cancel_token = Arc::new(AtomicBool::new(false));
+    let chapters = core.chapter_list_with_cancel(
+        "runaway-toc.js",
+        "https://example.invalid/book",
+        None,
+        Some(cancel_token.clone()),
     );
-    assert!(
-        cancel_started.elapsed() < Duration::from_secs(1),
-        "JS search cancellation should be prompt, elapsed={:?}",
-        cancel_started.elapsed()
+    assert_runaway_future_cancelled(chapters, cancel_token).await;
+}
+
+#[tokio::test]
+async fn js_chapter_content_cancel_token_interrupts_runaway_source() {
+    let _timeout = set_js_engine_timeout_for_test(3);
+    let temp = tempfile::tempdir().unwrap();
+    let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
+        .await
+        .unwrap();
+    core.save_js_source(
+        "runaway-content.js",
+        r#"// @name        Runaway Content
+// @url         https://example.invalid
+// @enabled     true
+
+async function chapterContent() {
+  while (true) {}
+}
+"#,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let cancel_token = Arc::new(AtomicBool::new(false));
+    let content = core.chapter_content_with_cancel(
+        "runaway-content.js",
+        "https://example.invalid/chapter",
+        None,
+        Some(cancel_token.clone()),
     );
+    assert_runaway_future_cancelled(content, cancel_token).await;
 }
 
 #[tokio::test]
