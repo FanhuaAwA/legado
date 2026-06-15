@@ -2,7 +2,7 @@
 
 本文件由 `scripts/ci/check-command-contract.mjs` 的实测结果半自动重建。旧的 2026-06-09 手工矩阵已删除，后续不得再手工沿用过期统计。
 
-最后实测：2026-06-13 MAINT-IMPORT-UI-PERF 轮
+最后实测：2026-06-15 PERF-MIAOGONGZI-LOCAL-IMPORT / PR #2 quality-gate
 
 实测命令：
 
@@ -15,14 +15,14 @@ node scripts/ci/check-command-contract.mjs
 
 | 指标                              | 数值 | 说明                                                                                    |
 | --------------------------------- | ---: | --------------------------------------------------------------------------------------- |
-| frontendTotal                     |  162 | 前端 invoke 调用去重后数量                                                              |
-| registeredTotal                   |  161 | `generate_handler!` 注册命令数量                                                        |
-| bothCount                         |  161 | 前后端同名匹配数量                                                                      |
+| frontendTotal                     |  163 | 前端 invoke 调用去重后数量                                                              |
+| registeredTotal                   |  162 | `generate_handler!` 注册命令数量                                                        |
+| bothCount                         |  162 | 前后端同名匹配数量                                                                      |
 | onlyFrontend                      |    1 | `js_eval`，安全阻断，有意不注册                                                         |
 | onlyBackend                       |    0 | 无                                                                                      |
-| registered_implemented_count      |  122 | 全部已注册命令中的实现数量                                                              |
+| registered_implemented_count      |  123 | 全部已注册命令中的实现数量                                                              |
 | registered_unsupported_stub_count |   39 | 全部已注册命令中的 UNSUPPORTED stub                                                     |
-| frontend_implemented_count        |  122 | 前端可触达且已实现                                                                      |
+| frontend_implemented_count        |  123 | 前端可触达且已实现                                                                      |
 | frontend_unsupported_stub_count   |   39 | 前端可触达但仅返回 UNSUPPORTED（CAP-REPO 后 52，CAP-SYNC 后 40，AI-DEEPSEEK-MGZ 后 39） |
 
 `classification` 数组的口径是 `frontend-facing registered commands`。需要全注册命令时使用 `registeredClassification`。
@@ -56,6 +56,8 @@ R-P1-004 修正前端扫描器后，当前无 backend-only 命令。旧表中的
 > 2026-06-12（CAP-SYNC WebDAV）：WebDAV 同步 12 命令已真实实现（凭据保存/只回是否已设置、连接测试、状态、push/pull/sync、冲突列表/解决、客户端状态推送、阅读进度同步、生命周期通知），新增 `syncWebdav` capability supported，旧 `sync` capability 仅保留百度/FTP provider 未实现命令。stub 数 52→40。
 >
 > 2026-06-12（AI-DEEPSEEK-MGZ）：`ai_http_proxy_url` 旧 stub 已移除，新增 `ai_http_proxy_request` 真实实现并注册到 Tauri/WS/capability；AI 代理按 POST + 域名白名单 + 路径白名单 + 内网地址阻断执行。stub 数 40→39。
+>
+> 2026-06-15（PERF-MIAOGONGZI-LOCAL-IMPORT）：新增 `booksource_import_legacy_json_texts` 批量书源导入命令并注册到 Tauri/WS；implemented 122→123，stub 仍为 39。
 
 | 模块               | Command                          | 当前处置            |
 | ------------------ | -------------------------------- | ------------------- |

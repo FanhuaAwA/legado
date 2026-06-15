@@ -314,9 +314,9 @@ cargo test -p reader-core --test source_compat_import fanqie_source_full_chain -
 6. 实网复测已通过：`fanqie_source_search_and_book_info` 搜索「我不是戏神」返回书籍结果。
 7. 后续实网复测已通过：`fanqie_source_full_chain` 返回 toc 1928 章，第一条为真实章节 `第1章 戏鬼回家`，content 返回 3135 字符。
 
-下一轮第一件事：
+当前未结事项：
 
-1. 补番茄 bookInfo 字段完整性；当前测试已确认详情 API、tocUrl 和阅读链路可用，但未逐项校验展示字段。
+1. 番茄 bookInfo 展示字段如继续扩展，需用真实样本逐项校验，不得只凭搜索/目录/正文通过就标记字段全量可用。
 2. 若涉及真实交互验证码 UI，需单独设计前端交互与 headless 降级边界。
 
 不得做的事：
