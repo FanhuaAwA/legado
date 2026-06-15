@@ -343,9 +343,16 @@ pub async fn booksource_search(
         }
     }
 
-    let result = if let Some(t) = token {
+    let result = if let Some(t) = token.clone() {
+        let search_token = Some(t.clone());
         tokio::select! {
-            result = state.core.search(&file_name, &keyword, page, source_dir.as_deref()) => {
+            result = state.core.search_with_cancel(
+                &file_name,
+                &keyword,
+                page,
+                source_dir.as_deref(),
+                search_token,
+            ) => {
                 result.map_err(map_err)
             }
             _ = wait_for_cancel(t) => Err(cancelled_error()),
@@ -353,7 +360,7 @@ pub async fn booksource_search(
     } else {
         state
             .core
-            .search(&file_name, &keyword, page, source_dir.as_deref())
+            .search_with_cancel(&file_name, &keyword, page, source_dir.as_deref(), None)
             .await
             .map_err(map_err)
     };

@@ -1572,12 +1572,33 @@ impl ReaderCore {
         page: i32,
         source_dir: Option<&str>,
     ) -> Result<Vec<BookItem>, ReaderCoreError> {
+        self.search_with_cancel(file_name, keyword, page, source_dir, None)
+            .await
+    }
+
+    pub async fn search_with_cancel(
+        &self,
+        file_name: &str,
+        keyword: &str,
+        page: i32,
+        source_dir: Option<&str>,
+        cancel_token: Option<Arc<AtomicBool>>,
+    ) -> Result<Vec<BookItem>, ReaderCoreError> {
+        if cancel_token
+            .as_ref()
+            .map(|token| token.load(Ordering::SeqCst))
+            .unwrap_or(false)
+        {
+            return Err(ReaderCoreError::Message("任务已取消".to_string()));
+        }
         if !self.is_legado_file(file_name, source_dir) {
             let runtime = self.require_js_runtime(file_name, source_dir).await?;
             let keyword = keyword.to_string();
-            return tokio::task::spawn_blocking(move || runtime.search(&keyword, page))
-                .await
-                .map_err(js_join_error)?;
+            return tokio::task::spawn_blocking(move || {
+                runtime.search_with_cancel(&keyword, page, cancel_token)
+            })
+            .await
+            .map_err(js_join_error)?;
         }
         let source = self.require_legado_source(file_name).await?;
         let list = self

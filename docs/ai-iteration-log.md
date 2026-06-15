@@ -1,5 +1,49 @@
 # AI Iteration Log
 
+## 2026-06-15 PERF-JS-SEARCH-CANCEL-COOPERATIVE
+
+Task ID: `PERF-2026-06-15-JS-SEARCH-CANCEL-COOPERATIVE`
+
+Goal: continue the documented large-source performance work by reducing post-cancel work in JS-backed searches. Previous search cancellation let the UI stop waiting, but a blocking JS source execution could continue running after `booksource_cancel`.
+
+Review findings:
+
+- `booksource_search` owned a task token in the Tauri command layer, but `ReaderCore::search()` had no parameter for it.
+- JS source search was executed with `spawn_blocking()`, so dropping the async future on cancellation did not stop the already-spawned blocking closure.
+- QuickJS already had an interrupt handler for `engine_timeout_secs`, but it only checked elapsed time and could not observe user cancellation.
+- JS HTTP calls could still queue behind the same-host rate limiter after the user cancelled a search.
+
+Implementation:
+
+- Added `ReaderCore::search_with_cancel()` and routed the normal `search()` method through it with `None` for compatibility.
+- Added `JsSourceRuntime::search_with_cancel()` and wrapped source function evaluation with a thread-local cancellation token.
+- Extended the QuickJS interrupt handler to check the active token before deadline checks.
+- Added cancellation checks before JS HTTP blocking sends and during rate-limit sleeps.
+- Updated Tauri `booksource_search` to pass the same task token to reader-core while preserving the existing command arguments and cancellation response.
+- Added `js_search_cancel_token_interrupts_runaway_source` to verify a runaway JS search stops promptly after the token is flipped.
+
+Expected benefit:
+
+- Stopping a large multi-source search no longer only hides the wait from the UI; JS sources that are still executing can observe cancellation and release blocking worker capacity sooner.
+- CPU-bound JS loops are interrupted by QuickJS polling instead of waiting for the engine timeout.
+- Queued JS HTTP work is reduced when cancellation happens before a request starts or while the source is waiting for rate limiting.
+
+Verification:
+
+- `cargo fmt --all -- --check` - PASS
+- `cargo test -p reader-core js_search_cancel_token_interrupts_runaway_source -- --nocapture` - PASS
+- `cargo check -p reader-core` - PASS
+- `cargo check -p legado-tauri` - PASS
+- `cmd /c pnpm.cmd lint` - PASS
+- `node scripts/ci/check-command-contract.mjs --json` - PASS
+- `git diff --check` - PASS
+
+Gate report: `reports/gates/2026-06-15-PERF-JS-SEARCH-CANCEL-COOPERATIVE/summary.md`.
+
+Residual risk:
+
+- Already in-flight `reqwest::blocking` requests are still bounded by their configured HTTP timeout; this change is cooperative and does not forcibly abort a synchronous request mid-flight.
+
 ## 2026-06-15 PERF-LEGACY-IMPORT-URL-PROGRESS
 
 任务 ID：`PERF-2026-06-15-LEGACY-IMPORT-URL-PROGRESS`

@@ -15,7 +15,7 @@ use serde_json::Value as JsonValue;
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -38,6 +38,7 @@ thread_local! {
     /// Absolute deadline for the in-flight JS evaluation on this thread. `None`
     /// outside an evaluation or when the timeout is disabled.
     static JS_EVAL_DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) };
+    static JS_EVAL_CANCEL_TOKEN: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) };
 }
 
 /// Update the JS engine execution timeout (from `engine_timeout_secs`). Applies
@@ -49,10 +50,51 @@ pub fn set_js_engine_timeout_secs(secs: u64) {
 /// Interrupt callback polled by QuickJS during execution; aborts the script once
 /// the per-eval deadline has passed. Cheap (thread-local read) when no deadline.
 fn js_eval_interrupt() -> bool {
+    if JS_EVAL_CANCEL_TOKEN.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .map(|token| token.load(Ordering::SeqCst))
+            .unwrap_or(false)
+    }) {
+        return true;
+    }
     JS_EVAL_DEADLINE.with(|cell| match cell.get() {
         Some(deadline) => Instant::now() >= deadline,
         None => false,
     })
+}
+
+pub fn is_js_cancelled() -> bool {
+    JS_EVAL_CANCEL_TOKEN.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .map(|token| token.load(Ordering::SeqCst))
+            .unwrap_or(false)
+    })
+}
+
+struct JsCancelTokenGuard {
+    previous: Option<Arc<AtomicBool>>,
+}
+
+impl JsCancelTokenGuard {
+    fn new(token: Option<Arc<AtomicBool>>) -> Self {
+        let previous = JS_EVAL_CANCEL_TOKEN.with(|cell| cell.replace(token));
+        Self { previous }
+    }
+}
+
+impl Drop for JsCancelTokenGuard {
+    fn drop(&mut self) {
+        JS_EVAL_CANCEL_TOKEN.with(|cell| {
+            cell.replace(self.previous.take());
+        });
+    }
+}
+
+pub fn with_js_cancel_token<T>(token: Option<Arc<AtomicBool>>, f: impl FnOnce() -> T) -> T {
+    let _guard = JsCancelTokenGuard::new(token);
+    f()
 }
 
 /// Sets the per-eval deadline on construction and restores the previous value on
@@ -195,6 +237,9 @@ fn js_http_wait_for_rate(url: &str) {
         return;
     }
     loop {
+        if is_js_cancelled() {
+            return;
+        }
         let wait = {
             let mut states = JS_HTTP_RATE_STATE.lock().unwrap_or_else(|e| e.into_inner());
             let now = Instant::now();
@@ -212,7 +257,17 @@ fn js_http_wait_for_rate(url: &str) {
             }
         };
         match wait {
-            Some(d) if d > Duration::ZERO => std::thread::sleep(d),
+            Some(d) if d > Duration::ZERO => {
+                let mut remaining = d;
+                while remaining > Duration::ZERO {
+                    if is_js_cancelled() {
+                        return;
+                    }
+                    let slice = remaining.min(Duration::from_millis(25));
+                    std::thread::sleep(slice);
+                    remaining = remaining.saturating_sub(slice);
+                }
+            }
             _ => return,
         }
     }
@@ -274,6 +329,9 @@ fn send_text_blocking_pool(target: reqwest::blocking::RequestBuilder) -> anyhow:
 /// where blocking is not allowed". This function bridges the call to a plain OS thread
 /// (via the dedicated pool) so the calling tokio worker is not polluted.
 fn send_text_blocking(req: reqwest::blocking::RequestBuilder) -> anyhow::Result<String> {
+    if is_js_cancelled() {
+        return Err(anyhow::anyhow!("JS execution cancelled"));
+    }
     send_text_blocking_pool(req)
 }
 
@@ -283,6 +341,9 @@ fn send_text_blocking_rated(
     url: &str,
 ) -> anyhow::Result<String> {
     js_http_wait_for_rate(url);
+    if is_js_cancelled() {
+        return Err(anyhow::anyhow!("JS execution cancelled"));
+    }
     send_text_blocking_pool(req)
 }
 static JS_DEVICE_ID: Lazy<String> = Lazy::new(|| {

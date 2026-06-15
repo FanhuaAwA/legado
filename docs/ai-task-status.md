@@ -1,5 +1,39 @@
 # AI Task Status
 
+## 2026-06-15 PERF-JS-SEARCH-CANCEL-COOPERATIVE status update
+
+Status: `local-gate-pass`; this entry will be added to the current performance PR after push. Remote Quality Gate remains governed by GitHub Actions.
+
+Task ID: `PERF-2026-06-15-JS-SEARCH-CANCEL-COOPERATIVE`. This round continues the large-source search performance work by addressing a self-review finding in the cancellation path: `booksource_search` could return `CANCELLED` to the UI while the underlying JS source evaluation kept running on a blocking worker.
+
+Review findings:
+
+- `src-tauri/src/commands/source.rs::booksource_search` registered a task token and raced the search future against `wait_for_cancel()`, but the token was not passed into reader-core.
+- `ReaderCore::search()` spawned JS source execution via `spawn_blocking()` without a cooperative cancellation channel, so cancelling a large multi-source search could leave runaway JS or queued JS HTTP calls consuming worker time after the UI had stopped waiting.
+- The QuickJS interrupt handler only checked the engine timeout deadline; it could not observe user cancellation.
+
+Key changes:
+
+- reader-core now exposes `search_with_cancel()` and passes the optional task token into JS source runtime search.
+- JS source runtime wraps source function evaluation in a thread-local cancel token so QuickJS interrupt polling can stop CPU-bound JS loops.
+- JS HTTP bridge checks cancellation before starting blocking requests and while waiting for same-host rate limiting, reducing post-cancel queued work.
+- Tauri `booksource_search` passes the same task token to reader-core while preserving the existing command signature and `CANCELLED` response behavior.
+- Added a regression test that starts a runaway JS search, cancels it, and verifies that it returns promptly before the engine timeout.
+
+Passed local gate:
+
+- `cargo fmt --all -- --check`
+- `cargo test -p reader-core js_search_cancel_token_interrupts_runaway_source -- --nocapture`
+- `cargo check -p reader-core`
+- `cargo check -p legado-tauri`
+- `cmd /c pnpm.cmd lint`
+- `node scripts/ci/check-command-contract.mjs --json`
+- `git diff --check`
+
+Gate report: `reports/gates/2026-06-15-PERF-JS-SEARCH-CANCEL-COOPERATIVE/summary.md`.
+
+Residual risk: an HTTP request that has already entered `reqwest::blocking` still cannot be force-aborted by this cooperative token and will return on request timeout; this change prevents new/rate-wait HTTP work and interrupts active QuickJS execution.
+
 ## 2026-06-15 PERF-LEGACY-IMPORT-URL-PROGRESS 状态更新
 
 本轮状态：`local-gate-pass`；将追加到当前性能优化草稿 PR，远端 Quality Gate 状态以 GitHub Actions 为准。

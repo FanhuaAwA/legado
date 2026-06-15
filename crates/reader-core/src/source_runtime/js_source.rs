@@ -1,7 +1,11 @@
 use crate::dto::{BookDetail, BookItem, ChapterItem};
 use crate::error::ReaderCoreError;
-use crate::parser::js::{eval_source_function, eval_source_function_value, JsSourceArg};
+use crate::parser::js::{
+    eval_source_function, eval_source_function_value, with_js_cancel_token, JsSourceArg,
+};
 use serde_json::Value;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 pub struct JsSourceRuntime {
     file_name: String,
@@ -17,19 +21,33 @@ impl JsSourceRuntime {
     }
 
     pub fn search(&self, keyword: &str, page: i32) -> Result<Vec<BookItem>, ReaderCoreError> {
+        self.search_with_cancel(keyword, page, None)
+    }
+
+    pub fn search_with_cancel(
+        &self,
+        keyword: &str,
+        page: i32,
+        cancel_token: Option<Arc<AtomicBool>>,
+    ) -> Result<Vec<BookItem>, ReaderCoreError> {
         let raw = self.call_first(
             &["search"],
             &[
                 JsSourceArg::String(keyword.to_string()),
                 JsSourceArg::Int(page),
             ],
+            cancel_token,
         )?;
         serde_json::from_value(expect_json(raw, "search")?)
             .map_err(|err| js_shape_error(&self.file_name, "search", err))
     }
 
     pub fn book_info(&self, book_url: &str) -> Result<BookDetail, ReaderCoreError> {
-        let raw = self.call_first(&["bookInfo"], &[JsSourceArg::String(book_url.to_string())])?;
+        let raw = self.call_first(
+            &["bookInfo"],
+            &[JsSourceArg::String(book_url.to_string())],
+            None,
+        )?;
         let mut detail: BookDetail = serde_json::from_value(expect_json(raw, "bookInfo")?)
             .map_err(|err| js_shape_error(&self.file_name, "bookInfo", err))?;
         if detail
@@ -46,6 +64,7 @@ impl JsSourceRuntime {
         let raw = self.call_first(
             &["chapterList", "toc"],
             &[JsSourceArg::String(toc_url.to_string())],
+            None,
         )?;
         serde_json::from_value(expect_json(raw, "chapterList")?)
             .map_err(|err| js_shape_error(&self.file_name, "chapterList", err))
@@ -55,6 +74,7 @@ impl JsSourceRuntime {
         let raw = self.call_first(
             &["chapterContent", "content"],
             &[JsSourceArg::String(chapter_url.to_string())],
+            None,
         )?;
         Ok(match serde_json::from_str::<Value>(&raw) {
             Ok(Value::String(value)) => value,
@@ -70,6 +90,7 @@ impl JsSourceRuntime {
                 JsSourceArg::Int(page),
                 JsSourceArg::String(category.to_string()),
             ],
+            None,
         )?;
         match serde_json::from_str::<Value>(&raw) {
             Ok(value) => Ok(value),
@@ -90,16 +111,23 @@ impl JsSourceRuntime {
         })
     }
 
-    fn call_first(&self, names: &[&str], args: &[JsSourceArg]) -> Result<String, ReaderCoreError> {
+    fn call_first(
+        &self,
+        names: &[&str],
+        args: &[JsSourceArg],
+        cancel_token: Option<Arc<AtomicBool>>,
+    ) -> Result<String, ReaderCoreError> {
         for name in names {
             if !has_js_function(&self.content, name) {
                 continue;
             }
-            return eval_source_function(&self.content, name, args).map_err(|err| {
-                ReaderCoreError::Message(format!(
-                    "JS 书源执行失败 [{}::{name}]: {err}",
-                    self.file_name
-                ))
+            return with_js_cancel_token(cancel_token.clone(), || {
+                eval_source_function(&self.content, name, args).map_err(|err| {
+                    ReaderCoreError::Message(format!(
+                        "JS 书源执行失败 [{}::{name}]: {err}",
+                        self.file_name
+                    ))
+                })
             });
         }
         Err(ReaderCoreError::Message(format!(

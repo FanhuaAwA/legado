@@ -4,9 +4,12 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use reader_core::parser::js::{eval_js, with_js_source};
+use reader_core::parser::js::{eval_js, set_js_engine_timeout_secs, with_js_source};
 use reader_core::{ReaderCore, ReaderCoreOptions};
 use serde_json::json;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 #[test]
 fn java_aes_base64_decode_to_string_decrypts_legado_paths() {
@@ -356,6 +359,66 @@ function replyParagraphComment(chapterUrl, rangeKey, commentId, content) {{
     assert!(content.contains("JS 书源"));
 
     server.abort();
+}
+
+#[tokio::test]
+async fn js_search_cancel_token_interrupts_runaway_source() {
+    set_js_engine_timeout_secs(3);
+
+    let temp = tempfile::tempdir().unwrap();
+    let core = ReaderCore::new(ReaderCoreOptions::new(temp.path()))
+        .await
+        .unwrap();
+    core.save_js_source(
+        "runaway-search.js",
+        r#"// @name        Runaway Search
+// @url         https://example.invalid
+// @enabled     true
+
+async function search() {
+  while (true) {}
+}
+"#,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let cancel_token = Arc::new(AtomicBool::new(false));
+    let search = core.search_with_cancel(
+        "runaway-search.js",
+        "anything",
+        1,
+        None,
+        Some(cancel_token.clone()),
+    );
+    tokio::pin!(search);
+
+    tokio::select! {
+        result = &mut search => {
+            set_js_engine_timeout_secs(0);
+            panic!("runaway search finished before cancellation: {result:?}");
+        },
+        _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+    }
+
+    let cancel_started = Instant::now();
+    cancel_token.store(true, Ordering::SeqCst);
+    let timed = tokio::time::timeout(Duration::from_secs(2), &mut search).await;
+
+    set_js_engine_timeout_secs(0);
+    let result =
+        timed.expect("runaway JS search should observe cancellation before the engine timeout");
+
+    assert!(
+        result.is_err(),
+        "cancelled runaway search should fail, got {result:?}"
+    );
+    assert!(
+        cancel_started.elapsed() < Duration::from_secs(1),
+        "JS search cancellation should be prompt, elapsed={:?}",
+        cancel_started.elapsed()
+    );
 }
 
 #[tokio::test]
