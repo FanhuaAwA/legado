@@ -529,6 +529,55 @@ async fn dispatch(state: &AppState, raw: &str, out: &WsOutgoing) -> Option<Strin
                 Err(format!("TASK_NOT_FOUND: 任务 {task_id} 不存在或已完成"))
             }
         }
+        "booksource_check_update" => {
+            let file_name = arg_str(&args, "fileName").unwrap_or("");
+            let source_dir = arg_str(&args, "sourceDir");
+            core.check_source_update(file_name, source_dir)
+                .await
+                .map(|v| serde_json::to_value(v).unwrap_or_default())
+                .map_err(|e| e.to_string())
+        }
+        "booksource_apply_update" => {
+            let file_name = arg_str(&args, "fileName").unwrap_or("");
+            let source_dir = arg_str(&args, "sourceDir");
+            core.apply_source_update(file_name, source_dir)
+                .await
+                .map(|()| Value::Null)
+                .map_err(|e| e.to_string())
+        }
+        "repository_fetch" => {
+            let url = arg_str(&args, "url").unwrap_or("");
+            core.repository_fetch(url)
+                .await
+                .map(|v| serde_json::to_value(v).unwrap_or_default())
+                .map_err(|e| e.to_string())
+        }
+        "repository_preview_source" => {
+            let download_url = arg_str(&args, "downloadUrl").unwrap_or("");
+            let expected_uuid = arg_str(&args, "expectedUuid");
+            core.repository_preview_source(download_url, expected_uuid)
+                .await
+                .map(|v| serde_json::to_value(v).unwrap_or_default())
+                .map_err(|e| e.to_string())
+        }
+        "repository_install" => {
+            let download_url = arg_str(&args, "downloadUrl").unwrap_or("");
+            let file_name = arg_str(&args, "fileName").unwrap_or("");
+            let expected_uuid = arg_str(&args, "expectedUuid");
+            core.repository_install(download_url, file_name, expected_uuid)
+                .await
+                .map(|()| Value::Null)
+                .map_err(|e| e.to_string())
+        }
+        "repository_check_source_sync" => {
+            let file_name = arg_str(&args, "fileName").unwrap_or("");
+            let download_url = arg_str(&args, "downloadUrl").unwrap_or("");
+            let expected_uuid = arg_str(&args, "expectedUuid");
+            core.repository_check_source_sync(file_name, download_url, expected_uuid)
+                .await
+                .map(|v| serde_json::to_value(v).unwrap_or_default())
+                .map_err(|e| e.to_string())
+        }
 
         // ── shelf ──
         "bookshelf_list" => core
@@ -851,7 +900,7 @@ async fn dispatch(state: &AppState, raw: &str, out: &WsOutgoing) -> Option<Strin
                 "cover_cache_size",
                 "cover_resolve_cache",
             ]),
-            "repository": unsupported_capability("Source repository commands are not exposed by legado-headless yet.", [
+            "repository": supported_capability("Source repository browsing and JS-source auto-update via @updateUrl are supported.", [
                 "repository_fetch",
                 "repository_install",
                 "repository_preview_source",
@@ -1098,6 +1147,169 @@ mod tests {
     fn set_js_engine_timeout_for_test(secs: u64) -> JsEngineTimeoutRestore {
         reader_core::parser::js::set_js_engine_timeout_secs(secs);
         JsEngineTimeoutRestore
+    }
+
+    fn repository_fixture_source(version: &str, enabled: bool, update_url: &str) -> String {
+        format!(
+            r#"// @name        Headless Repo Fixture
+// @url         https://example.invalid/headless-repo-fixture
+// @version     {version}
+// @uuid        headless-repo-fixture
+// @enabled     {enabled}
+// @updateUrl   {update_url}
+
+async function search() {{
+  return [];
+}}
+"#
+        )
+    }
+
+    async fn start_repository_fixture_server() -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base_url = format!("http://{addr}");
+        let source_url = format!("{base_url}/repo-source.js");
+        let update_url = format!("{base_url}/update-source.js");
+        let repo_source = repository_fixture_source("2.0.0", true, &update_url);
+        let update_source = repository_fixture_source("2.0.0", true, &update_url);
+        let manifest = json!({
+            "name": "Headless Fixture Repository",
+            "version": "1",
+            "updatedAt": "2026-06-18T00:00:00Z",
+            "sources": [{
+                "uuid": "headless-repo-fixture",
+                "name": "Headless Repo Fixture",
+                "version": "2.0.0",
+                "author": "Codex",
+                "fileName": "headless-repo-fixture.js",
+                "downloadUrl": source_url,
+                "updatedAt": "2026-06-18T00:00:00Z"
+            }]
+        })
+        .to_string();
+
+        let manifest_body = manifest.clone();
+        let repo_source_body = repo_source.clone();
+        let update_source_body = update_source.clone();
+        let app = axum::Router::new()
+            .route(
+                "/repo.json",
+                get(move || {
+                    let body = manifest_body.clone();
+                    async move { body }
+                }),
+            )
+            .route(
+                "/repo-source.js",
+                get(move || {
+                    let body = repo_source_body.clone();
+                    async move { body }
+                }),
+            )
+            .route(
+                "/update-source.js",
+                get(move || {
+                    let body = update_source_body.clone();
+                    async move { body }
+                }),
+            );
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (base_url, handle)
+    }
+
+    #[tokio::test]
+    async fn repository_capability_is_supported_in_headless_dispatch() {
+        let (state, dir) = test_state().await;
+        let capabilities = invoke(&state, "capabilities_get", json!({})).await;
+        assert_eq!(capabilities["repository"]["supported"], true);
+        let commands = capabilities["repository"]["commands"].as_array().unwrap();
+        assert!(commands.iter().any(|cmd| cmd == "repository_fetch"));
+        assert!(commands.iter().any(|cmd| cmd == "booksource_apply_update"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn repository_commands_work_through_headless_dispatch() {
+        let (state, dir) = test_state().await;
+        let (base_url, server) = start_repository_fixture_server().await;
+        let repo_url = format!("{base_url}/repo.json");
+        let source_url = format!("{base_url}/repo-source.js");
+        let update_url = format!("{base_url}/update-source.js");
+
+        let manifest = invoke(&state, "repository_fetch", json!({"url": repo_url})).await;
+        assert_eq!(manifest["name"], "Headless Fixture Repository");
+        assert_eq!(
+            manifest["sources"][0]["downloadUrl"].as_str().unwrap(),
+            source_url
+        );
+
+        let preview = invoke(
+            &state,
+            "repository_preview_source",
+            json!({"downloadUrl": source_url, "expectedUuid": "headless-repo-fixture"}),
+        )
+        .await;
+        assert_eq!(preview["hasExplicitUuid"], true);
+        assert_eq!(preview["meta"]["name"], "Headless Repo Fixture");
+
+        invoke(
+            &state,
+            "repository_install",
+            json!({
+                "downloadUrl": source_url,
+                "fileName": "headless-repo-fixture.js",
+                "expectedUuid": "headless-repo-fixture"
+            }),
+        )
+        .await;
+        let sync = invoke(
+            &state,
+            "repository_check_source_sync",
+            json!({
+                "fileName": "headless-repo-fixture.js",
+                "downloadUrl": source_url,
+                "expectedUuid": "headless-repo-fixture"
+            }),
+        )
+        .await;
+        assert_eq!(sync["isConsistent"], true);
+        assert_eq!(sync["remoteVersion"], "2.0.0");
+
+        let local_v1 = repository_fixture_source("1.0.0", false, &update_url);
+        state
+            .core
+            .save_js_source("headless-update-fixture.js", &local_v1, None)
+            .await
+            .unwrap();
+        let update = invoke(
+            &state,
+            "booksource_check_update",
+            json!({"fileName": "headless-update-fixture.js", "sourceDir": null}),
+        )
+        .await;
+        assert_eq!(update["hasUpdate"], true);
+        assert_eq!(update["localVersion"], "1.0.0");
+        assert_eq!(update["remoteVersion"], "2.0.0");
+
+        invoke(
+            &state,
+            "booksource_apply_update",
+            json!({"fileName": "headless-update-fixture.js", "sourceDir": null}),
+        )
+        .await;
+        let updated = state
+            .core
+            .read_source("headless-update-fixture.js", None)
+            .await
+            .unwrap();
+        assert!(updated.contains("// @version     2.0.0"));
+        assert!(updated.contains("// @enabled     false"));
+
+        server.abort();
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]

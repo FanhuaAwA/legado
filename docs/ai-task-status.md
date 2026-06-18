@@ -48,6 +48,7 @@ node scripts\ci\check-command-contract.mjs --json
 - 喵/猫公子书源实测：`packages=10 entries=1259 resolve_ms=1344 sequential_ms=3809 combined_ms=3831 local_sequential_ms=4146 local_combined_ms=3807 local_speedup=1.09x`。
 - Headless WS cancel：浏览器/headless 模式已接入 `TaskRegistry` 支持 `booksource_cancel` 取消 search/chapter-list/chapter-content；Tauri/headless 取消后底层 JS 中断统一归一化为 `CANCELLED`。
 - Full lint baseline：`.gitattributes` 固定源码/文档 LF 行尾，Windows Git 与 `oxfmt` 不再冲突，仓库级 `pnpm lint` 已通过。
+- Headless repository：浏览器/headless 模式已暴露在线仓库和 `@updateUrl` 更新命令域，`capabilities_get.repository` 与 Tauri 对齐为 supported。
 
 ## 当前验证命令
 
@@ -62,6 +63,7 @@ cargo test -p legado-tauri task_ -- --nocapture
 cargo test -p legado-tauri booksource_import_legacy_json_texts_accepts_request_id_in_ws_router -- --nocapture
 node scripts\ci\check-command-contract.mjs --json
 cargo test -p legado-headless -- --nocapture
+cargo test -p legado-headless repository_ -- --nocapture
 cargo test -p legado-tauri --test ws_router booksource_search_accepts_task_id_in_ws_router -- --nocapture
 cargo test -p reader-core --test cover_cache -- --nocapture
 cargo test -p legado-tauri --test ws_router cover_cache_commands_are_routed -- --nocapture
@@ -75,6 +77,7 @@ cmd /c pnpm.cmd build:windows:release
 2026-06-18 封面缓存迭代已实测通过新增/受影响链路的格式、类型、Rust check、命令契约与路由/缓存测试；旧性能专项命令仍作为后续回归队列保留。Tauri 测试/构建仍可能输出已知 Windows linker stdout warning；当前不作为失败。
 
 2026-06-18 headless cancel / lint baseline iteration verified that `cmd /c pnpm.cmd lint` now passes end-to-end (`oxfmt --check .`, `oxlint --type-aware --type-check .`, and `vue-tsc`). Playwright headless smoke on `127.0.0.1:7790` showed bookshelf first screen, WS connected, and 0 console errors/warnings.
+2026-06-18 headless repository iteration verified local repository fixture import/update commands and Playwright headless `书源管理 -> 在线书源` smoke on `127.0.0.1:7791`; repository toolbar actions were enabled and console stayed at 0 errors/warnings.
 
 ## 当前未结工作
 

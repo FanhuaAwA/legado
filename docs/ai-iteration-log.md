@@ -28,6 +28,12 @@ Last updated: 2026-06-18
 - Main fixes: add headless `TaskRegistry` and route `booksource_cancel`, wire headless search/chapter-list/chapter-content through core cancellation tokens, normalize cancellation errors in headless/Tauri so user cancel returns `CANCELLED`, and add `.gitattributes` LF rules to resolve the Windows `oxfmt` baseline conflict.
 - Validation: `cargo test -p legado-headless -- --nocapture`, Tauri task registry/router tests, `cargo check -p legado-headless`, `cargo check -p legado-tauri`, command contract, full `pnpm lint`, and `pnpm build` passed. Playwright headless smoke showed first-screen bookshelf, WS connected, and 0 console errors/warnings.
 
+## 2026-06-18 Headless Repository Iteration
+
+- Gate report: `reports/gates/2026-06-18-HEADLESS-REPOSITORY/summary.md`
+- Main fixes: expose `repository_fetch` / `repository_install` / `repository_preview_source` / `repository_check_source_sync` / `booksource_check_update` / `booksource_apply_update` through `legado-headless`, and mark headless `repository` capability supported.
+- Validation: local HTTP repository fixture covered manifest fetch, source preview/install, sync consistency, and `@updateUrl` check/apply. Playwright headless smoke opened `书源管理 -> 在线书源` and confirmed repository actions are enabled with 0 console errors/warnings.
+
 ## 2026-06-15 Master Direct Push
 
 - Branch：`master`
@@ -61,6 +67,7 @@ Last updated: 2026-06-18
 - `reports/gates/2026-06-18-COVER-CACHE-STABILITY/summary.md`
 - `reports/gates/2026-06-18-SOURCE-FRESHNESS-RECHECK/summary.md`
 - `reports/gates/2026-06-18-HEADLESS-CANCEL-LINT/summary.md`
+- `reports/gates/2026-06-18-HEADLESS-REPOSITORY/summary.md`
 
 ## 当前契约快照
 
