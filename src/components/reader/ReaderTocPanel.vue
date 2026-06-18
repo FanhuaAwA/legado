@@ -2,10 +2,10 @@
   阅读器目录与书籍详情抽屉，负责章节检索、跳转、缓存操作和当前阅读章节定位。
 -->
 <script setup lang="ts">
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { useVirtualList } from "@vueuse/core";
 import { Trash2, RefreshCw, Download } from "lucide-vue-next";
 import { ref, nextTick, watch, computed } from "vue";
+import { openExternalUrl } from "@/composables/useExternalOpen";
 import type { ChapterItem } from "@/stores";
 import { isVipChapter } from "@/utils/chapter";
 import type { ReaderBookInfo } from "./types";
@@ -280,7 +280,7 @@ const detailRows = computed(() => {
               class="reader-toc__info-value reader-toc__info-link"
               href="#"
               :title="row.value"
-              @click.prevent="openUrl(row.value)"
+              @click.prevent="openExternalUrl(row.value)"
               >{{ row.value }}</a
             >
             <span v-else class="reader-toc__info-value" :title="row.value">{{ row.value }}</span>

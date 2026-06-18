@@ -27,7 +27,7 @@
 已就绪：
 
 - 前端三模传输层已完成：`src/composables/useTransport.ts` 在 Tauri IPC / Harmony 桥 / WebSocket 之间透明切换。浏览器模式自动探测 `ws://<host>:7688/ws`，支持 `?ws=` URL 参数指定自定义后端地址，invoke / listen 语义与 Tauri 一致，含超时（默认 35s）与指数退避重连。
-- 统一调用入口已完成：`useInvoke.ts`（invokeWithTimeout）、`useEventBus.ts`（listen/emit）、`useFileSrc.ts`（本地文件 URL 转换）、`useEnv.ts`（环境检测）。
+- 统一调用入口已完成：`useInvoke.ts`（invokeWithTimeout）、`useEventBus.ts`（listen/emit）、`useFileSrc.ts`（本地文件 URL 转换）、`useExternalOpen.ts`（外部链接打开）、`useEnv.ts`（环境检测）。
 - `crates/reader-core` 不依赖 Tauri，可被任意服务端二进制直接链接。
 - 能力声明命令 `capabilities_get` 已注册，可作为按传输方式声明能力的载体。
 - **2026-06-12 注记：FORMB-ACCEPT 本机 headless loopback 已通过。**`src-headless` 独立后端托管 `dist` + `/ws`，浏览器打开 `http://127.0.0.1:7788/?ws=ws://127.0.0.1:7788/ws` 后启动控制台 0 error / 0 warning，并用同一 WS 协议跑通「书源保存/列表 → 搜索 → 详情 → 加书架 → 目录 → 正文 → 进度保存」。证据见 `reports/gates/2026-06-12-FORMB-ACCEPT-headless-loopback/summary.md`；自动回归见 `src-headless/src/main.rs::tests::formb_accept_headless_dispatch_chain`。
@@ -54,8 +54,8 @@
 
 ## 4. 硬约束（违反即视为本轮失败）
 
-1. **前端业务代码禁止直接 import `@tauri-apps/api`**。所有后端调用走 `invokeWithTimeout`（useInvoke.ts），所有后端事件走 `useEventBus` / `transportListen`，本地文件展示走 `useFileSrc`。允许的例外仅限：
-   - 封装层自身（useTransport.ts、useEventBus.ts、useEnv.ts、useFileSrc.ts）。
+1. **前端业务代码禁止直接 import `@tauri-apps/api`**。所有后端调用走 `invokeWithTimeout`（useInvoke.ts），所有后端事件走 `useEventBus` / `transportListen`，本地文件展示走 `useFileSrc`，外部链接打开走 `useExternalOpen`。允许的例外仅限：
+   - 封装层自身（useTransport.ts、useEventBus.ts、useEnv.ts、useFileSrc.ts、useExternalOpen.ts）。
    - 窗口控制等桌面壳独占行为（如 TitleBar.vue、privacyMode.ts 的 `getCurrentWindow`），必须有 `isTauri` 守卫，且非 Tauri 环境下静默降级、不报错、不阻断功能。
    - `src/utils/logger.ts` 的 `frontend_log` 链路（评估结论见第 5 节，不得据此扩大例外范围）。
 2. **后端业务逻辑必须写在 `crates/reader-core`**。`src-tauri` 的命令函数只做参数解析与转发。禁止在 `#[tauri::command]` 函数体里写只有 Tauri 壳能执行的业务逻辑（依赖 AppHandle / 窗口 / 系统对话框的命令除外，但它们必须可被能力门禁排除）。
@@ -71,6 +71,7 @@
 | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `src/stores/prefetch.ts`（setupManualListeners / setupSilentListeners） | 直接 `import("@tauri-apps/api/event")` 监听 `shelf:prefetch-*`，catch 回退仅覆盖 Harmony 的 DOM CustomEvent 路径；WS 模式下事件经传输层分发，不触发 DOM 事件，预取进度会静默丢失                 | **已修复（2026-06-10 R-P2-011）**：环境分流改为「鸿蒙 → DOM CustomEvent（Index.ets 推送路径不变）；Tauri / WS → useEventBus 统一事件层」，与 shellStatus.ts 既有用法一致                                                                                                                                                                                                                   |
 | 预取进度链路（R-P2-012，非分离专属但在试点中发现）                      | 前端调用 `bookshelf_prefetch_chapters` 发顶层键 `payload`，后端参数名是 `request`，按键名取参必失败；且全仓库无任何代码 emit `shelf:prefetch-progress` / `shelf:prefetch-done`，前端监听是死路径 | **已修复（2026-06-18 PREFETCH-WS-EVENTS）**：Tauri IPC / Tauri WS / headless WS 均走同一预取进度事件契约；WS router 兼容 `{ payload: ... }` 与直接 payload；headless 预取注册可取消 token 并推送 `shelf:prefetch-progress` / `shelf:prefetch-done`。证据见 `reports/gates/2026-06-18-PREFETCH-WS-EVENTS/summary.md`。                                                                      |
+| 业务组件外部链接打开                                                    | 多个业务组件直接 import 或动态 import `@tauri-apps/plugin-opener`，浏览器/headless 形态下外链打开语义分散；`noopener,noreferrer` 的 `window.open` 返回值还会导致“已打开但误判失败”               | **已修复（2026-06-18 EXTERNAL-OPEN-WRAPPER）**：新增 `useExternalOpen.ts` 作为唯一 opener 封装，业务组件只调用封装层；浏览器分支改用临时 `<a rel="noopener noreferrer" target="_blank">` 触发打开，避免 `window.open` 返回 `null` 的误报。证据见 `reports/gates/2026-06-18-EXTERNAL-OPEN-WRAPPER/summary.md`。                                                                             |
 | `src/utils/logger.ts`（sendToRust）                                     | 直接 import invoke，非 Tauri 环境降级 console；WS 模式下前端日志不进后端日志文件                                                                                                                 | **评估后保留直连（2026-06-10 R-P2-011 结论，列入第 4 节例外）**：(1) 日志是传输层自身的底层依赖，改走 transportInvoke 会形成 log → transport 内部 log → frontend_log 的放大回路；(2) WS 多客户端把前端日志汇入同一服务器日志会互相污染，浏览器端日志去向应为 DevTools console 与 useRemoteDebug 通道；(3) Tauri 模式行为不变。若未来 R-P2-008 需要远端收集前端日志，单独立项并解决回路问题 |
 
 ## 6. 实施路线（与审计文档 R-P2-008 对齐，按序执行）
@@ -93,6 +94,7 @@ src/composables/useTransport.ts   传输层 + WS 协议权威定义
 src/composables/useInvoke.ts      统一命令调用入口
 src/composables/useEventBus.ts    统一事件入口
 src/composables/useFileSrc.ts     本地文件 URL 转换
+src/composables/useExternalOpen.ts 外部链接打开封装
 src/composables/useEnv.ts         isTauri / isHarmonyNative 环境检测
 src/composables/useCapabilities.ts 能力门禁
 src-tauri/src/commands/mod.rs     命令注册表（generate_handler!）

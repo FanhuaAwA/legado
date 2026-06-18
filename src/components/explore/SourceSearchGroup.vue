@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { computed } from "vue";
+import { openExternalUrl } from "@/composables/useExternalOpen";
 import type { BookItem } from "@/stores";
 import type { BookSourceMeta } from "../../composables/useBookSource";
 import defaultLogoUrl from "../../assets/booksource-default.svg";
@@ -41,7 +41,7 @@ const sourceTypeIsNonDefault = computed(() => {
         v-if="source.url"
         class="ssg__name ssg__name--link"
         href="#"
-        @click.prevent="openUrl(source.url)"
+        @click.prevent="openExternalUrl(source.url)"
         >{{ source.name }}</a
       >
       <span v-else class="ssg__name">{{ source.name }}</span>

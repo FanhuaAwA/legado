@@ -1,6 +1,5 @@
 <!-- ReaderContentArea — 阅读正文区域，负责阅读模式承载、文字选择菜单与选区插件动作。 -->
 <script setup lang="ts">
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { NSpin, NAlert, NButton, NDropdown, NModal, useMessage } from "naive-ui";
 import { storeToRefs } from "pinia";
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
@@ -12,6 +11,7 @@ import {
   useFrontendPlugins,
   type ReaderTextSelectionContext,
 } from "@/composables/useFrontendPlugins";
+import { openExternalUrl } from "@/composables/useExternalOpen";
 import { invokeWithTimeout } from "@/composables/useInvoke";
 import { useOverlay } from "@/composables/useOverlay";
 import { useReaderBookmarksStore } from "@/features/reader/stores/readerBookmarks";
@@ -512,7 +512,7 @@ async function handleLegacyBrowserResult(
   const browser = response.browser;
   const url = browser?.url?.trim();
   if (url) {
-    await openUrl(url);
+    await openExternalUrl(url);
     return true;
   }
 
@@ -526,7 +526,7 @@ async function handleLegacyBrowserResult(
 
   const qimaoUrl = parseQimaoCommentUrl(expression);
   if (qimaoUrl) {
-    await openUrl(qimaoUrl);
+    await openExternalUrl(qimaoUrl);
     return true;
   }
 
@@ -559,7 +559,7 @@ async function onReaderClickCapture(event: MouseEvent) {
   } catch (error) {
     const qimaoUrl = parseQimaoCommentUrl(expression);
     if (qimaoUrl) {
-      await openUrl(qimaoUrl);
+      await openExternalUrl(qimaoUrl);
     } else {
       message.error(error instanceof Error ? error.message : String(error));
     }

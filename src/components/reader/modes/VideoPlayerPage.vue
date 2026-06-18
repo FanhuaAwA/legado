@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChevronLeft, Link, Keyboard, ArrowUp, Copy, Check } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { ChapterItem, ChapterGroup } from "@/types";
 import { useCapabilities } from "@/composables/useCapabilities";
 import { isTauri } from "@/composables/useEnv";
+import { openExternalUrl as openSystemExternalUrl } from "@/composables/useExternalOpen";
 import { useAppConfigStore, groupChapters, useScriptBridgeStore } from "@/stores";
 import type { ReaderBookInfo } from "../types";
 import type { VideoCategoryGroup, VideoSource } from "../video/types";
@@ -652,9 +652,8 @@ async function openExternalUrl(url: string) {
   if (!url) {
     return;
   }
-  try {
-    await openUrl(url);
-  } catch {
+  const opened = await openSystemExternalUrl(url, { fallbackToWindow: !isTauri });
+  if (!opened) {
     // 非标准 URL（如 m3u8 直链）时回退到复制
     navigator.clipboard.writeText(url).catch(() => {});
   }

@@ -46,6 +46,12 @@ Last updated: 2026-06-18
 - Main fixes: close R-P2-012 by emitting `shelf:prefetch-progress` / `shelf:prefetch-done` from Tauri WS router as well as IPC, accepting both wrapped and direct prefetch payloads, and adding the same prefetch command/event path to `legado-headless`.
 - Validation: Tauri WS router tests covered direct payload parsing and done-event emission; headless tests covered real one-chapter prefetch, cached content, progress event, and done event. Playwright headless smoke drove the real browser WebSocket protocol and confirmed `fetched=1`, cached content, progress/done events, and 0 console errors/warnings.
 
+## 2026-06-18 External Open Wrapper Iteration
+
+- Gate report: `reports/gates/2026-06-18-EXTERNAL-OPEN-WRAPPER/summary.md`
+- Main fixes: add `useExternalOpen.ts` as the sole `@tauri-apps/plugin-opener` wrapper, replace direct opener imports across book source, explore, reader, video, and service-mode UI, and fix browser fallback false negatives caused by `window.open(..., "noopener,noreferrer")` returning `null`.
+- Validation: `rg` confirmed `@tauri-apps/plugin-opener` appears only in `useExternalOpen.ts`; `pnpm lint`, command contract, and `pnpm build` passed. Playwright headless smoke loaded installed/online source tabs and service mode, imported the built wrapper chunk, and confirmed `empty=false`, `opened=true`, with 0 console errors/warnings.
+
 ## 2026-06-15 Master Direct Push
 
 - Branch：`master`
@@ -82,6 +88,7 @@ Last updated: 2026-06-18
 - `reports/gates/2026-06-18-HEADLESS-REPOSITORY/summary.md`
 - `reports/gates/2026-06-18-HEADLESS-WEBDAV-SYNC/summary.md`
 - `reports/gates/2026-06-18-PREFETCH-WS-EVENTS/summary.md`
+- `reports/gates/2026-06-18-EXTERNAL-OPEN-WRAPPER/summary.md`
 
 ## 当前契约快照
 

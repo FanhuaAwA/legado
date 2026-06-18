@@ -4,6 +4,7 @@ import { useMessage } from "naive-ui";
 import { storeToRefs } from "pinia";
 import { onMounted, ref } from "vue";
 import { hasNativeTransport, isMobile, isTauri } from "@/composables/useEnv";
+import { openExternalUrl } from "@/composables/useExternalOpen";
 import { invokeWithTimeout } from "@/composables/useInvoke";
 import { useAppConfigStore } from "@/stores";
 import SettingItem from "./SettingItem.vue";
@@ -176,16 +177,7 @@ async function restartWebServer() {
 
 async function openInBrowser() {
   const url = `http://localhost:${config.value.web_server_port}`;
-  await openUrl(url);
-}
-
-async function openUrl(url: string) {
-  try {
-    const { openUrl: tauriOpenUrl } = await import("@tauri-apps/plugin-opener");
-    await tauriOpenUrl(url);
-  } catch {
-    window.open(url, "_blank", "noopener,noreferrer");
-  }
+  await openExternalUrl(url);
 }
 
 async function copyToClipboard(text: string) {
@@ -323,7 +315,7 @@ async function saveWebServerPort() {
               v-if="config.web_server_enabled"
               size="tiny"
               quaternary
-              @click="openUrl(`http://${ip}:${config.web_server_port}`)"
+              @click="openExternalUrl(`http://${ip}:${config.web_server_port}`)"
             >
               打开
             </n-button>

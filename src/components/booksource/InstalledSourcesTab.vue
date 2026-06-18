@@ -5,8 +5,8 @@ import { useMessage } from "naive-ui";
 import { storeToRefs } from "pinia";
 import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useBackAwareDialog as useDialog } from "@/composables/useBackAwareDialog";
-import { isTauri } from "@/composables/useEnv";
 import { eventListen } from "@/composables/useEventBus";
+import { openExternalUrl as openSystemExternalUrl } from "@/composables/useExternalOpen";
 import { invokeWithTimeout } from "@/composables/useInvoke";
 import { classifyLegadoInstallTarget } from "@/composables/useLegadoDeepLink";
 import { useOverlay } from "@/composables/useOverlay";
@@ -89,19 +89,9 @@ async function openExternalUrl(url: string) {
     return;
   }
 
-  if (isTauri) {
-    try {
-      const { openUrl: tauriOpenUrl } = await import("@tauri-apps/plugin-opener");
-      await tauriOpenUrl(externalUrl);
-      return;
-    } catch (error) {
-      console.warn("[InstalledSourcesTab] 打开外部链接失败:", error);
-      message.error("打开系统浏览器失败");
-      return;
-    }
+  if (!(await openSystemExternalUrl(externalUrl))) {
+    message.error("打开系统浏览器失败");
   }
-
-  window.open(externalUrl, "_blank", "noopener,noreferrer");
 }
 
 // ---- 搜索过滤 ----

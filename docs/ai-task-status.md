@@ -51,6 +51,7 @@ node scripts\ci\check-command-contract.mjs --json
 - Headless repository：浏览器/headless 模式已暴露在线仓库和 `@updateUrl` 更新命令域，`capabilities_get.repository` 与 Tauri 对齐为 supported。
 - Headless WebDAV sync：浏览器/headless 模式已暴露 `sync_set_credentials` / `sync_get_status` / `sync_now` / `sync_test_connection` / conflict / lifecycle / reader-session 等 WebDAV 同步命令，`capabilities_get.syncWebdav` 与 Tauri 对齐为 supported。
 - Prefetch WS events：R-P2-012 已关闭；Tauri WS router 与 headless WS 均可执行 `bookshelf_prefetch_chapters` 并推送 `shelf:prefetch-progress` / `shelf:prefetch-done`。
+- External open wrapper：业务组件已不再直接 import `@tauri-apps/plugin-opener`；外部链接打开统一走 `useExternalOpen.ts`，浏览器/headless 分支已修复 `noopener,noreferrer` 返回 `null` 导致的误报失败。
 
 ## 当前验证命令
 
@@ -85,6 +86,7 @@ cmd /c pnpm.cmd build:windows:release
 2026-06-18 headless repository iteration verified local repository fixture import/update commands and Playwright headless `书源管理 -> 在线书源` smoke on `127.0.0.1:7791`; repository toolbar actions were enabled and console stayed at 0 errors/warnings.
 2026-06-18 headless WebDAV sync iteration verified local WebDAV sync command dispatch and Playwright headless `设置 -> 同步` smoke on `127.0.0.1:7793`; WebDAV action buttons were enabled, temporary credential save succeeded through the UI, and console stayed at 0 errors/warnings.
 2026-06-18 prefetch WS events iteration verified Tauri WS direct payload routing and Playwright headless raw WebSocket prefetch smoke on `127.0.0.1:7795`; one chapter was cached, progress arrived before done, and console stayed at 0 errors/warnings.
+2026-06-18 external open wrapper iteration verified `@tauri-apps/plugin-opener` is isolated to `useExternalOpen.ts`, `cmd /c pnpm.cmd lint`, `cmd /c pnpm.cmd build`, command contract, and Playwright headless smoke on `127.0.0.1:7796`; installed/online source tabs and service mode loaded with 0 console errors/warnings, and the built wrapper returned `empty=false`, `opened=true`.
 
 ## 当前未结工作
 

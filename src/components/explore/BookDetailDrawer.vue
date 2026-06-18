@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChevronLeft, ArrowUp } from "lucide-vue-next";
 import { useMessage } from "naive-ui";
 import { ref, computed, watch, onMounted, type CSSProperties } from "vue";
+import { openExternalUrl } from "@/composables/useExternalOpen";
 import type { CachedChapter, BookDetail, ChapterItem, ChapterGroup } from "@/types";
 import { useBookshelfStore, useScriptBridgeStore, groupChapters } from "@/stores";
 import type { ReaderBookInfo } from "../reader/types";
@@ -479,9 +479,12 @@ async function handleAddToShelf() {
                     <span class="bd-header__meta-value" :title="row.value">{{ row.value }}</span>
                   </div>
                 </div>
-                <a class="bd-header__url" :title="bookUrl" @click.prevent="openUrl(bookUrl)">{{
-                  bookUrl
-                }}</a>
+                <a
+                  class="bd-header__url"
+                  :title="bookUrl"
+                  @click.prevent="openExternalUrl(bookUrl)"
+                  >{{ bookUrl }}</a
+                >
               </div>
               <p
                 v-if="detail.intro"
@@ -520,9 +523,12 @@ async function handleAddToShelf() {
                 <p v-if="detail.intro" class="bd-header__intro app-scrollbar">
                   {{ detail.intro }}
                 </p>
-                <a class="bd-header__url" :title="bookUrl" @click.prevent="openUrl(bookUrl)">{{
-                  bookUrl
-                }}</a>
+                <a
+                  class="bd-header__url"
+                  :title="bookUrl"
+                  @click.prevent="openExternalUrl(bookUrl)"
+                  >{{ bookUrl }}</a
+                >
               </div>
             </div>
 

@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ChevronLeft,
   MoreVertical,
@@ -13,6 +12,7 @@ import {
 } from "lucide-vue-next";
 import { storeToRefs } from "pinia";
 import { ref, computed } from "vue";
+import { openExternalUrl } from "@/composables/useExternalOpen";
 import { useOverlay } from "@/composables/useOverlay";
 import { useAppConfigStore } from "@/stores";
 
@@ -88,7 +88,7 @@ async function handleOpenOriginalPage() {
   if (!currentChapterUrl.value) {
     return;
   }
-  await openUrl(currentChapterUrl.value);
+  await openExternalUrl(currentChapterUrl.value);
 }
 
 function handleRefresh() {
