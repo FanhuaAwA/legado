@@ -880,21 +880,21 @@ read cache
 
 ### 26.2 部分实现或仍有缺口
 
-| 范围                          | 当前状态                                                                                                                         | 后续需要                                                                                   |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `pnpm run dev:desktop` 验收   | 本次未启动桌面 dev server，只验证了 Rust workspace 测试和前端 lint 入口                                                          | 后续需要启动桌面端做主流程手动或自动回归                                                   |
-| `booksource_list_streaming`   | 2026-06-14 已改为 core 扫描阶段分批 emit，并支持 30 分钟列表缓存、`force` 刷新、Tauri IPC/WS/headless 同构路由；前端逐批合并渲染 | 仍需真实大书源库与 Android 真机验证首批耗时和事件吞吐                                      |
-| 取消机制                      | `booksource_cancel` 当前空实现；没有 `TaskRegistry`/`CancellationToken`                                                          | 长任务、搜索、缓存和测试任务需要接入取消                                                   |
-| `booksource_call_fn`          | 当前返回 `UNSUPPORTED`                                                                                                           | 若仍要兼容 JS 自定义函数调试，需要设计安全执行边界                                         |
-| `booksource_purchase_chapter` | 当前返回 `{ ok: true, purchased: true }`                                                                                         | 付费章节真实购买/授权逻辑未实现                                                            |
-| 错误 code 精细度              | `CommandError` 已有结构，但 `ReaderCoreError::Message` 等会粗略映射为 `IO_ERROR`                                                 | 需要补齐 `SOURCE_DISABLED`、`RULE_PARSE_FAILED`、`CACHE_MISS`、`CANCELLED` 等精细分类      |
-| HTTP/安全策略                 | `HttpClient` 有超时、cookie store、默认 UA；导入 URL 限制 HTTP/HTTPS                                                             | 尚未实现 `SecureMode`、内网地址拦截、source/user cookie 隔离、日志脱敏和书源级频控完整策略 |
-| `ReaderCoreOptions`           | 已定义 `user_agent`、`secure_mode`，但初始化时未实际使用这些选项                                                                 | 应接入 HTTP client 和安全策略                                                              |
-| 书架统一存储                  | 当前书架主体是 app data JSON 文件，章节正文是文件缓存；未统一进 SQLite                                                           | Phase 4 若要求 SQLite 统一，需要迁移器和幂等迁移测试                                       |
-| 前端 runtime 展示             | Rust DTO 返回 `runtime`，但当前 TypeScript `BookSourceMeta` 接口和列表 UI 主要展示 `sourceType`，未明确显示 `JS/Legado` runtime  | 需要补 UI 标识和类型定义                                                                   |
-| 调试面板                      | `booksource_eval` 只在 entryCode 为空时返回能力；任意调试代码被拒绝                                                              | Legado URL 分析、headers、解析结果调试 UI 尚未完成                                         |
-| 移动端验证                    | 未完成 Android 真机、iOS 编译、QuickJS/Boa runtime 验证                                                                          | 需要单独移动端 smoke test                                                                  |
-| 高级功能                      | RSS、AI 资料、WebDAV/同步适配、整本缓存进度、无效书源批量检测尚未迁移到 Route B                                                  | 按 Phase 5 继续拆分                                                                        |
+| 范围                          | 当前状态                                                                                                                                                                    | 后续需要                                                                                   |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `pnpm run dev:desktop` 验收   | 本次未启动桌面 dev server，只验证了 Rust workspace 测试和前端 lint 入口                                                                                                     | 后续需要启动桌面端做主流程手动或自动回归                                                   |
+| `booksource_list_streaming`   | 2026-06-14 已改为 core 扫描阶段分批 emit，并支持 30 分钟列表缓存、`force` 刷新、Tauri IPC/WS/headless 同构路由；前端逐批合并渲染                                            | 仍需真实大书源库与 Android 真机验证首批耗时和事件吞吐                                      |
+| 取消机制                      | Tauri/headless 已用 `TaskRegistry` + core cancellation token 接入 `booksource_cancel`，覆盖 search/chapter-list/chapter-content，Tauri 预缓存也会把取消归一化为 `CANCELLED` | `booksource_run_tests` 仍主要依赖 timeout；若后续测试任务变长，需要接入同一取消令牌        |
+| `booksource_call_fn`          | 当前返回 `UNSUPPORTED`                                                                                                                                                      | 若仍要兼容 JS 自定义函数调试，需要设计安全执行边界                                         |
+| `booksource_purchase_chapter` | 当前返回 `{ ok: true, purchased: true }`                                                                                                                                    | 付费章节真实购买/授权逻辑未实现                                                            |
+| 错误 code 精细度              | `CommandError` 已有结构，但 `ReaderCoreError::Message` 等会粗略映射为 `IO_ERROR`                                                                                            | 需要补齐 `SOURCE_DISABLED`、`RULE_PARSE_FAILED`、`CACHE_MISS`、`CANCELLED` 等精细分类      |
+| HTTP/安全策略                 | `HttpClient` 有超时、cookie store、默认 UA；导入 URL 限制 HTTP/HTTPS                                                                                                        | 尚未实现 `SecureMode`、内网地址拦截、source/user cookie 隔离、日志脱敏和书源级频控完整策略 |
+| `ReaderCoreOptions`           | 已定义 `user_agent`、`secure_mode`，但初始化时未实际使用这些选项                                                                                                            | 应接入 HTTP client 和安全策略                                                              |
+| 书架统一存储                  | 当前书架主体是 app data JSON 文件，章节正文是文件缓存；未统一进 SQLite                                                                                                      | Phase 4 若要求 SQLite 统一，需要迁移器和幂等迁移测试                                       |
+| 前端 runtime 展示             | Rust DTO 返回 `runtime`，但当前 TypeScript `BookSourceMeta` 接口和列表 UI 主要展示 `sourceType`，未明确显示 `JS/Legado` runtime                                             | 需要补 UI 标识和类型定义                                                                   |
+| 调试面板                      | `booksource_eval` 只在 entryCode 为空时返回能力；任意调试代码被拒绝                                                                                                         | Legado URL 分析、headers、解析结果调试 UI 尚未完成                                         |
+| 移动端验证                    | 未完成 Android 真机、iOS 编译、QuickJS/Boa runtime 验证                                                                                                                     | 需要单独移动端 smoke test                                                                  |
+| 高级功能                      | RSS、AI 资料、WebDAV/同步适配、整本缓存进度、无效书源批量检测尚未迁移到 Route B                                                                                             | 按 Phase 5 继续拆分                                                                        |
 
 ### 26.3 测试结果
 
@@ -924,7 +924,7 @@ pnpm exec vue-tsc -p tsconfig.app.json --noEmit
 
 结果：
 
-1. `pnpm run lint` 未通过，当前阻塞点是 `oxfmt --check .`。更新 `.gitignore` 后它不再扫描 `reader-rust/`、`target/`、`dist/`、`src-tauri/gen/schemas/`，但仍认为现有 314 个源码文件不符合 oxfmt 默认格式基线。未在本次审计中批量改写这些既有前端文件。
-2. `pnpm exec oxlint --type-aware --type-check .` 退出码为 0，有 64 个既有 lint warnings。
-3. `pnpm exec vue-tsc -p tsconfig.app.json --noEmit` 通过。
-4. Node 环境提示当前是 `v23.11.0`，而 `package.json` 要求 Node 24；pnpm 还尝试检查自身更新但因网络限制出现 registry fetch warning。这两个 warning 未阻止 `oxlint` 和 `vue-tsc` 完成。
+1. `pnpm run lint` 已通过；`.gitattributes` 固定源码/文档 LF 行尾后，Windows `core.autocrlf=true` 不再导致 `oxfmt --check .` 误报。
+2. `pnpm exec oxlint --type-aware --type-check .` 作为 lint 链路一部分通过，当前输出 0 warnings / 0 errors。
+3. `pnpm exec vue-tsc -p tsconfig.app.json --noEmit` 作为 lint 链路一部分通过。
+4. Node 环境仍可能提示与 `package.json` 要求的 Node 24 不一致；本轮实际 `pnpm lint` 与 `pnpm build` 均已完成。

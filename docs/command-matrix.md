@@ -13,17 +13,17 @@ node scripts/ci/check-command-contract.mjs
 
 ## 统计口径
 
-| 指标                              | 数值 | 说明                                                                                    |
-| --------------------------------- | ---: | --------------------------------------------------------------------------------------- |
-| frontendTotal                     |  163 | 前端 invoke 调用去重后数量                                                              |
-| registeredTotal                   |  162 | `generate_handler!` 注册命令数量                                                        |
-| bothCount                         |  162 | 前后端同名匹配数量                                                                      |
-| onlyFrontend                      |    1 | `js_eval`，安全阻断，有意不注册                                                         |
-| onlyBackend                       |    0 | 无                                                                                      |
-| registered_implemented_count      |  126 | 全部已注册命令中的实现数量                                                              |
-| registered_unsupported_stub_count |   36 | 全部已注册命令中的 UNSUPPORTED stub                                                     |
-| frontend_implemented_count        |  126 | 前端可触达且已实现                                                                      |
-| frontend_unsupported_stub_count   |   36 | 前端可触达但仅返回 UNSUPPORTED（封面缓存实现后 39→36）                                  |
+| 指标                              | 数值 | 说明                                                   |
+| --------------------------------- | ---: | ------------------------------------------------------ |
+| frontendTotal                     |  163 | 前端 invoke 调用去重后数量                             |
+| registeredTotal                   |  162 | `generate_handler!` 注册命令数量                       |
+| bothCount                         |  162 | 前后端同名匹配数量                                     |
+| onlyFrontend                      |    1 | `js_eval`，安全阻断，有意不注册                        |
+| onlyBackend                       |    0 | 无                                                     |
+| registered_implemented_count      |  126 | 全部已注册命令中的实现数量                             |
+| registered_unsupported_stub_count |   36 | 全部已注册命令中的 UNSUPPORTED stub                    |
+| frontend_implemented_count        |  126 | 前端可触达且已实现                                     |
+| frontend_unsupported_stub_count   |   36 | 前端可触达但仅返回 UNSUPPORTED（封面缓存实现后 39→36） |
 
 `classification` 数组的口径是 `frontend-facing registered commands`。需要全注册命令时使用 `registeredClassification`。
 

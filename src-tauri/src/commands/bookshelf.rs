@@ -3,12 +3,37 @@ use reader_core::{
     AddBookPayload, CachedChapter, CommandError, EpisodeProgressMap, ShelfBook,
     SourceSwitchRestoreResult, UpdateShelfBookPayload,
 };
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tauri::{Emitter, State};
 
 type CommandResult<T> = Result<T, CommandError>;
 
 fn map_err(err: reader_core::ReaderCoreError) -> CommandError {
     err.into_command_error()
+}
+
+fn cancelled_error() -> CommandError {
+    CommandError {
+        code: "CANCELLED".to_string(),
+        message: "任务已取消".to_string(),
+        detail: None,
+        retryable: false,
+    }
+}
+
+fn normalize_cancelled_result<T>(
+    result: CommandResult<T>,
+    token: Option<&Arc<AtomicBool>>,
+) -> CommandResult<T> {
+    if token
+        .map(|token| token.load(Ordering::SeqCst))
+        .unwrap_or(false)
+    {
+        result.map_err(|_| cancelled_error())
+    } else {
+        result
+    }
 }
 
 #[tauri::command]
@@ -280,6 +305,7 @@ where
         )
         .await
         .map_err(map_err);
+    let result = normalize_cancelled_result(result, Some(&cancelled));
     state.tasks.remove_if_current(&payload.task_id, &cancelled);
     result
 }

@@ -46,11 +46,14 @@ node scripts\ci\check-command-contract.mjs --json
 - 大量书源导入：新增 `booksource_import_legacy_json_texts` 批量文本导入；URL 包导入和本地多文件导入都走批量链路。
 - 封面缓存：`cover_resolve_cache` / `cover_cache_size` / `cover_cache_clear` 已真实实现，支持同 URL 并发合并、8MB 流式大小上限、Tauri/headless 共用核心逻辑与 Web `/asset` 加载。
 - 喵/猫公子书源实测：`packages=10 entries=1259 resolve_ms=1344 sequential_ms=3809 combined_ms=3831 local_sequential_ms=4146 local_combined_ms=3807 local_speedup=1.09x`。
+- Headless WS cancel：浏览器/headless 模式已接入 `TaskRegistry` 支持 `booksource_cancel` 取消 search/chapter-list/chapter-content；Tauri/headless 取消后底层 JS 中断统一归一化为 `CANCELLED`。
+- Full lint baseline：`.gitattributes` 固定源码/文档 LF 行尾，Windows Git 与 `oxfmt` 不再冲突，仓库级 `pnpm lint` 已通过。
 
 ## 当前验证命令
 
 ```powershell
-cmd /c pnpm.cmd exec oxfmt --check src/composables/useFileSrc.ts src/components/BookCoverImg.vue src/components/settings/SectionStorage.vue
+cmd /c pnpm.cmd exec oxfmt --check .
+cmd /c pnpm.cmd lint
 cmd /c pnpm.cmd exec vue-tsc -p tsconfig.app.json --noEmit
 cargo test -p reader-core import_legacy_json_text_reports_progress_batches -- --nocapture
 cargo test -p reader-core import_legacy_json_texts_skips_bad_item_and_imports_valid_sources -- --nocapture
@@ -58,17 +61,20 @@ cargo test -p reader-core --test miaogongzi_import_perf miaogongzi_subscription_
 cargo test -p legado-tauri task_ -- --nocapture
 cargo test -p legado-tauri booksource_import_legacy_json_texts_accepts_request_id_in_ws_router -- --nocapture
 node scripts\ci\check-command-contract.mjs --json
+cargo test -p legado-headless -- --nocapture
+cargo test -p legado-tauri --test ws_router booksource_search_accepts_task_id_in_ws_router -- --nocapture
 cargo test -p reader-core --test cover_cache -- --nocapture
 cargo test -p legado-tauri --test ws_router cover_cache_commands_are_routed -- --nocapture
 cargo test -p legado-tauri --test ws_router capabilities_get_returns_map -- --nocapture
 cargo check -p legado-tauri
 cargo check -p legado-headless
+cmd /c pnpm.cmd build
 cmd /c pnpm.cmd build:windows:release
 ```
 
 2026-06-18 封面缓存迭代已实测通过新增/受影响链路的格式、类型、Rust check、命令契约与路由/缓存测试；旧性能专项命令仍作为后续回归队列保留。Tauri 测试/构建仍可能输出已知 Windows linker stdout warning；当前不作为失败。
 
-当前已知验证缺口：`cmd /c pnpm.cmd lint` 仍在仓库级 `oxfmt --check .` 阶段因 13 个未触碰文件的既有格式问题失败。新增/修改文件已通过 targeted `oxfmt --check`，`vue-tsc` 已通过。
+2026-06-18 headless cancel / lint baseline iteration verified that `cmd /c pnpm.cmd lint` now passes end-to-end (`oxfmt --check .`, `oxlint --type-aware --type-check .`, and `vue-tsc`). Playwright headless smoke on `127.0.0.1:7790` showed bookshelf first screen, WS connected, and 0 console errors/warnings.
 
 ## 当前未结工作
 

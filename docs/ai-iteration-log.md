@@ -22,6 +22,12 @@ Last updated: 2026-06-18
 - Main finding: shuqi/qimao CDN files still equal local `.backup.json` and differ from refreshed local `.json`, so network-imported copies still need upstream CDN rule update for content. Fanqie CDN matches local. Fanqie short-drama network import URL currently returns 404.
 - Live checks: local shuqi/qimao full chains pass after retrying a transient shuqi TLS EOF; shuqi/qimao CDN imports pass search/toc but content remains `EMPTY`.
 
+## 2026-06-18 Headless Cancel And Lint Baseline
+
+- Gate report: `reports/gates/2026-06-18-HEADLESS-CANCEL-LINT/summary.md`
+- Main fixes: add headless `TaskRegistry` and route `booksource_cancel`, wire headless search/chapter-list/chapter-content through core cancellation tokens, normalize cancellation errors in headless/Tauri so user cancel returns `CANCELLED`, and add `.gitattributes` LF rules to resolve the Windows `oxfmt` baseline conflict.
+- Validation: `cargo test -p legado-headless -- --nocapture`, Tauri task registry/router tests, `cargo check -p legado-headless`, `cargo check -p legado-tauri`, command contract, full `pnpm lint`, and `pnpm build` passed. Playwright headless smoke showed first-screen bookshelf, WS connected, and 0 console errors/warnings.
+
 ## 2026-06-15 Master Direct Push
 
 - Branch：`master`
@@ -54,6 +60,7 @@ Last updated: 2026-06-18
 - `reports/gates/2026-06-18-PERF-SOURCE-STABILITY/summary.md`
 - `reports/gates/2026-06-18-COVER-CACHE-STABILITY/summary.md`
 - `reports/gates/2026-06-18-SOURCE-FRESHNESS-RECHECK/summary.md`
+- `reports/gates/2026-06-18-HEADLESS-CANCEL-LINT/summary.md`
 
 ## 当前契约快照
 

@@ -33,6 +33,20 @@ fn cancelled_error() -> CommandError {
     }
 }
 
+fn normalize_cancelled_result<T>(
+    result: CommandResult<T>,
+    token: Option<&Arc<AtomicBool>>,
+) -> CommandResult<T> {
+    if token
+        .map(|token| token.load(Ordering::SeqCst))
+        .unwrap_or(false)
+    {
+        result.map_err(|_| cancelled_error())
+    } else {
+        result
+    }
+}
+
 pub fn emit_legacy_import_progress<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     request_id: &str,
@@ -401,6 +415,7 @@ pub async fn booksource_search(
             .await
             .map_err(map_err)
     };
+    let result = normalize_cancelled_result(result, token.as_ref());
     if let (Some(tid), Some(t)) = (task_id.as_deref(), token.as_ref()) {
         state.tasks.remove_if_current(tid, t);
     }
@@ -455,6 +470,7 @@ pub async fn booksource_chapter_list(
             .await
             .map_err(map_err)
     };
+    let result = normalize_cancelled_result(result, token.as_ref());
     if let (Some(tid), Some(t)) = (task_id.as_deref(), token.as_ref()) {
         state.tasks.remove_if_current(tid, t);
     }
@@ -496,6 +512,7 @@ pub async fn booksource_chapter_content(
             .await
             .map_err(map_err)
     };
+    let result = normalize_cancelled_result(result, token.as_ref());
     if let (Some(tid), Some(t)) = (task_id.as_deref(), token.as_ref()) {
         state.tasks.remove_if_current(tid, t);
     }

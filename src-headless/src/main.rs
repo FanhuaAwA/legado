@@ -26,14 +26,54 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
+use tokio::sync::Mutex as TokioMutex;
 
-type WsOutgoing = Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>>;
+type WsOutgoing = Arc<TokioMutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>>;
+
+#[derive(Clone, Default)]
+struct TaskRegistry {
+    tokens: Arc<StdMutex<HashMap<String, Arc<AtomicBool>>>>,
+}
+
+impl TaskRegistry {
+    fn register(&self, task_id: &str) -> Arc<AtomicBool> {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let mut map = self.tokens.lock().unwrap_or_else(|err| err.into_inner());
+        if let Some(previous) = map.insert(task_id.to_string(), cancelled.clone()) {
+            previous.store(true, Ordering::SeqCst);
+        }
+        cancelled
+    }
+
+    fn cancel(&self, task_id: &str) -> bool {
+        let mut map = self.tokens.lock().unwrap_or_else(|err| err.into_inner());
+        if let Some(cancelled) = map.remove(task_id) {
+            cancelled.store(true, Ordering::SeqCst);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn remove_if_current(&self, task_id: &str, token: &Arc<AtomicBool>) -> bool {
+        let mut map = self.tokens.lock().unwrap_or_else(|err| err.into_inner());
+        let is_current = map
+            .get(task_id)
+            .map(|current| Arc::ptr_eq(current, token))
+            .unwrap_or(false);
+        if is_current {
+            map.remove(task_id);
+        }
+        is_current
+    }
+}
 
 #[derive(Clone)]
 struct AppState {
     core: Arc<ReaderCore>,
+    tasks: TaskRegistry,
     token: Option<String>,
 }
 
@@ -75,6 +115,7 @@ async fn main() -> anyhow::Result<()> {
     let core = ReaderCore::new(ReaderCoreOptions::new(&data_dir)).await?;
     let state = AppState {
         core: Arc::new(core),
+        tasks: TaskRegistry::default(),
         token,
     };
 
@@ -158,7 +199,7 @@ async fn asset_handler(
 
 async fn handle_socket(socket: WebSocket, state: AppState) {
     let (mut sink, mut source) = socket.split();
-    let out_tx: WsOutgoing = Arc::new(Mutex::new(None));
+    let out_tx: WsOutgoing = Arc::new(TokioMutex::new(None));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     *out_tx.lock().await = Some(tx);
 
@@ -208,6 +249,30 @@ fn response_err(id: &str, error: String) -> String {
         "error": error,
     })
     .to_string()
+}
+
+fn cancelled_error() -> String {
+    "CANCELLED: 任务已取消".to_string()
+}
+
+fn normalize_cancelled_result(
+    result: Result<Value, String>,
+    token: Option<&Arc<AtomicBool>>,
+) -> Result<Value, String> {
+    if token
+        .map(|token| token.load(Ordering::SeqCst))
+        .unwrap_or(false)
+    {
+        result.map_err(|_| cancelled_error())
+    } else {
+        result
+    }
+}
+
+async fn wait_for_cancel(cancelled: Arc<AtomicBool>) {
+    while !cancelled.load(Ordering::SeqCst) {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
 }
 
 async fn dispatch(state: &AppState, raw: &str, out: &WsOutgoing) -> Option<String> {
@@ -303,12 +368,37 @@ async fn dispatch(state: &AppState, raw: &str, out: &WsOutgoing) -> Option<Strin
             let keyword = arg_str(&args, "keyword").unwrap_or("");
             let file_name = arg_str(&args, "fileName").unwrap_or("");
             let page = arg_i32(&args, "page").unwrap_or(1);
-            let _task_id = arg_str(&args, "taskId");
+            let task_id = arg_str(&args, "taskId")
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
             let source_dir = arg_str(&args, "sourceDir");
-            core.search(file_name, keyword, page, source_dir)
-                .await
-                .map(|v| serde_json::to_value(v).unwrap_or_default())
-                .map_err(|e| e.to_string())
+            let token = task_id.as_deref().map(|tid| state.tasks.register(tid));
+            if let Some(ref token) = token {
+                if token.load(Ordering::SeqCst) {
+                    return Some(response_err(&id, cancelled_error()));
+                }
+            }
+            let result = if let Some(token) = token.clone() {
+                let search_token = Some(token.clone());
+                tokio::select! {
+                    result = core.search_with_cancel(file_name, keyword, page, source_dir, search_token) => {
+                        result
+                            .map(|v| serde_json::to_value(v).unwrap_or_default())
+                            .map_err(|e| e.to_string())
+                    }
+                    _ = wait_for_cancel(token) => Err(cancelled_error()),
+                }
+            } else {
+                core.search_with_cancel(file_name, keyword, page, source_dir, None)
+                    .await
+                    .map(|v| serde_json::to_value(v).unwrap_or_default())
+                    .map_err(|e| e.to_string())
+            };
+            let result = normalize_cancelled_result(result, token.as_ref());
+            if let (Some(task_id), Some(token)) = (task_id.as_deref(), token.as_ref()) {
+                state.tasks.remove_if_current(task_id, token);
+            }
+            result
         }
         "booksource_book_info" => {
             let file_name = arg_str(&args, "fileName").unwrap_or("");
@@ -322,20 +412,72 @@ async fn dispatch(state: &AppState, raw: &str, out: &WsOutgoing) -> Option<Strin
         "booksource_chapter_list" => {
             let file_name = arg_str(&args, "fileName").unwrap_or("");
             let book_url = arg_str(&args, "bookUrl").unwrap_or("");
+            let task_id = arg_str(&args, "taskId")
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
             let source_dir = arg_str(&args, "sourceDir");
-            core.chapter_list(file_name, book_url, source_dir)
-                .await
-                .map(|v| serde_json::to_value(v).unwrap_or_default())
-                .map_err(|e| e.to_string())
+            let token = task_id.as_deref().map(|tid| state.tasks.register(tid));
+            if let Some(ref token) = token {
+                if token.load(Ordering::SeqCst) {
+                    return Some(response_err(&id, cancelled_error()));
+                }
+            }
+            let result = if let Some(token) = token.clone() {
+                let chapter_token = Some(token.clone());
+                tokio::select! {
+                    result = core.chapter_list_with_cancel(file_name, book_url, source_dir, chapter_token) => {
+                        result
+                            .map(|v| serde_json::to_value(v).unwrap_or_default())
+                            .map_err(|e| e.to_string())
+                    }
+                    _ = wait_for_cancel(token) => Err(cancelled_error()),
+                }
+            } else {
+                core.chapter_list_with_cancel(file_name, book_url, source_dir, None)
+                    .await
+                    .map(|v| serde_json::to_value(v).unwrap_or_default())
+                    .map_err(|e| e.to_string())
+            };
+            let result = normalize_cancelled_result(result, token.as_ref());
+            if let (Some(task_id), Some(token)) = (task_id.as_deref(), token.as_ref()) {
+                state.tasks.remove_if_current(task_id, token);
+            }
+            result
         }
         "booksource_chapter_content" => {
             let file_name = arg_str(&args, "fileName").unwrap_or("");
             let chapter_url = arg_str(&args, "chapterUrl").unwrap_or("");
+            let task_id = arg_str(&args, "taskId")
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
             let source_dir = arg_str(&args, "sourceDir");
-            core.chapter_content(file_name, chapter_url, source_dir)
-                .await
-                .map(|v| serde_json::to_value(v).unwrap_or_default())
-                .map_err(|e| e.to_string())
+            let token = task_id.as_deref().map(|tid| state.tasks.register(tid));
+            if let Some(ref token) = token {
+                if token.load(Ordering::SeqCst) {
+                    return Some(response_err(&id, cancelled_error()));
+                }
+            }
+            let result = if let Some(token) = token.clone() {
+                let content_token = Some(token.clone());
+                tokio::select! {
+                    result = core.chapter_content_with_cancel(file_name, chapter_url, source_dir, content_token) => {
+                        result
+                            .map(|v| serde_json::to_value(v).unwrap_or_default())
+                            .map_err(|e| e.to_string())
+                    }
+                    _ = wait_for_cancel(token) => Err(cancelled_error()),
+                }
+            } else {
+                core.chapter_content_with_cancel(file_name, chapter_url, source_dir, None)
+                    .await
+                    .map(|v| serde_json::to_value(v).unwrap_or_default())
+                    .map_err(|e| e.to_string())
+            };
+            let result = normalize_cancelled_result(result, token.as_ref());
+            if let (Some(task_id), Some(token)) = (task_id.as_deref(), token.as_ref()) {
+                state.tasks.remove_if_current(task_id, token);
+            }
+            result
         }
         "booksource_import_legacy_json_text" => {
             let content = arg_str(&args, "content").unwrap_or("");
@@ -378,6 +520,14 @@ async fn dispatch(state: &AppState, raw: &str, out: &WsOutgoing) -> Option<Strin
                 .await
                 .map(|v| serde_json::to_value(v).unwrap_or_default())
                 .map_err(|e| e.to_string())
+        }
+        "booksource_cancel" => {
+            let task_id = arg_str(&args, "taskId").unwrap_or("");
+            if state.tasks.cancel(task_id) {
+                Ok(Value::Null)
+            } else {
+                Err(format!("TASK_NOT_FOUND: 任务 {task_id} 不存在或已完成"))
+            }
         }
 
         // ── shelf ──
@@ -900,6 +1050,7 @@ mod tests {
         (
             AppState {
                 core: Arc::new(core),
+                tasks: TaskRegistry::default(),
                 token: None,
             },
             dir,
@@ -914,13 +1065,129 @@ mod tests {
             "args": args,
         })
         .to_string();
-        let out: WsOutgoing = Arc::new(Mutex::new(None));
+        let out: WsOutgoing = Arc::new(TokioMutex::new(None));
         let response = dispatch(state, &raw, &out).await.expect("response");
         let value: Value = serde_json::from_str(&response).expect("response json");
         if let Some(error) = value.get("error") {
             panic!("{cmd} failed: {error}");
         }
         value.get("data").cloned().unwrap_or(Value::Null)
+    }
+
+    async fn invoke_response(state: &AppState, cmd: &str, args: Value) -> Value {
+        let raw = json!({
+            "type": "invoke",
+            "id": format!("test-{cmd}"),
+            "cmd": cmd,
+            "args": args,
+        })
+        .to_string();
+        let out: WsOutgoing = Arc::new(TokioMutex::new(None));
+        let response = dispatch(state, &raw, &out).await.expect("response");
+        serde_json::from_str(&response).expect("response json")
+    }
+
+    struct JsEngineTimeoutRestore;
+
+    impl Drop for JsEngineTimeoutRestore {
+        fn drop(&mut self) {
+            reader_core::parser::js::set_js_engine_timeout_secs(0);
+        }
+    }
+
+    fn set_js_engine_timeout_for_test(secs: u64) -> JsEngineTimeoutRestore {
+        reader_core::parser::js::set_js_engine_timeout_secs(secs);
+        JsEngineTimeoutRestore
+    }
+
+    #[tokio::test]
+    async fn booksource_cancel_interrupts_headless_search_task() {
+        let _timeout = set_js_engine_timeout_for_test(3);
+        let (state, dir) = test_state().await;
+        let file_name = "runaway-headless-search.js";
+        state
+            .core
+            .save_js_source(
+                file_name,
+                r#"// @name        Runaway Headless Search
+// @url         https://example.invalid
+// @enabled     true
+
+async function search() {
+  while (true) {}
+}
+"#,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let raw = json!({
+            "type": "invoke",
+            "id": "search-cancel-target",
+            "cmd": "booksource_search",
+            "args": {
+                "fileName": file_name,
+                "keyword": "anything",
+                "page": 1,
+                "taskId": "headless-search-cancel",
+                "sourceDir": null
+            },
+        })
+        .to_string();
+        let search_state = state.clone();
+        let search_handle = tokio::spawn(async move {
+            let out: WsOutgoing = Arc::new(TokioMutex::new(None));
+            let response = dispatch(&search_state, &raw, &out).await.expect("response");
+            serde_json::from_str::<Value>(&response).expect("response json")
+        });
+
+        let mut cancel_response = None;
+        for _ in 0..20 {
+            let response = invoke_response(
+                &state,
+                "booksource_cancel",
+                json!({"taskId": "headless-search-cancel"}),
+            )
+            .await;
+            if response.get("error").is_none() {
+                cancel_response = Some(response);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        assert!(
+            cancel_response.is_some(),
+            "booksource_cancel should reach registered headless task"
+        );
+
+        let search_response =
+            tokio::time::timeout(std::time::Duration::from_secs(2), search_handle)
+                .await
+                .expect("cancelled search should complete before JS engine timeout")
+                .expect("search task should not panic");
+        let error = search_response
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        assert!(
+            error.contains("CANCELLED"),
+            "search should return CANCELLED after cancel, got {search_response}"
+        );
+
+        let missing = invoke_response(
+            &state,
+            "booksource_cancel",
+            json!({"taskId": "headless-search-cancel"}),
+        )
+        .await;
+        let error = missing.get("error").and_then(Value::as_str).unwrap_or("");
+        assert!(
+            error.contains("TASK_NOT_FOUND"),
+            "completed task id should be removed, got {missing}"
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test]
