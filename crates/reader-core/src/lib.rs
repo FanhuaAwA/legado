@@ -1,6 +1,7 @@
 #![recursion_limit = "256"]
 
 pub mod app_state;
+pub mod backup;
 pub mod crawler;
 pub mod dto;
 pub mod error;
@@ -13,6 +14,7 @@ pub mod storage;
 pub mod util;
 
 pub use app_state::{ReaderCoreOptions, SecureMode};
+pub use backup::*;
 pub use dto::*;
 pub use error::{CommandError, ReaderCoreError};
 pub use facade::ReaderCore;

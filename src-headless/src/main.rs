@@ -20,8 +20,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use futures::{SinkExt, StreamExt};
 use reader_core::{
-    AddBookPayload, CachedChapter, ReaderCore, ReaderCoreOptions, ReaderSessionPayload,
-    UpdateShelfBookPayload,
+    AddBookPayload, BackupCreateDataRequest, BackupPeekDataRequest, BackupRestoreDataRequest,
+    CachedChapter, ReaderCore, ReaderCoreOptions, ReaderSessionPayload, UpdateShelfBookPayload,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -1000,6 +1000,37 @@ async fn dispatch(state: &AppState, raw: &str, out: &WsOutgoing) -> Option<Strin
             .map_err(|e| e.to_string())
         }
 
+        // ── backup ──
+        "backup_inspect" => core
+            .backup_inspect()
+            .await
+            .map(|value| serde_json::to_value(value).unwrap_or_default())
+            .map_err(|e| e.to_string()),
+        "backup_create_data" => {
+            let payload = parse_or_response!(BackupCreateDataRequest);
+            core.backup_create_data(&payload.default_name, &payload.categories)
+                .await
+                .map(|value| serde_json::to_value(value).unwrap_or_default())
+                .map_err(|e| e.to_string())
+        }
+        "backup_peek_data" => {
+            let payload = parse_or_response!(BackupPeekDataRequest);
+            ReaderCore::backup_peek_data(&payload.base64)
+                .map(|value| serde_json::to_value(value).unwrap_or_default())
+                .map_err(|e| e.to_string())
+        }
+        "backup_restore_data" => {
+            let payload = parse_or_response!(BackupRestoreDataRequest);
+            core.backup_restore_data(&payload.base64, &payload.categories)
+                .await
+                .map(|value| serde_json::to_value(value).unwrap_or_default())
+                .map_err(|e| e.to_string())
+        }
+        "backup_create" | "backup_peek" | "backup_restore" => Err(
+            "UNSUPPORTED: path-based backup commands are not available in headless mode; use backup_*_data commands"
+                .to_string(),
+        ),
+
         // ── capabilities (transport-agnostic) ──
         "capabilities_get" => Ok(json!({
             "syncWebdav": supported_capability("WebDAV sync is implemented for credentials, connection test, status and manual sync.", [
@@ -1515,6 +1546,121 @@ async function search() {{
             .iter()
             .any(|cmd| cmd == "sync_report_reader_session"));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn backup_data_commands_roundtrip_in_headless_dispatch() {
+        let (state, dir) = test_state().await;
+        state
+            .core
+            .app_config_set("request_min_delay_ms", &json!(777))
+            .await
+            .unwrap();
+        state
+            .core
+            .save_js_source(
+                "backup-fixture.js",
+                r#"// @name        Backup Fixture
+// @url         fixture://backup
+// @enabled     true
+"#,
+                None,
+            )
+            .await
+            .unwrap();
+        state
+            .core
+            .shelf_add(
+                AddBookPayload {
+                    name: "Backup Roundtrip Book".to_string(),
+                    author: Some("Codex".to_string()),
+                    cover_url: None,
+                    intro: None,
+                    kind: None,
+                    group_id: None,
+                    book_url: "fixture://backup/book".to_string(),
+                    source_dir: None,
+                    last_chapter: Some("Chapter 1".to_string()),
+                    source_type: Some("novel".to_string()),
+                },
+                "backup-fixture.js",
+                "Backup Fixture",
+            )
+            .await
+            .unwrap();
+
+        let inspect = invoke(&state, "backup_inspect", json!({})).await;
+        assert!(inspect["categories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|cat| cat["id"] == "app_settings" && cat["itemCount"].as_i64().unwrap() >= 1));
+        assert!(inspect["categories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|cat| cat["id"] == "bookshelf" && cat["itemCount"].as_i64().unwrap() >= 1));
+
+        let created = invoke(
+            &state,
+            "backup_create_data",
+            json!({
+                "defaultName": "headless-backup.json",
+                "categories": ["app_settings", "bookshelf"]
+            }),
+        )
+        .await;
+        let base64 = created["base64"].as_str().unwrap().to_string();
+        assert!(!base64.is_empty());
+
+        let peek = invoke(&state, "backup_peek_data", json!({ "base64": base64 })).await;
+        assert_eq!(peek["manifest"]["format"], "legado-backup-v1");
+        assert_eq!(peek["manifest"]["categories"].as_array().unwrap().len(), 2);
+
+        let (target, target_dir) = test_state().await;
+        let restored = invoke(
+            &target,
+            "backup_restore_data",
+            json!({
+                "base64": created["base64"],
+                "categories": ["app_settings", "bookshelf"]
+            }),
+        )
+        .await;
+        assert!(restored["restored"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|cat| cat["id"] == "app_settings"));
+        let restored_delay = target
+            .core
+            .config_read_json("app.config", "request_min_delay_ms")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(restored_delay, json!(777));
+        let shelf = target.core.shelf_list().await.unwrap();
+        assert!(shelf
+            .iter()
+            .any(|book| book.name == "Backup Roundtrip Book"));
+
+        let path_response = invoke_response(
+            &state,
+            "backup_create",
+            json!({"outputPath": "server-path.json", "categories": ["app_settings"]}),
+        )
+        .await;
+        let error = path_response
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        assert!(
+            error.contains("UNSUPPORTED"),
+            "path backup should be explicitly unsupported, got {path_response}"
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(target_dir);
     }
 
     #[tokio::test]

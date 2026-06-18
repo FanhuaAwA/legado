@@ -52,6 +52,12 @@ Last updated: 2026-06-18
 - Main fixes: add `useExternalOpen.ts` as the sole `@tauri-apps/plugin-opener` wrapper, replace direct opener imports across book source, explore, reader, video, and service-mode UI, and fix browser fallback false negatives caused by `window.open(..., "noopener,noreferrer")` returning `null`.
 - Validation: `rg` confirmed `@tauri-apps/plugin-opener` appears only in `useExternalOpen.ts`; `pnpm lint`, command contract, and `pnpm build` passed. Playwright headless smoke loaded installed/online source tabs and service mode, imported the built wrapper chunk, and confirmed `empty=false`, `opened=true`, with 0 console errors/warnings.
 
+## 2026-06-18 Backup Headless Data Iteration
+
+- Gate report: `reports/gates/2026-06-18-BACKUP-HEADLESS-DATA/summary.md`
+- Main fixes: move backup inspect/create/peek/restore payload logic into `reader-core`, stop reading the stale `config/` directory for app settings, route Tauri backup commands through the shared core, and expose safe data-transfer backup commands in `legado-headless`.
+- Validation: `pnpm lint`, `cargo test -p legado-headless`, `cargo check -p legado-tauri`, command contract, `pnpm build`, and `cargo build -p legado-headless` passed. Playwright headless smoke on `127.0.0.1:7797` exported a backup, uploaded it through the browser file chooser, rendered preview categories, confirmed restore, and ended with 0 console errors/warnings.
+
 ## 2026-06-15 Master Direct Push
 
 - Branch：`master`
@@ -89,6 +95,7 @@ Last updated: 2026-06-18
 - `reports/gates/2026-06-18-HEADLESS-WEBDAV-SYNC/summary.md`
 - `reports/gates/2026-06-18-PREFETCH-WS-EVENTS/summary.md`
 - `reports/gates/2026-06-18-EXTERNAL-OPEN-WRAPPER/summary.md`
+- `reports/gates/2026-06-18-BACKUP-HEADLESS-DATA/summary.md`
 
 ## 当前契约快照
 

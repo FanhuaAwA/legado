@@ -2,7 +2,7 @@
 
 本文件由 `scripts/ci/check-command-contract.mjs` 的实测结果半自动重建。旧的 2026-06-09 手工矩阵已删除，后续不得再手工沿用过期统计。
 
-最后实测：2026-06-18 COVER-CACHE-STABILITY
+最后实测：2026-06-18 BACKUP-HEADLESS-DATA
 
 实测命令：
 
@@ -60,6 +60,8 @@ R-P1-004 修正前端扫描器后，当前无 backend-only 命令。旧表中的
 > 2026-06-15（PERF-MIAOGONGZI-LOCAL-IMPORT）：新增 `booksource_import_legacy_json_texts` 批量书源导入命令并注册到 Tauri/WS；implemented 122→123，stub 仍为 39。
 >
 > 2026-06-18（COVER-CACHE-STABILITY）：`cover_resolve_cache` / `cover_cache_size` / `cover_cache_clear` 已真实实现并注册到 Tauri router 与 headless WS；`coverCache` capability 置 `supported: true`。封面缓存加入同 URL 并发合并、8MB 流式大小上限、headless `/asset` token 校验与 Web 端 `?ws=` 资产端点推导。implemented 123→126，stub 39→36。
+>
+> 2026-06-18（BACKUP-HEADLESS-DATA）：`backup_*` 命令计数不变；payload 实现已下沉到 `reader-core`，Tauri/headless 复用同一逻辑；headless 支持 `backup_inspect` / `backup_create_data` / `backup_peek_data` / `backup_restore_data`，path 型 backup 命令明确返回 `UNSUPPORTED` 以避免服务端路径读写。
 
 | 模块               | Command                          | 当前处置            |
 | ------------------ | -------------------------------- | ------------------- |

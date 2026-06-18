@@ -18,7 +18,13 @@ import {
 } from "@/composables/useBackup";
 import { hasNativeTransport, isHarmonyNative, isTauri, platform } from "@/composables/useEnv";
 import { useAppConfigStore, useBookshelfStore } from "@/stores";
-import { base64ToBytes, bytesToBase64, readExportFile, writeExportFile } from "@/utils/exportFile";
+import {
+  base64ToBytes,
+  bytesToBase64,
+  readExportFile,
+  saveExportFile,
+  writeExportFile,
+} from "@/utils/exportFile";
 import SettingSection from "./SettingSection.vue";
 
 const message = useMessage();
@@ -26,7 +32,7 @@ const dialog = useDialog();
 const appCfg = useAppConfigStore();
 const bookshelf = useBookshelfStore();
 
-const transportReady = hasNativeTransport;
+const transportReady = ref(hasNativeTransport);
 
 // ── 导出端 ──────────────────────────────────────────────
 const inspectLoading = ref(false);
@@ -46,6 +52,9 @@ const isTauriMobile = computed(() => {
   const value = platform.value.toLowerCase();
   return isTauri && (value === "android" || value === "ios");
 });
+const usesBackupDataTransfer = computed(
+  () => isTauriMobile.value || (!isTauri && !isHarmonyNative),
+);
 
 function formatBytes(bytes: number): string {
   if (!bytes || bytes < 0) {
@@ -124,7 +133,7 @@ function selectAllImport(all: boolean) {
 }
 
 async function loadInspect() {
-  if (!transportReady) {
+  if (!transportReady.value) {
     return;
   }
   inspectLoading.value = true;
@@ -189,6 +198,66 @@ async function chooseOpenPath(): Promise<string | null> {
   return null;
 }
 
+interface BrowserBackupFile {
+  name: string;
+  base64: string;
+}
+
+function chooseBrowserBackupFile(): Promise<BrowserBackupFile | null> {
+  if (typeof document === "undefined") {
+    return Promise.resolve(null);
+  }
+
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json,application/json";
+    input.style.display = "none";
+
+    const cleanup = () => {
+      input.remove();
+    };
+
+    input.addEventListener(
+      "change",
+      () => {
+        const file = input.files?.[0];
+        if (!file) {
+          cleanup();
+          resolve(null);
+          return;
+        }
+        file
+          .arrayBuffer()
+          .then((buffer) => {
+            cleanup();
+            resolve({
+              name: file.name,
+              base64: bytesToBase64(new Uint8Array(buffer)),
+            });
+          })
+          .catch(() => {
+            cleanup();
+            resolve(null);
+          });
+      },
+      { once: true },
+    );
+
+    input.addEventListener(
+      "cancel",
+      () => {
+        cleanup();
+        resolve(null);
+      },
+      { once: true },
+    );
+
+    document.body.appendChild(input);
+    input.click();
+  });
+}
+
 async function handleExport() {
   if (exporting.value) {
     return;
@@ -197,20 +266,34 @@ async function handleExport() {
     message.warning("请至少选择一个类别");
     return;
   }
-  const name = defaultBackupName();
-  const target = await chooseSavePath(name);
-  if (!target) {
-    return;
-  }
   exporting.value = true;
   try {
+    const name = defaultBackupName();
     const selected = [...exportSelected.value];
     let res: { byteSize: number; categories: BackupCategoryStat[] };
-    if (isTauriMobile.value) {
+    if (usesBackupDataTransfer.value) {
       const data = await createBackupData(name, selected);
-      await writeExportFile(target, { bytes: base64ToBytes(data.base64) });
+      if (isTauriMobile.value) {
+        const target = await chooseSavePath(data.fileName || name);
+        if (!target) {
+          return;
+        }
+        await writeExportFile(target, { bytes: base64ToBytes(data.base64) });
+      } else {
+        await saveExportFile({
+          defaultName: data.fileName || name,
+          mime: data.mime || "application/json;charset=utf-8",
+          bytes: base64ToBytes(data.base64),
+          filterName: "JSON 备份",
+          extensions: ["json"],
+        });
+      }
       res = data;
     } else {
+      const target = await chooseSavePath(name);
+      if (!target) {
+        return;
+      }
       res = await createBackup(target, selected);
     }
     const items = res.categories.reduce((s, c) => s + c.itemCount, 0);
@@ -228,23 +311,33 @@ async function handlePickAndPeek() {
   if (peekLoading.value) {
     return;
   }
-  const path = await chooseOpenPath();
-  if (!path) {
-    return;
-  }
   peekLoading.value = true;
   try {
     let report: BackupPeekReport;
-    if (isTauriMobile.value) {
-      const bytes = await readExportFile(path);
-      peekZipBase64.value = bytesToBase64(bytes);
-      report = await peekBackupData(peekZipBase64.value);
+    if (!isTauri && !isHarmonyNative) {
+      const picked = await chooseBrowserBackupFile();
+      if (!picked) {
+        return;
+      }
+      peekZipBase64.value = picked.base64;
+      report = await peekBackupData(picked.base64);
+      peekJsonPath.value = picked.name;
     } else {
-      peekZipBase64.value = "";
-      report = await peekBackup(path);
+      const path = await chooseOpenPath();
+      if (!path) {
+        return;
+      }
+      if (isTauriMobile.value) {
+        const bytes = await readExportFile(path);
+        peekZipBase64.value = bytesToBase64(bytes);
+        report = await peekBackupData(peekZipBase64.value);
+      } else {
+        peekZipBase64.value = "";
+        report = await peekBackup(path);
+      }
+      peekJsonPath.value = path;
     }
     peekReport.value = report;
-    peekJsonPath.value = path;
     importSelected.value = new Set(report.manifest.categories.map((c) => c.id));
   } catch (e) {
     peekReport.value = null;
@@ -291,7 +384,7 @@ async function handleImport() {
   importing.value = true;
   try {
     const selected = [...importSelected.value];
-    const res = isTauriMobile.value
+    const res = peekZipBase64.value
       ? await restoreBackupData(peekZipBase64.value, selected)
       : await restoreBackup(peekJsonPath.value, selected);
     const restoredCount = res.restored.reduce((s, c) => s + c.itemCount, 0);
@@ -324,7 +417,17 @@ function describeCategory(cat: BackupCategoryStat): string {
   return parts.join(" · ");
 }
 
-onMounted(() => {
+async function refreshTransportReady() {
+  try {
+    const { isTransportAvailable } = await import("@/composables/useTransport");
+    transportReady.value = await isTransportAvailable();
+  } catch {
+    transportReady.value = hasNativeTransport;
+  }
+}
+
+onMounted(async () => {
+  await refreshTransportReady();
   void loadInspect();
 });
 </script>
