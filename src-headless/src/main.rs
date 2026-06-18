@@ -20,7 +20,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use futures::{SinkExt, StreamExt};
 use reader_core::{
-    AddBookPayload, CachedChapter, ReaderCore, ReaderCoreOptions, UpdateShelfBookPayload,
+    AddBookPayload, CachedChapter, ReaderCore, ReaderCoreOptions, ReaderSessionPayload,
+    UpdateShelfBookPayload,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -811,6 +812,111 @@ async fn dispatch(state: &AppState, raw: &str, out: &WsOutgoing) -> Option<Strin
                 .map(|()| Value::Null)
                 .map_err(|e| e.to_string())
         }
+        "sync_set_credentials" => {
+            let payload = parse_or_response!(SyncPasswordArgs);
+            core.sync_set_credentials(&payload.password)
+                .await
+                .map(|()| Value::Null)
+                .map_err(|e| e.to_string())
+        }
+        "sync_get_credentials" => core
+            .sync_get_credentials()
+            .await
+            .map(|v| serde_json::to_value(v).unwrap_or_default())
+            .map_err(|e| e.to_string()),
+        "sync_clear_credentials" => core
+            .sync_clear_credentials()
+            .await
+            .map(|()| Value::Null)
+            .map_err(|e| e.to_string()),
+        "sync_get_status" => core
+            .sync_get_status()
+            .await
+            .map(|v| serde_json::to_value(v).unwrap_or_default())
+            .map_err(|e| e.to_string()),
+        "sync_now" => {
+            let payload = parse_or_response!(SyncNowArgs);
+            let result = core
+                .sync_now(
+                    &payload.mode,
+                    payload.domains,
+                    payload.conflict_strategy.as_deref(),
+                )
+                .await
+                .map_err(|e| e.to_string());
+            if let Ok(summary) = &result {
+                for state in &summary.client_states {
+                    send_ws_event(
+                        out,
+                        "sync:client-state",
+                        json!({ "domain": state.domain, "value": state.value }),
+                    )
+                    .await;
+                }
+            }
+            result.map(|v| serde_json::to_value(v).unwrap_or_default())
+        }
+        "sync_test_connection" => {
+            let payload = parse_or_response!(SyncOptionalPasswordArgs);
+            core.sync_test_connection(payload.password.as_deref())
+                .await
+                .map(|v| serde_json::to_value(v).unwrap_or_default())
+                .map_err(|e| e.to_string())
+        }
+        "sync_list_conflicts" => core
+            .sync_list_conflicts()
+            .await
+            .map(|v| serde_json::to_value(v).unwrap_or_default())
+            .map_err(|e| e.to_string()),
+        "sync_resolve_conflict" => {
+            let payload = parse_or_response!(SyncResolveConflictArgs);
+            match core
+                .sync_resolve_conflict(&payload.conflict_id, &payload.action)
+                .await
+                .map_err(|e| e.to_string())
+            {
+                Ok(states) => {
+                    for state in states {
+                        send_ws_event(
+                            out,
+                            "sync:client-state",
+                            json!({ "domain": state.domain, "value": state.value }),
+                        )
+                        .await;
+                    }
+                    Ok(Value::Null)
+                }
+                Err(error) => Err(error),
+            }
+        }
+        "sync_notify_lifecycle" => {
+            let payload = parse_or_response!(SyncLifecycleArgs);
+            core.sync_notify_lifecycle(&payload.event)
+                .await
+                .map(|()| Value::Null)
+                .map_err(|e| e.to_string())
+        }
+        "sync_client_state_set" => {
+            let payload = parse_or_response!(SyncClientStateSetArgs);
+            core.sync_client_state_set(&payload.domain, payload.value)
+                .await
+                .map(|()| Value::Null)
+                .map_err(|e| e.to_string())
+        }
+        "sync_report_reader_session" => {
+            let payload = parse_or_response!(SyncReportReaderSessionArgs);
+            core.sync_report_reader_session(payload.session)
+                .await
+                .map(|()| Value::Null)
+                .map_err(|e| e.to_string())
+        }
+        "sync_v2_sync_reading_progress" => {
+            let payload = parse_or_response!(SyncReadingProgressArgs);
+            core.sync_v2_sync_reading_progress(&payload.book_id)
+                .await
+                .map(|v| serde_json::to_value(v).unwrap_or_default())
+                .map_err(|e| e.to_string())
+        }
         "storage_debug_dump" => core.debug_dump().await.map_err(|e| e.to_string()),
         "cover_cache_size" => core
             .cover_cache_size()
@@ -841,7 +947,7 @@ async fn dispatch(state: &AppState, raw: &str, out: &WsOutgoing) -> Option<Strin
 
         // ── capabilities (transport-agnostic) ──
         "capabilities_get" => Ok(json!({
-            "syncWebdav": unsupported_capability("WebDAV sync is not exposed by legado-headless yet.", [
+            "syncWebdav": supported_capability("WebDAV sync is implemented for credentials, connection test, status and manual sync.", [
                 "sync_set_credentials",
                 "sync_get_credentials",
                 "sync_clear_credentials",
@@ -1053,6 +1159,61 @@ struct EpisodeProgressArgs {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct SyncPasswordArgs {
+    password: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncOptionalPasswordArgs {
+    password: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncNowArgs {
+    mode: String,
+    domains: Option<Vec<String>>,
+    #[serde(alias = "conflict_strategy")]
+    conflict_strategy: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncResolveConflictArgs {
+    #[serde(alias = "conflict_id")]
+    conflict_id: String,
+    action: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncLifecycleArgs {
+    event: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncClientStateSetArgs {
+    domain: String,
+    value: Value,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncReportReaderSessionArgs {
+    session: ReaderSessionPayload,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncReadingProgressArgs {
+    #[serde(alias = "book_id")]
+    book_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CoverResolveArgs {
     request: CoverResolveRequest,
 }
@@ -1083,15 +1244,19 @@ fn parse_env_or_arg(env_name: &str, arg_name: &str, default: u16) -> u16 {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static TEST_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     async fn test_state() -> (AppState, PathBuf) {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
+        let counter = TEST_DIR_COUNTER.fetch_add(1, AtomicOrdering::SeqCst);
         let dir = std::env::temp_dir().join(format!(
-            "legado-headless-formb-test-{}-{stamp}",
+            "legado-headless-formb-test-{}-{stamp}-{counter}",
             std::process::id()
         ));
         std::fs::create_dir_all(&dir).unwrap();
@@ -1228,6 +1393,81 @@ async function search() {{
         let commands = capabilities["repository"]["commands"].as_array().unwrap();
         assert!(commands.iter().any(|cmd| cmd == "repository_fetch"));
         assert!(commands.iter().any(|cmd| cmd == "booksource_apply_update"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn sync_webdav_capability_is_supported_in_headless_dispatch() {
+        let (state, dir) = test_state().await;
+        let capabilities = invoke(&state, "capabilities_get", json!({})).await;
+        assert_eq!(capabilities["syncWebdav"]["supported"], true);
+        let commands = capabilities["syncWebdav"]["commands"].as_array().unwrap();
+        assert!(commands.iter().any(|cmd| cmd == "sync_get_status"));
+        assert!(commands.iter().any(|cmd| cmd == "sync_set_credentials"));
+        assert!(commands
+            .iter()
+            .any(|cmd| cmd == "sync_report_reader_session"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn sync_webdav_local_commands_work_through_headless_dispatch() {
+        let (state, dir) = test_state().await;
+
+        let status = invoke(&state, "sync_get_status", json!({})).await;
+        assert_eq!(status["enabled"], false);
+        assert_eq!(status["running"], false);
+
+        invoke(
+            &state,
+            "sync_set_credentials",
+            json!({"password": "secret"}),
+        )
+        .await;
+        let credentials = invoke(&state, "sync_get_credentials", json!({})).await;
+        assert_eq!(credentials["password"], "");
+        assert_eq!(credentials["passwordSet"], true);
+
+        invoke(
+            &state,
+            "sync_client_state_set",
+            json!({"domain": "reader_settings", "value": {"fontSize": 18}}),
+        )
+        .await;
+        invoke(
+            &state,
+            "sync_report_reader_session",
+            json!({
+                "session": {
+                    "active": true,
+                    "bookId": "book-1",
+                    "chapterIndex": 2,
+                    "chapterName": "Chapter 3",
+                    "chapterUrl": "fixture://book-1/chapter-3",
+                    "pageIndex": 4,
+                    "scrollRatio": 0.5,
+                    "playbackTime": 0.0,
+                    "updatedAt": 1760000000000i64
+                }
+            }),
+        )
+        .await;
+        invoke(&state, "sync_notify_lifecycle", json!({"event": "startup"})).await;
+
+        let conflicts = invoke(&state, "sync_list_conflicts", json!({})).await;
+        assert!(conflicts.as_array().unwrap().is_empty());
+
+        let invalid = invoke_response(&state, "sync_now", json!({})).await;
+        let error = invalid.get("error").and_then(Value::as_str).unwrap_or("");
+        assert!(
+            error.starts_with("INVALID_ARGS"),
+            "missing mode should be an argument error, got {invalid}"
+        );
+
+        invoke(&state, "sync_clear_credentials", json!({})).await;
+        let credentials = invoke(&state, "sync_get_credentials", json!({})).await;
+        assert_eq!(credentials["passwordSet"], false);
+
         let _ = std::fs::remove_dir_all(dir);
     }
 

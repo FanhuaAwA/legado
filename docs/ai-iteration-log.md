@@ -34,6 +34,12 @@ Last updated: 2026-06-18
 - Main fixes: expose `repository_fetch` / `repository_install` / `repository_preview_source` / `repository_check_source_sync` / `booksource_check_update` / `booksource_apply_update` through `legado-headless`, and mark headless `repository` capability supported.
 - Validation: local HTTP repository fixture covered manifest fetch, source preview/install, sync consistency, and `@updateUrl` check/apply. Playwright headless smoke opened `书源管理 -> 在线书源` and confirmed repository actions are enabled with 0 console errors/warnings.
 
+## 2026-06-18 Headless WebDAV Sync Iteration
+
+- Gate report: `reports/gates/2026-06-18-HEADLESS-WEBDAV-SYNC/summary.md`
+- Main fixes: expose WebDAV sync commands through `legado-headless`, emit `sync:client-state` for headless `sync_now` / `sync_resolve_conflict`, mark headless `syncWebdav` capability supported, and harden headless test directories with an atomic suffix to avoid parallel migration collisions.
+- Validation: headless WebDAV route tests covered capability, status, credentials, client state, reader session, lifecycle, conflict list, and invalid-args behavior. Playwright headless smoke opened `设置 -> 同步`, confirmed WebDAV actions are enabled, saved a temporary credential through the UI, and console stayed at 0 errors/warnings.
+
 ## 2026-06-15 Master Direct Push
 
 - Branch：`master`
@@ -68,6 +74,7 @@ Last updated: 2026-06-18
 - `reports/gates/2026-06-18-SOURCE-FRESHNESS-RECHECK/summary.md`
 - `reports/gates/2026-06-18-HEADLESS-CANCEL-LINT/summary.md`
 - `reports/gates/2026-06-18-HEADLESS-REPOSITORY/summary.md`
+- `reports/gates/2026-06-18-HEADLESS-WEBDAV-SYNC/summary.md`
 
 ## 当前契约快照
 
