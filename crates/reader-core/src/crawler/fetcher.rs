@@ -1,8 +1,15 @@
 use crate::crawler::http_client::HttpClient;
 use encoding_rs::Encoding;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::OnceLock;
 use std::time::Duration;
-use tokio::time::sleep;
+use tokio::sync::Mutex;
+use tokio::time::{sleep, Instant};
+
+const SOURCE_FAST_FAIL_TIMEOUT_SECS: u64 = 20;
+const SOURCE_FAST_FAIL_MIN_INTERVAL_MS: u64 = 800;
+static SOURCE_FAST_FAIL_HOST_STATES: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum HttpMethod {
@@ -135,6 +142,9 @@ pub async fn fetch(client: &HttpClient, req: RequestSpec) -> anyhow::Result<Fetc
     }
     let mut last_err: Option<anyhow::Error> = None;
     let fast_fail = is_source_fast_fail_url(&req.url);
+    if fast_fail {
+        wait_for_source_fast_fail_host(&req.url).await;
+    }
     let max_retries = if fast_fail { 0 } else { req.retry };
     for attempt in 0..=max_retries {
         let req = req.clone();
@@ -143,7 +153,7 @@ pub async fn fetch(client: &HttpClient, req: RequestSpec) -> anyhow::Result<Fetc
             HttpMethod::POST => client.client().post(&req.url),
         };
         if fast_fail {
-            builder = builder.timeout(Duration::from_secs(5));
+            builder = builder.timeout(Duration::from_secs(SOURCE_FAST_FAIL_TIMEOUT_SECS));
         }
 
         let mut has_content_type = false;
@@ -161,22 +171,19 @@ pub async fn fetch(client: &HttpClient, req: RequestSpec) -> anyhow::Result<Fetc
                     "application/x-www-form-urlencoded",
                 );
             }
-            println!("DEBUG: fetch sending body: {}", body);
+            tracing::debug!(body_len = body.len(), "fetch sending request body");
             builder = builder.body(body);
         }
 
-        println!(
-            "DEBUG: fetch executing {} request to: {}",
-            match req.method {
-                HttpMethod::GET => "GET",
-                HttpMethod::POST => "POST",
-            },
-            req.url
-        );
+        let method = match req.method {
+            HttpMethod::GET => "GET",
+            HttpMethod::POST => "POST",
+        };
+        tracing::debug!(method, url = %req.url, "fetch executing request");
         match builder.send().await {
             Ok(res) => {
                 let status = res.status().as_u16();
-                println!("DEBUG: fetch response status: {}", status);
+                tracing::debug!(status, "fetch response received");
                 let is_successful = res.status().is_success();
                 let url = res.url().to_string();
                 let content_type = res
@@ -237,13 +244,47 @@ pub async fn fetch(client: &HttpClient, req: RequestSpec) -> anyhow::Result<Fetc
 }
 
 pub(crate) fn is_source_fast_fail_url(url: &str) -> bool {
+    source_fast_fail_host(url).is_some()
+}
+
+fn source_fast_fail_host(url: &str) -> Option<String> {
     let Ok(parsed) = reqwest::Url::parse(url.trim()) else {
-        return false;
+        return None;
     };
     let Some(host) = parsed.host_str().map(|value| value.to_ascii_lowercase()) else {
-        return false;
+        return None;
     };
-    host == "52dns.cc" || host.ends_with(".52dns.cc")
+    (host == "52dns.cc" || host.ends_with(".52dns.cc")).then_some(host)
+}
+
+async fn wait_for_source_fast_fail_host(url: &str) {
+    let Some(host) = source_fast_fail_host(url) else {
+        return;
+    };
+    let min_interval = Duration::from_millis(SOURCE_FAST_FAIL_MIN_INTERVAL_MS);
+    let states = SOURCE_FAST_FAIL_HOST_STATES.get_or_init(|| Mutex::new(HashMap::new()));
+    loop {
+        let wait = {
+            let mut guard = states.lock().await;
+            let now = Instant::now();
+            match guard.get(&host).copied() {
+                Some(last_started) => {
+                    let elapsed = now.saturating_duration_since(last_started);
+                    if elapsed < min_interval {
+                        min_interval - elapsed
+                    } else {
+                        guard.insert(host.clone(), now);
+                        return;
+                    }
+                }
+                None => {
+                    guard.insert(host.clone(), now);
+                    return;
+                }
+            }
+        };
+        sleep(wait).await;
+    }
 }
 
 fn decode_body(bytes: &[u8], charset: Option<&str>, content_type: Option<&str>) -> String {

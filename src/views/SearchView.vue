@@ -566,6 +566,7 @@ function finishSearchIfIdle(run: SearchRun) {
 async function searchOneSource(run: SearchRun, src: BookSourceMeta) {
   const key = sourceKeyOf(src);
   const taskId = `search-${run.token}-${safeRandomUUID()}`;
+  let shouldCancelTask = false;
   run.taskIds.set(key, taskId);
   try {
     const raw = await runSearch(src.fileName, run.keyword, run.page, src.sourceDir, taskId);
@@ -574,11 +575,15 @@ async function searchOneSource(run: SearchRun, src: BookSourceMeta) {
     }
     applySourceResults(run, src, Array.isArray(raw) ? (raw as BookItem[]) : []);
   } catch (e: unknown) {
+    shouldCancelTask = true;
     if (currentSearchRun !== run || run.token !== activeSearchToken.value) {
       return;
     }
     searchStates[key].error = e instanceof Error ? e.message : String(e);
   } finally {
+    if (shouldCancelTask) {
+      void cancelTask(taskId);
+    }
     run.taskIds.delete(key);
     run.activeWorkers = Math.max(0, run.activeWorkers - 1);
     if (currentSearchRun === run && run.token === activeSearchToken.value) {

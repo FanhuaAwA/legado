@@ -1,8 +1,14 @@
 # AI Iteration Log
 
-Last updated: 2026-06-15
+Last updated: 2026-06-18
 
 本文件是当前迭代索引，不再保存完整对话式流水。2026-06-15 之前的长历史、旧续办提示和过期命令统计已清理；需要追溯请查看 git history 与 `reports/gates/*/summary.md`。
+
+## 2026-06-18 Source Stability Iteration
+
+- Gate report: `reports/gates/2026-06-18-PERF-SOURCE-STABILITY/summary.md`
+- Main fixes: remove stdout network debug logging, add shared `52dns.cc` host pacing for CDN anti-DDoS friendliness, keep source search timeout/error paths cancelling backend tasks, scope inline reader chapter-list task cleanup, and index aggregate search groups for large result sets.
+- Source freshness: current miaogongzi CDN payloads for shuqi/qimao/fanqie differ from local files. Local shuqi/qimao full chains pass; CDN/network imports pass import/search/toc but shuqi/qimao content remains stale or empty and needs upstream CDN rule update.
 
 ## 2026-06-15 Master Direct Push
 

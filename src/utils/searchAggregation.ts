@@ -4,13 +4,97 @@ function normalizedText(value: string): string {
   return value.toLowerCase().replace(/\s+/g, "");
 }
 
-function bigrams(value: string): Set<string> {
-  const normalized = normalizedText(value);
+function bigramsFromNormalized(normalized: string): Set<string> {
   const set = new Set<string>();
   for (let index = 0; index < normalized.length - 1; index += 1) {
     set.add(normalized.substring(index, index + 2));
   }
   return set;
+}
+
+function bigrams(value: string): Set<string> {
+  return bigramsFromNormalized(normalizedText(value));
+}
+
+interface AggregationIndex {
+  exactName: Map<string, AggregatedBook>;
+  bigramGroups: Map<string, Set<AggregatedBook>>;
+  shortNameGroups: Set<AggregatedBook>;
+}
+
+const aggregationIndexes = new WeakMap<AggregatedBook[], AggregationIndex>();
+
+function createAggregationIndex(): AggregationIndex {
+  return {
+    exactName: new Map(),
+    bigramGroups: new Map(),
+    shortNameGroups: new Set(),
+  };
+}
+
+function addGroupToIndex(index: AggregationIndex, group: AggregatedBook): void {
+  const name = normalizedText(group.primary.book.name);
+  if (name && !index.exactName.has(name)) {
+    index.exactName.set(name, group);
+  }
+
+  const grams = bigramsFromNormalized(name);
+  if (grams.size === 0) {
+    index.shortNameGroups.add(group);
+    return;
+  }
+
+  for (const gram of grams) {
+    let groups = index.bigramGroups.get(gram);
+    if (!groups) {
+      groups = new Set();
+      index.bigramGroups.set(gram, groups);
+    }
+    groups.add(group);
+  }
+}
+
+function getAggregationIndex(groups: AggregatedBook[]): AggregationIndex {
+  let index = aggregationIndexes.get(groups);
+  if (!index) {
+    index = createAggregationIndex();
+    for (const group of groups) {
+      addGroupToIndex(index, group);
+    }
+    aggregationIndexes.set(groups, index);
+  }
+  return index;
+}
+
+function findMatchingGroup(
+  groups: AggregatedBook[],
+  index: AggregationIndex,
+  item: TaggedBookItem,
+): AggregatedBook | undefined {
+  const name = normalizedText(item.book.name);
+  const exactMatch = index.exactName.get(name);
+  if (exactMatch && isSameBook(exactMatch.primary.book, item.book)) {
+    return exactMatch;
+  }
+
+  const grams = bigramsFromNormalized(name);
+  if (grams.size === 0) {
+    return groups.find((group) => isSameBook(group.primary.book, item.book));
+  }
+
+  const candidates = new Set(index.shortNameGroups);
+  for (const gram of grams) {
+    const gramGroups = index.bigramGroups.get(gram);
+    if (gramGroups) {
+      gramGroups.forEach((group) => candidates.add(group));
+    }
+  }
+  for (const group of candidates) {
+    if (isSameBook(group.primary.book, item.book)) {
+      return group;
+    }
+  }
+  return undefined;
 }
 
 export function diceSimilarity(a: string, b: string): number {
@@ -57,30 +141,27 @@ export function appendTaggedResultsToGroups(
   keyword: string,
 ): void {
   const normalizedKeyword = keyword.trim();
+  const index = getAggregationIndex(groups);
   for (const item of items) {
     const similarity = diceSimilarity(item.book.name, normalizedKeyword);
-    let matched = false;
-    for (const group of groups) {
-      if (!isSameBook(group.primary.book, item.book)) {
-        continue;
-      }
+    const group = findMatchingGroup(groups, index, item);
+    if (group) {
       group.sources.push(item);
       if (!group.primary.book.coverUrl && item.book.coverUrl) {
         group.primary = item;
+        addGroupToIndex(index, group);
       }
       if (similarity > group.similarity) {
         group.similarity = similarity;
       }
-      matched = true;
-      break;
-    }
-
-    if (!matched) {
-      groups.push({
+    } else {
+      const nextGroup = {
         primary: item,
         sources: [item],
         similarity,
-      });
+      };
+      groups.push(nextGroup);
+      addGroupToIndex(index, nextGroup);
     }
   }
 }

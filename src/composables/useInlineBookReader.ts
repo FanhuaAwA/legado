@@ -197,9 +197,12 @@ export function useInlineBookReader(options: UseInlineBookReaderOptions) {
         );
         readerChapters.value = Array.isArray(raw) ? (raw as ChapterItem[]) : [];
       } catch {
+        options.cancelTask(taskId);
         // 加载失败不阻塞阅读
       } finally {
-        chapterListTaskId.value = null;
+        if (chapterListTaskId.value === taskId) {
+          chapterListTaskId.value = null;
+        }
       }
     }
 
