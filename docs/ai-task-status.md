@@ -50,6 +50,7 @@ node scripts\ci\check-command-contract.mjs --json
 - Full lint baseline：`.gitattributes` 固定源码/文档 LF 行尾，Windows Git 与 `oxfmt` 不再冲突，仓库级 `pnpm lint` 已通过。
 - Headless repository：浏览器/headless 模式已暴露在线仓库和 `@updateUrl` 更新命令域，`capabilities_get.repository` 与 Tauri 对齐为 supported。
 - Headless WebDAV sync：浏览器/headless 模式已暴露 `sync_set_credentials` / `sync_get_status` / `sync_now` / `sync_test_connection` / conflict / lifecycle / reader-session 等 WebDAV 同步命令，`capabilities_get.syncWebdav` 与 Tauri 对齐为 supported。
+- Prefetch WS events：R-P2-012 已关闭；Tauri WS router 与 headless WS 均可执行 `bookshelf_prefetch_chapters` 并推送 `shelf:prefetch-progress` / `shelf:prefetch-done`。
 
 ## 当前验证命令
 
@@ -66,6 +67,8 @@ node scripts\ci\check-command-contract.mjs --json
 cargo test -p legado-headless -- --nocapture
 cargo test -p legado-headless repository_ -- --nocapture
 cargo test -p legado-headless sync_webdav -- --nocapture
+cargo test -p legado-headless bookshelf_prefetch -- --nocapture
+cargo test -p legado-tauri --test ws_router bookshelf_prefetch_accepts_direct_payload_and_emits_done -- --nocapture
 cargo test -p legado-tauri --test ws_router booksource_search_accepts_task_id_in_ws_router -- --nocapture
 cargo test -p reader-core --test cover_cache -- --nocapture
 cargo test -p legado-tauri --test ws_router cover_cache_commands_are_routed -- --nocapture
@@ -81,6 +84,7 @@ cmd /c pnpm.cmd build:windows:release
 2026-06-18 headless cancel / lint baseline iteration verified that `cmd /c pnpm.cmd lint` now passes end-to-end (`oxfmt --check .`, `oxlint --type-aware --type-check .`, and `vue-tsc`). Playwright headless smoke on `127.0.0.1:7790` showed bookshelf first screen, WS connected, and 0 console errors/warnings.
 2026-06-18 headless repository iteration verified local repository fixture import/update commands and Playwright headless `书源管理 -> 在线书源` smoke on `127.0.0.1:7791`; repository toolbar actions were enabled and console stayed at 0 errors/warnings.
 2026-06-18 headless WebDAV sync iteration verified local WebDAV sync command dispatch and Playwright headless `设置 -> 同步` smoke on `127.0.0.1:7793`; WebDAV action buttons were enabled, temporary credential save succeeded through the UI, and console stayed at 0 errors/warnings.
+2026-06-18 prefetch WS events iteration verified Tauri WS direct payload routing and Playwright headless raw WebSocket prefetch smoke on `127.0.0.1:7795`; one chapter was cached, progress arrived before done, and console stayed at 0 errors/warnings.
 
 ## 当前未结工作
 

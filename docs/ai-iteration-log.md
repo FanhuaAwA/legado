@@ -40,6 +40,12 @@ Last updated: 2026-06-18
 - Main fixes: expose WebDAV sync commands through `legado-headless`, emit `sync:client-state` for headless `sync_now` / `sync_resolve_conflict`, mark headless `syncWebdav` capability supported, and harden headless test directories with an atomic suffix to avoid parallel migration collisions.
 - Validation: headless WebDAV route tests covered capability, status, credentials, client state, reader session, lifecycle, conflict list, and invalid-args behavior. Playwright headless smoke opened `设置 -> 同步`, confirmed WebDAV actions are enabled, saved a temporary credential through the UI, and console stayed at 0 errors/warnings.
 
+## 2026-06-18 Prefetch WS Events Iteration
+
+- Gate report: `reports/gates/2026-06-18-PREFETCH-WS-EVENTS/summary.md`
+- Main fixes: close R-P2-012 by emitting `shelf:prefetch-progress` / `shelf:prefetch-done` from Tauri WS router as well as IPC, accepting both wrapped and direct prefetch payloads, and adding the same prefetch command/event path to `legado-headless`.
+- Validation: Tauri WS router tests covered direct payload parsing and done-event emission; headless tests covered real one-chapter prefetch, cached content, progress event, and done event. Playwright headless smoke drove the real browser WebSocket protocol and confirmed `fetched=1`, cached content, progress/done events, and 0 console errors/warnings.
+
 ## 2026-06-15 Master Direct Push
 
 - Branch：`master`
@@ -75,6 +81,7 @@ Last updated: 2026-06-18
 - `reports/gates/2026-06-18-HEADLESS-CANCEL-LINT/summary.md`
 - `reports/gates/2026-06-18-HEADLESS-REPOSITORY/summary.md`
 - `reports/gates/2026-06-18-HEADLESS-WEBDAV-SYNC/summary.md`
+- `reports/gates/2026-06-18-PREFETCH-WS-EVENTS/summary.md`
 
 ## 当前契约快照
 

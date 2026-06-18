@@ -47,6 +47,13 @@ macro_rules! parsed {
     }};
 }
 
+fn parse_prefetch_payload(raw: &Value) -> Result<PrefetchPayload, String> {
+    if let Some(payload) = raw.get("payload") {
+        return parse_args(payload);
+    }
+    parse_args(raw)
+}
+
 /// WS 路由命令分发入口（`cmd + args(JSON) → result(JSON)`）
 pub async fn dispatch<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
@@ -582,14 +589,10 @@ pub async fn dispatch<R: tauri::Runtime>(
             )
         }
         "bookshelf_prefetch_chapters" => {
-            let payload = parsed!(raw, { payload: PrefetchPayload });
+            let payload = parse_prefetch_payload(raw)?;
             reply(
-                bookshelf::bookshelf_prefetch_chapters_impl(
-                    &state,
-                    &payload,
-                    None::<fn(i32, i32, i32)>,
-                )
-                .await,
+                bookshelf::bookshelf_prefetch_chapters_with_events(app, state.inner(), &payload)
+                    .await,
             )
         }
         "bookshelf_export_book_data" => {

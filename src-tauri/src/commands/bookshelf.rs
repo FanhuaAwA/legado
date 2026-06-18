@@ -257,6 +257,14 @@ pub async fn bookshelf_prefetch_chapters(
     state: State<'_, AppState>,
     payload: PrefetchPayload,
 ) -> CommandResult<i32> {
+    bookshelf_prefetch_chapters_with_events(&app, state.inner(), &payload).await
+}
+
+pub async fn bookshelf_prefetch_chapters_with_events<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &AppState,
+    payload: &PrefetchPayload,
+) -> CommandResult<i32> {
     let tid = payload.task_id.clone();
     let app_for_progress = app.clone();
     let on_progress = move |done: i32, total: i32, chapter_index: i32| {
@@ -270,21 +278,21 @@ pub async fn bookshelf_prefetch_chapters(
             }),
         );
     };
-    let result = bookshelf_prefetch_chapters_impl(&state, &payload, Some(on_progress)).await;
+    let result = bookshelf_prefetch_chapters_impl(state, payload, Some(on_progress)).await;
     // Emit done event.
     let _ = app.emit(
         "shelf:prefetch-done",
         serde_json::json!({
-            "taskId": payload.task_id,
+            "taskId": payload.task_id.clone(),
             "error": result.as_ref().err().map(|e| format!("{e:?}")),
         }),
     );
     result
 }
 
-/// Shared implementation (WS router calls this — no AppHandle, no progress).
+/// Shared implementation for prefetch execution; callers decide whether to emit progress events.
 pub async fn bookshelf_prefetch_chapters_impl<F>(
-    state: &State<'_, AppState>,
+    state: &AppState,
     payload: &PrefetchPayload,
     on_progress: Option<F>,
 ) -> CommandResult<i32>

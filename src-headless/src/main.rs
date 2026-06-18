@@ -697,6 +697,61 @@ async fn dispatch(state: &AppState, raw: &str, out: &WsOutgoing) -> Option<Strin
             .map(|()| Value::Null)
             .map_err(|e| e.to_string())
         }
+        "bookshelf_prefetch_chapters" => {
+            let payload = match parse_prefetch_payload(&args) {
+                Ok(payload) => payload,
+                Err(error) => {
+                    return Some(response_err(&id, format!("INVALID_ARGS: {error}")));
+                }
+            };
+            let task_id = payload.task_id.clone();
+            let cancelled = state.tasks.register(&task_id);
+            let progress_tx = out.lock().await.clone();
+            let task_id_for_progress = task_id.clone();
+            let on_progress = move |done: i32, total: i32, chapter_index: i32| {
+                if let Some(tx) = progress_tx.as_ref() {
+                    let task_id = task_id_for_progress.clone();
+                    let _ = tx.send(
+                        json!({
+                            "type": "event",
+                            "event": "shelf:prefetch-progress",
+                            "payload": {
+                                "taskId": task_id,
+                                "done": done,
+                                "total": total,
+                                "chapterIndex": chapter_index,
+                            },
+                        })
+                        .to_string(),
+                    );
+                }
+            };
+            let result = core
+                .prefetch_chapters(
+                    &payload.id,
+                    &payload.file_name,
+                    payload.source_dir.as_deref(),
+                    payload.start_index,
+                    payload.count,
+                    Some(cancelled.clone()),
+                    Some(on_progress),
+                )
+                .await
+                .map(|value| json!(value))
+                .map_err(|e| e.to_string());
+            let result = normalize_cancelled_result(result, Some(&cancelled));
+            state.tasks.remove_if_current(&task_id, &cancelled);
+            send_ws_event(
+                out,
+                "shelf:prefetch-done",
+                json!({
+                    "taskId": task_id,
+                    "error": result.as_ref().err().cloned(),
+                }),
+            )
+            .await;
+            result
+        }
         "bookshelf_restore_source_switch" => {
             let id = arg_str(&args, "id").unwrap_or("");
             core.shelf_restore_source_switch(&id)
@@ -1058,6 +1113,13 @@ fn arg_bool(args: &Value, key: &str) -> Option<bool> {
     args.get(key).and_then(|v| v.as_bool())
 }
 
+fn parse_prefetch_payload(args: &Value) -> Result<PrefetchPayload, serde_json::Error> {
+    if let Some(payload) = args.get("payload") {
+        return serde_json::from_value(payload.clone());
+    }
+    serde_json::from_value(args.clone())
+}
+
 fn content_type_for_path(path: &std::path::Path) -> Option<&'static str> {
     match path
         .extension()
@@ -1155,6 +1217,17 @@ struct EpisodeProgressArgs {
     chapter_url: String,
     time: f64,
     duration: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PrefetchPayload {
+    id: String,
+    file_name: String,
+    source_dir: Option<String>,
+    task_id: String,
+    start_index: Option<i32>,
+    count: Option<i32>,
 }
 
 #[derive(Deserialize)]
@@ -1299,6 +1372,40 @@ mod tests {
         let out: WsOutgoing = Arc::new(TokioMutex::new(None));
         let response = dispatch(state, &raw, &out).await.expect("response");
         serde_json::from_str(&response).expect("response json")
+    }
+
+    async fn invoke_with_events(
+        state: &AppState,
+        cmd: &str,
+        args: Value,
+        min_events: usize,
+    ) -> (Value, Vec<Value>) {
+        let raw = json!({
+            "type": "invoke",
+            "id": format!("test-{cmd}"),
+            "cmd": cmd,
+            "args": args,
+        })
+        .to_string();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        let out: WsOutgoing = Arc::new(TokioMutex::new(Some(tx)));
+        let response = dispatch(state, &raw, &out).await.expect("response");
+        let value: Value = serde_json::from_str(&response).expect("response json");
+        if let Some(error) = value.get("error") {
+            panic!("{cmd} failed: {error}");
+        }
+
+        let mut events = Vec::new();
+        for _ in 0..40 {
+            while let Ok(text) = rx.try_recv() {
+                events.push(serde_json::from_str::<Value>(&text).expect("event json"));
+            }
+            if events.len() >= min_events {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        (value.get("data").cloned().unwrap_or(Value::Null), events)
     }
 
     struct JsEngineTimeoutRestore;
@@ -1467,6 +1574,114 @@ async function search() {{
         invoke(&state, "sync_clear_credentials", json!({})).await;
         let credentials = invoke(&state, "sync_get_credentials", json!({})).await;
         assert_eq!(credentials["passwordSet"], false);
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn bookshelf_prefetch_emits_progress_events_in_headless_dispatch() {
+        let (state, dir) = test_state().await;
+        let file_name = "headless-prefetch-fixture.js";
+        state
+            .core
+            .save_js_source(
+                file_name,
+                r#"// @name        Headless Prefetch Fixture
+// @url         fixture://headless-prefetch
+// @enabled     true
+
+async function chapterContent(chapterUrl) {
+  return 'prefetched content from ' + chapterUrl;
+}
+"#,
+                None,
+            )
+            .await
+            .unwrap();
+        let book = state
+            .core
+            .shelf_add(
+                AddBookPayload {
+                    name: "Headless Prefetch Book".to_string(),
+                    author: Some("Codex".to_string()),
+                    cover_url: None,
+                    intro: None,
+                    kind: None,
+                    group_id: None,
+                    book_url: "fixture://headless-prefetch/book".to_string(),
+                    source_dir: None,
+                    last_chapter: Some("Chapter 1".to_string()),
+                    source_type: Some("novel".to_string()),
+                },
+                file_name,
+                "Headless Prefetch Fixture",
+            )
+            .await
+            .unwrap();
+        state
+            .core
+            .shelf_save_chapters(
+                &book.id,
+                vec![CachedChapter {
+                    index: 0,
+                    name: "Chapter 1".to_string(),
+                    url: "fixture://headless-prefetch/chapter/1".to_string(),
+                    group: None,
+                    vip: Some(false),
+                    price: None,
+                    currency: None,
+                }],
+            )
+            .await
+            .unwrap();
+
+        let (fetched, events) = invoke_with_events(
+            &state,
+            "bookshelf_prefetch_chapters",
+            json!({
+                "payload": {
+                    "id": book.id,
+                    "fileName": file_name,
+                    "sourceDir": null,
+                    "taskId": "headless-prefetch-test",
+                    "startIndex": 0,
+                    "count": 1
+                }
+            }),
+            2,
+        )
+        .await;
+
+        assert_eq!(fetched, json!(1));
+        let cached = state
+            .core
+            .shelf_get_content(&book.id, 0)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(cached.contains("prefetched content"));
+        let progress_index = events
+            .iter()
+            .position(|event| {
+                event["event"] == "shelf:prefetch-progress"
+                    && event["payload"]["taskId"] == "headless-prefetch-test"
+                    && event["payload"]["done"] == 1
+                    && event["payload"]["total"] == 1
+                    && event["payload"]["chapterIndex"] == 0
+            })
+            .expect("prefetch progress event");
+        let done_index = events
+            .iter()
+            .position(|event| {
+                event["event"] == "shelf:prefetch-done"
+                    && event["payload"]["taskId"] == "headless-prefetch-test"
+                    && event["payload"]["error"].is_null()
+            })
+            .expect("prefetch done event");
+        assert!(
+            progress_index < done_index,
+            "progress should arrive before done: {events:?}"
+        );
 
         let _ = std::fs::remove_dir_all(dir);
     }

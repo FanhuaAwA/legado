@@ -8,10 +8,11 @@
 use legado_tauri_lib::commands::router;
 use legado_tauri_lib::state::{AppState, TaskRegistry};
 use legado_tauri_lib::ws_server;
-use reader_core::{ReaderCore, ReaderCoreOptions, SecureMode};
+use reader_core::{AddBookPayload, ReaderCore, ReaderCoreOptions, SecureMode};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tauri::Manager;
+use std::time::Duration;
+use tauri::{Listener, Manager};
 
 async fn test_app() -> (tauri::App<tauri::test::MockRuntime>, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -135,6 +136,64 @@ async fn booksource_list_streaming_is_routed() {
     .await
     .expect("booksource_list_streaming 应进入 WS 路由");
     assert_eq!(value, Value::Null);
+}
+
+#[tokio::test]
+async fn bookshelf_prefetch_accepts_direct_payload_and_emits_done() {
+    let (app, _dir) = test_app().await;
+    let state = app.state::<AppState>();
+    let book = state
+        .core
+        .shelf_add(
+            AddBookPayload {
+                name: "Prefetch Router Book".to_string(),
+                author: Some("Tester".to_string()),
+                cover_url: None,
+                intro: None,
+                kind: None,
+                group_id: None,
+                book_url: "fixture://prefetch-router/book".to_string(),
+                source_dir: None,
+                last_chapter: None,
+                source_type: Some("novel".to_string()),
+            },
+            "missing.js",
+            "Prefetch Router Source",
+        )
+        .await
+        .unwrap();
+    state
+        .core
+        .shelf_save_chapters(&book.id, Vec::new())
+        .await
+        .unwrap();
+
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    let _event_id = app.listen("shelf:prefetch-done", move |event| {
+        let _ = tx.send(event.payload().to_string());
+    });
+    let value = router::dispatch(
+        app.handle(),
+        "bookshelf_prefetch_chapters",
+        &json!({
+            "id": book.id,
+            "fileName": "missing.js",
+            "sourceDir": null,
+            "taskId": "prefetch-router-direct",
+            "startIndex": 0,
+            "count": 0
+        }),
+    )
+    .await
+    .expect("direct prefetch payload should route and parse");
+    assert_eq!(value, json!(0));
+
+    let event = rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("prefetch done event should be emitted");
+    let event: Value = serde_json::from_str(&event).expect("event json");
+    assert_eq!(event["taskId"], "prefetch-router-direct");
+    assert!(event["error"].is_null());
 }
 
 #[tokio::test]
