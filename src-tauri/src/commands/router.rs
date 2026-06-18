@@ -15,6 +15,7 @@ use serde_json::Value;
 use tauri::{Emitter, Manager};
 
 use super::bookshelf::{self, ExportBookDataRequest, PrefetchPayload};
+use super::comic_cover::{self, CoverResolveRequestWrapper};
 use super::config;
 use super::source::{self, AiHttpProxyRequest, DeleteItem, HttpProxyRequest};
 use super::system;
@@ -131,6 +132,12 @@ pub async fn dispatch<R: tauri::Runtime>(
             reply(config::app_config_reset_impl(app, state.inner(), key).await)
         }
         "storage_debug_dump" => reply(config::storage_debug_dump(state).await),
+        "cover_cache_size" => reply(comic_cover::cover_cache_size(state).await),
+        "cover_cache_clear" => reply(comic_cover::cover_cache_clear(state).await),
+        "cover_resolve_cache" => {
+            let request = parse_args::<CoverResolveRequestWrapper>(raw)?;
+            reply(comic_cover::cover_resolve_cache(state, request).await)
+        }
 
         // ── booksource ─────────────────────────────────────────────────────
         "booksource_get_dir" => reply(source::booksource_get_dir(state).await),

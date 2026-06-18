@@ -16,3 +16,4 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 axum = { version = "0.7", features = ["ws"] }
 tower-http = { version = "0.5", features = ["fs"] }
+urlencoding.workspace = true

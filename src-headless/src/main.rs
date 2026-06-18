@@ -14,8 +14,9 @@
 //!   ← { "type": "response", "id": "uuid", "error": "..." }
 
 use axum::extract::ws::{Message, WebSocket};
-use axum::extract::WebSocketUpgrade;
-use axum::response::IntoResponse;
+use axum::extract::{Path, Query, WebSocketUpgrade};
+use axum::http::{header, HeaderValue, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use futures::{SinkExt, StreamExt};
 use reader_core::{
@@ -23,6 +24,7 @@ use reader_core::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -79,6 +81,7 @@ async fn main() -> anyhow::Result<()> {
     let addr = format!("{bind}:{port}");
     let app = axum::Router::new()
         .route("/ws", get(ws_handler))
+        .route("/asset/:encoded", get(asset_handler))
         .fallback_service(tower_http::services::ServeDir::new(&dist).fallback(
             tower_http::services::ServeFile::new(dist.join("index.html")),
         ))
@@ -109,6 +112,48 @@ async fn ws_handler(
         }
     }
     ws.on_upgrade(move |socket| handle_socket(socket, state))
+}
+
+async fn asset_handler(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    Path(encoded): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    if let Some(ref expected) = state.token {
+        let provided = params.get("token").map(|s| s.as_str()).unwrap_or("");
+        if provided != expected {
+            return StatusCode::FORBIDDEN.into_response();
+        }
+    }
+
+    let decoded = urlencoding::decode(&encoded)
+        .map(|value| value.into_owned())
+        .unwrap_or(encoded);
+    let path = PathBuf::from(decoded);
+    let base = match tokio::fs::canonicalize(state.core.reader_dir()).await {
+        Ok(path) => path,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let target = match tokio::fs::canonicalize(&path).await {
+        Ok(path) => path,
+        Err(_) => return StatusCode::NOT_FOUND.into_response(),
+    };
+    if !target.starts_with(&base) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+
+    match tokio::fs::read(&target).await {
+        Ok(bytes) => {
+            let mut response = bytes.into_response();
+            if let Some(content_type) = content_type_for_path(&target) {
+                response
+                    .headers_mut()
+                    .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+            }
+            response
+        }
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 async fn handle_socket(socket: WebSocket, state: AppState) {
@@ -568,6 +613,32 @@ async fn dispatch(state: &AppState, raw: &str, out: &WsOutgoing) -> Option<Strin
                 .map_err(|e| e.to_string())
         }
         "storage_debug_dump" => core.debug_dump().await.map_err(|e| e.to_string()),
+        "cover_cache_size" => core
+            .cover_cache_size()
+            .await
+            .map(|value| json!(value))
+            .map_err(|e| e.to_string()),
+        "cover_cache_clear" => core
+            .clear_cover_cache()
+            .await
+            .map(|value| json!(value))
+            .map_err(|e| e.to_string()),
+        "cover_resolve_cache" => {
+            let payload = parse_or_response!(CoverResolveArgs);
+            core.resolve_cover_cache(
+                &payload.request.url,
+                payload.request.referer.as_deref(),
+                payload.request.headers.as_ref(),
+            )
+            .await
+            .map(|local_path| {
+                json!({
+                    "localPath": local_path,
+                    "localRef": format!("local://{local_path}"),
+                })
+            })
+            .map_err(|e| e.to_string())
+        }
 
         // ── capabilities (transport-agnostic) ──
         "capabilities_get" => Ok(json!({
@@ -625,7 +696,7 @@ async fn dispatch(state: &AppState, raw: &str, out: &WsOutgoing) -> Option<Strin
                 "comic_get_cached_page",
                 "comic_get_page_sizes",
             ]),
-            "coverCache": unsupported_capability("Cover disk cache is not implemented in this build.", [
+            "coverCache": supported_capability("Cover disk cache is implemented for HTTP/HTTPS book cover images.", [
                 "cover_cache_clear",
                 "cover_cache_size",
                 "cover_resolve_cache",
@@ -682,9 +753,35 @@ fn arg_bool(args: &Value, key: &str) -> Option<bool> {
     args.get(key).and_then(|v| v.as_bool())
 }
 
+fn content_type_for_path(path: &std::path::Path) -> Option<&'static str> {
+    match path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("jpg") | Some("jpeg") => Some("image/jpeg"),
+        Some("png") => Some("image/png"),
+        Some("webp") => Some("image/webp"),
+        Some("gif") => Some("image/gif"),
+        Some("bmp") => Some("image/bmp"),
+        Some("avif") => Some("image/avif"),
+        Some("svg") => Some("image/svg+xml"),
+        _ => None,
+    }
+}
+
 fn unsupported_capability<const N: usize>(reason: &str, commands: [&str; N]) -> Value {
     json!({
         "supported": false,
+        "reason": reason,
+        "commands": commands.as_slice(),
+    })
+}
+
+fn supported_capability<const N: usize>(reason: &str, commands: [&str; N]) -> Value {
+    json!({
+        "supported": true,
         "reason": reason,
         "commands": commands.as_slice(),
     })
@@ -753,6 +850,20 @@ struct EpisodeProgressArgs {
     chapter_url: String,
     time: f64,
     duration: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CoverResolveArgs {
+    request: CoverResolveRequest,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CoverResolveRequest {
+    url: String,
+    referer: Option<String>,
+    headers: Option<HashMap<String, String>>,
 }
 
 fn parse_env_or_arg(env_name: &str, arg_name: &str, default: u16) -> u16 {

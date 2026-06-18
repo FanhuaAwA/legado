@@ -2,7 +2,7 @@
 
 本文件由 `scripts/ci/check-command-contract.mjs` 的实测结果半自动重建。旧的 2026-06-09 手工矩阵已删除，后续不得再手工沿用过期统计。
 
-最后实测：2026-06-15 PERF-MIAOGONGZI-LOCAL-IMPORT / PR #2 quality-gate
+最后实测：2026-06-18 COVER-CACHE-STABILITY
 
 实测命令：
 
@@ -20,10 +20,10 @@ node scripts/ci/check-command-contract.mjs
 | bothCount                         |  162 | 前后端同名匹配数量                                                                      |
 | onlyFrontend                      |    1 | `js_eval`，安全阻断，有意不注册                                                         |
 | onlyBackend                       |    0 | 无                                                                                      |
-| registered_implemented_count      |  123 | 全部已注册命令中的实现数量                                                              |
-| registered_unsupported_stub_count |   39 | 全部已注册命令中的 UNSUPPORTED stub                                                     |
-| frontend_implemented_count        |  123 | 前端可触达且已实现                                                                      |
-| frontend_unsupported_stub_count   |   39 | 前端可触达但仅返回 UNSUPPORTED（CAP-REPO 后 52，CAP-SYNC 后 40，AI-DEEPSEEK-MGZ 后 39） |
+| registered_implemented_count      |  126 | 全部已注册命令中的实现数量                                                              |
+| registered_unsupported_stub_count |   36 | 全部已注册命令中的 UNSUPPORTED stub                                                     |
+| frontend_implemented_count        |  126 | 前端可触达且已实现                                                                      |
+| frontend_unsupported_stub_count   |   36 | 前端可触达但仅返回 UNSUPPORTED（封面缓存实现后 39→36）                                  |
 
 `classification` 数组的口径是 `frontend-facing registered commands`。需要全注册命令时使用 `registeredClassification`。
 
@@ -58,6 +58,8 @@ R-P1-004 修正前端扫描器后，当前无 backend-only 命令。旧表中的
 > 2026-06-12（AI-DEEPSEEK-MGZ）：`ai_http_proxy_url` 旧 stub 已移除，新增 `ai_http_proxy_request` 真实实现并注册到 Tauri/WS/capability；AI 代理按 POST + 域名白名单 + 路径白名单 + 内网地址阻断执行。stub 数 40→39。
 >
 > 2026-06-15（PERF-MIAOGONGZI-LOCAL-IMPORT）：新增 `booksource_import_legacy_json_texts` 批量书源导入命令并注册到 Tauri/WS；implemented 122→123，stub 仍为 39。
+>
+> 2026-06-18（COVER-CACHE-STABILITY）：`cover_resolve_cache` / `cover_cache_size` / `cover_cache_clear` 已真实实现并注册到 Tauri router 与 headless WS；`coverCache` capability 置 `supported: true`。封面缓存加入同 URL 并发合并、8MB 流式大小上限、headless `/asset` token 校验与 Web 端 `?ws=` 资产端点推导。implemented 123→126，stub 39→36。
 
 | 模块               | Command                          | 当前处置            |
 | ------------------ | -------------------------------- | ------------------- |
@@ -91,9 +93,6 @@ R-P1-004 修正前端扫描器后，当前无 backend-only 命令。旧表中的
 | comic_cover        | `comic_cache_clear_chapter`      | blocked_by_platform |
 | comic_cover        | `comic_cache_clear`              | blocked_by_platform |
 | comic_cover        | `comic_cache_size`               | blocked_by_platform |
-| comic_cover        | `cover_resolve_cache`            | blocked_by_platform |
-| comic_cover        | `cover_cache_size`               | blocked_by_platform |
-| comic_cover        | `cover_cache_clear`              | blocked_by_platform |
 | update/unlock/misc | `frontend_plugin_http_request`   | unsupported_hidden  |
 | update/unlock/misc | `explore_clear_cache`            | blocked_by_platform |
 | update/unlock/misc | `issue_full_mode_challenge`      | unsupported_hidden  |
@@ -185,6 +184,9 @@ config_read_json
 config_write
 config_write_bytes
 config_write_json
+cover_cache_clear
+cover_cache_size
+cover_resolve_cache
 delete_user_font
 export_save_file
 extension_delete

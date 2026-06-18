@@ -10,17 +10,49 @@ import { isHarmonyNative, isTauri } from "./useEnv";
 
 export const LOCAL_FILE_REF_PREFIX = "local://";
 
-/** Web 服务器资源 URL 前缀（懒初始化） */
-let assetBaseUrl: string | null = null;
+/** Web 服务器资源端点 */
+interface AssetEndpoint {
+  baseUrl: string;
+  token: string | null;
+}
 
-function getAssetBaseUrl(): string {
-  if (assetBaseUrl) {
-    return assetBaseUrl;
+function readCustomWsUrlFromLocation(): string {
+  if (typeof window === "undefined") {
+    return "";
   }
+  try {
+    return new URL(window.location.href).searchParams.get("ws") ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function getAssetEndpoint(): AssetEndpoint {
   const hostname = window.location.hostname || "localhost";
-  const protocol = window.location.protocol;
-  assetBaseUrl = `${protocol}//${hostname}:7688/asset/`;
-  return assetBaseUrl;
+  const protocol = window.location.protocol || "http:";
+  const wsUrl = readCustomWsUrlFromLocation();
+  if (wsUrl) {
+    try {
+      const parsed = new URL(wsUrl);
+      return {
+        baseUrl: `${parsed.protocol === "wss:" ? "https:" : "http:"}//${parsed.host}/asset/`,
+        token: parsed.searchParams.get("token"),
+      };
+    } catch {
+      // Fall through to the default loopback/LAN endpoint used by useTransport.
+    }
+  }
+
+  return {
+    baseUrl: `${protocol}//${hostname}:7688/asset/`,
+    token: null,
+  };
+}
+
+function toAssetUrl(filePath: string): string {
+  const endpoint = getAssetEndpoint();
+  const tokenQuery = endpoint.token ? `?token=${encodeURIComponent(endpoint.token)}` : "";
+  return `${endpoint.baseUrl}${encodeURIComponent(filePath)}${tokenQuery}`;
 }
 
 /**
@@ -38,7 +70,7 @@ export async function toFileSrc(filePath: string): Promise<string> {
     return `file://${filePath}`;
   }
   // B/S 模式：通过 HTTP 端点访问
-  return `${getAssetBaseUrl()}${encodeURIComponent(filePath)}`;
+  return toAssetUrl(filePath);
 }
 
 /**
@@ -60,7 +92,7 @@ export function toFileSrcSync(filePath: string): string {
   if (isHarmonyNative) {
     return `file://${filePath}`;
   }
-  return `${getAssetBaseUrl()}${encodeURIComponent(filePath)}`;
+  return toAssetUrl(filePath);
 }
 
 export function isLocalFileRef(src: string): boolean {

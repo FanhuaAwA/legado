@@ -100,6 +100,7 @@ async fn capabilities_get_returns_map() {
     assert!(value.is_object());
     assert!(value.get("sync").is_some());
     assert_eq!(value["syncWebdav"]["supported"], true);
+    assert_eq!(value["coverCache"]["supported"], true);
 }
 
 #[tokio::test]
@@ -296,4 +297,34 @@ async fn non_invoke_message_is_ignored() {
     let (app, _dir) = test_app().await;
     let raw = r#"{"type":"ping","id":"x"}"#;
     assert!(ws_server::handle_invoke(app.handle(), raw).await.is_none());
+}
+
+#[tokio::test]
+async fn cover_cache_commands_are_routed() {
+    let (app, _dir) = test_app().await;
+    let size = router::dispatch(app.handle(), "cover_cache_size", &json!({}))
+        .await
+        .expect("cover_cache_size should be routed");
+    assert_eq!(size, json!(0));
+
+    let cleared = router::dispatch(app.handle(), "cover_cache_clear", &json!({}))
+        .await
+        .expect("cover_cache_clear should be routed");
+    assert_eq!(cleared, json!(0));
+
+    let err = router::dispatch(
+        app.handle(),
+        "cover_resolve_cache",
+        &json!({
+            "request": {
+                "url": "file:///tmp/not-allowed.png",
+                "referer": null,
+                "headers": null
+            }
+        }),
+    )
+    .await
+    .expect_err("unsupported scheme should return a command error, not a route error");
+    assert!(!err.starts_with("NOT_ROUTED"), "should be routed: {err}");
+    assert!(!err.starts_with("INVALID_ARGS"), "args should parse: {err}");
 }

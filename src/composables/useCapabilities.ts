@@ -105,10 +105,11 @@ const fallbackCapabilities: AppCapabilities = {
       "comic_get_page_sizes",
     ],
   ),
-  coverCache: unsupported(
-    "Cover disk cache is not implemented in this build; covers load directly from the network.",
-    ["cover_cache_clear", "cover_cache_size", "cover_resolve_cache"],
-  ),
+  coverCache: supported("Cover disk cache is implemented for HTTP/HTTPS book cover images.", [
+    "cover_cache_clear",
+    "cover_cache_size",
+    "cover_resolve_cache",
+  ]),
   repository: supported(
     "Source repository browsing and JS-source auto-update via @updateUrl are supported.",
     [

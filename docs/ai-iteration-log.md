@@ -8,7 +8,19 @@ Last updated: 2026-06-18
 
 - Gate report: `reports/gates/2026-06-18-PERF-SOURCE-STABILITY/summary.md`
 - Main fixes: remove stdout network debug logging, add shared `52dns.cc` host pacing for CDN anti-DDoS friendliness, keep source search timeout/error paths cancelling backend tasks, scope inline reader chapter-list task cleanup, and index aggregate search groups for large result sets.
-- Source freshness: current miaogongzi CDN payloads for shuqi/qimao/fanqie differ from local files. Local shuqi/qimao full chains pass; CDN/network imports pass import/search/toc but shuqi/qimao content remains stale or empty and needs upstream CDN rule update.
+- Source freshness: superseded by the later `SOURCE-FRESHNESS-RECHECK` pass below. Current result: shuqi/qimao CDN copies are stale backup-equivalent files, fanqie CDN matches local, and fanqie short-drama CDN URL is 404.
+
+## 2026-06-18 Cover Cache Stability Iteration
+
+- Gate report: `reports/gates/2026-06-18-COVER-CACHE-STABILITY/summary.md`
+- Main fixes: implement HTTP/HTTPS book-cover disk cache for Tauri and headless, coalesce concurrent same-URL cover downloads, enforce an 8MB streamed body limit, route cached cover files through `useFileSrc`, and protect headless `/asset` with the same token when configured.
+- Command contract: `cover_resolve_cache` / `cover_cache_size` / `cover_cache_clear` moved from unsupported stub to implemented; contract snapshot is now `frontend_implemented_count=126`, `frontend_unsupported_stub_count=36`.
+
+## 2026-06-18 Source Freshness Recheck
+
+- Gate report: `reports/gates/2026-06-18-SOURCE-FRESHNESS-RECHECK/summary.md`
+- Main finding: shuqi/qimao CDN files still equal local `.backup.json` and differ from refreshed local `.json`, so network-imported copies still need upstream CDN rule update for content. Fanqie CDN matches local. Fanqie short-drama network import URL currently returns 404.
+- Live checks: local shuqi/qimao full chains pass after retrying a transient shuqi TLS EOF; shuqi/qimao CDN imports pass search/toc but content remains `EMPTY`.
 
 ## 2026-06-15 Master Direct Push
 
@@ -39,6 +51,9 @@ Last updated: 2026-06-18
 - `reports/gates/2026-06-15-PERF-JS-PREFETCH-CANCEL-COOPERATIVE/summary.md`
 - `reports/gates/2026-06-15-PERF-SEARCH-GROUPED-LAZY-RENDER/summary.md`
 - `reports/gates/2026-06-15-PERF-MIAOGONGZI-LOCAL-IMPORT/summary.md`
+- `reports/gates/2026-06-18-PERF-SOURCE-STABILITY/summary.md`
+- `reports/gates/2026-06-18-COVER-CACHE-STABILITY/summary.md`
+- `reports/gates/2026-06-18-SOURCE-FRESHNESS-RECHECK/summary.md`
 
 ## 当前契约快照
 
@@ -48,11 +63,11 @@ registeredTotal=162
 bothCount=162
 onlyFrontend=["js_eval"]
 onlyBackend=[]
-frontend_implemented_count=123
-frontend_unsupported_stub_count=39
+frontend_implemented_count=126
+frontend_unsupported_stub_count=36
 ```
 
-`booksource_import_legacy_json_texts` 是本轮新增的真实实现命令。完整命令列表与 stub 分类以 `docs/command-matrix.md` 为准。
+封面缓存 3 个命令已在 2026-06-18 实现；完整命令列表与 stub 分类以 `docs/command-matrix.md` 为准。
 
 ## 当前性能实测摘要
 

@@ -148,8 +148,8 @@ pub const CAPABILITY_SPECS: &[CapabilitySpec] = &[
     },
     CapabilitySpec {
         key: "coverCache",
-        supported: false,
-        reason: "Cover disk cache is not implemented in this build; covers load directly from the network.",
+        supported: true,
+        reason: "Cover disk cache is implemented for HTTP/HTTPS book cover images.",
         commands: &["cover_cache_clear", "cover_cache_size", "cover_resolve_cache"],
     },
     CapabilitySpec {

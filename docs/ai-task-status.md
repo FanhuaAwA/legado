@@ -1,6 +1,6 @@
 # AI Task Status
 
-Last updated: 2026-06-15
+Last updated: 2026-06-18
 
 本文件只记录当前维护状态、可继续执行的队列和必须遵守的口径。旧的逐轮流水、未完成提示和过期统计已删除；需要考古时使用 git history 与 `reports/gates/*/summary.md`。
 
@@ -30,10 +30,10 @@ node scripts\ci\check-command-contract.mjs --json
 - `bothCount=162`
 - `onlyFrontend=["js_eval"]`
 - `onlyBackend=[]`
-- `frontend_implemented_count=123`
-- `registered_implemented_count=123`
-- `frontend_unsupported_stub_count=39`
-- `registered_unsupported_stub_count=39`
+- `frontend_implemented_count=126`
+- `registered_implemented_count=126`
+- `frontend_unsupported_stub_count=36`
+- `registered_unsupported_stub_count=36`
 
 `js_eval` 是有意不注册的安全阻断项，不得作为缺失命令处理。新增、删除或改变命令实现状态时必须同步更新 `docs/command-matrix.md`、相关规格文档与对应 gate 报告。
 
@@ -44,32 +44,41 @@ node scripts\ci\check-command-contract.mjs --json
 - 搜索结果：聚合结果按批增量回写，分组渲染改为懒展开，降低大量书源搜索时的主线程压力。
 - JS 搜索 / 章节 / 预取：加入协作取消，停止搜索或切换任务后旧结果不再继续污染 UI。
 - 大量书源导入：新增 `booksource_import_legacy_json_texts` 批量文本导入；URL 包导入和本地多文件导入都走批量链路。
+- 封面缓存：`cover_resolve_cache` / `cover_cache_size` / `cover_cache_clear` 已真实实现，支持同 URL 并发合并、8MB 流式大小上限、Tauri/headless 共用核心逻辑与 Web `/asset` 加载。
 - 喵/猫公子书源实测：`packages=10 entries=1259 resolve_ms=1344 sequential_ms=3809 combined_ms=3831 local_sequential_ms=4146 local_combined_ms=3807 local_speedup=1.09x`。
 
 ## 当前验证命令
 
 ```powershell
-cmd /c pnpm.cmd lint
+cmd /c pnpm.cmd exec oxfmt --check src/composables/useFileSrc.ts src/components/BookCoverImg.vue src/components/settings/SectionStorage.vue
+cmd /c pnpm.cmd exec vue-tsc -p tsconfig.app.json --noEmit
 cargo test -p reader-core import_legacy_json_text_reports_progress_batches -- --nocapture
 cargo test -p reader-core import_legacy_json_texts_skips_bad_item_and_imports_valid_sources -- --nocapture
 cargo test -p reader-core --test miaogongzi_import_perf miaogongzi_subscription_import_sequential_vs_combined -- --ignored --nocapture
 cargo test -p legado-tauri task_ -- --nocapture
 cargo test -p legado-tauri booksource_import_legacy_json_texts_accepts_request_id_in_ws_router -- --nocapture
 node scripts\ci\check-command-contract.mjs --json
+cargo test -p reader-core --test cover_cache -- --nocapture
+cargo test -p legado-tauri --test ws_router cover_cache_commands_are_routed -- --nocapture
+cargo test -p legado-tauri --test ws_router capabilities_get_returns_map -- --nocapture
 cargo check -p legado-tauri
+cargo check -p legado-headless
 cmd /c pnpm.cmd build:windows:release
 ```
 
-以上命令在 `3727a36` 推送到 `master` 前均已本地通过。Tauri 测试/构建仍可能输出已知 Windows linker stdout warning；当前不作为失败。
+2026-06-18 封面缓存迭代已实测通过新增/受影响链路的格式、类型、Rust check、命令契约与路由/缓存测试；旧性能专项命令仍作为后续回归队列保留。Tauri 测试/构建仍可能输出已知 Windows linker stdout warning；当前不作为失败。
+
+当前已知验证缺口：`cmd /c pnpm.cmd lint` 仍在仓库级 `oxfmt --check .` 阶段因 13 个未触碰文件的既有格式问题失败。新增/修改文件已通过 targeted `oxfmt --check`，`vue-tsc` 已通过。
 
 ## 当前未结工作
 
 - 继续审计依赖书源加载的功能：首次导入后刷新、书源管理批量操作、搜索启用源过多时的进度、取消、按源超时和失败聚合。
 - 继续优化本地书源导入：扩大样本，比较单文件、多文件、小文件密集和大文件包场景，避免只优化喵/猫公子一种形态。
 - 继续按用户要求做代码 review：优先关注性能热路径、取消语义、任务 token、前后端契约和错误提示。
-- 能力 backlog：`browser_probe`、TTS、漫画/封面缓存、video proxy、解锁挑战、百度/FTP provider。
+- 能力 backlog：`browser_probe`、TTS、漫画页缓存、video proxy、解锁挑战、百度/FTP provider。
 - 形态 B / LAN 严格验收仍需外部设备或可访问局域网环境。
 - 书源兼容：书旗/七猫 CDN 规则新鲜度与通用 `book.bookUrl` 绑定仍需按真实样本继续复查。
+- 2026-06-18 复查结论：书旗/七猫 CDN 仍是旧 `.backup.json` 等价版本，网络导入 content 仍 `EMPTY`，需要上游 CDN 更新；番茄 CDN 与本地一致；番茄短剧网络导入 URL 当前 404。
 
 ## 文档维护规则
 

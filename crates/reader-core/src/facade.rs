@@ -36,7 +36,9 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fs as std_fs;
 use std::future::Future;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -56,6 +58,8 @@ const SOURCE_LIST_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
 const SOURCE_LIST_DB_PAGE_SIZE: usize = 64;
 const SOURCE_TEXT_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
 const LEGADO_SOURCE_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
+const COVER_CACHE_MAX_BYTES: usize = 8 * 1024 * 1024;
+const COVER_CACHE_EXTS: &[&str] = &["jpg", "png", "webp", "gif", "bmp", "avif", "svg"];
 const SYNC_SUPPORTED_DOMAINS: &[&str] = &[
     "bookshelf",
     "reading_progress",
@@ -94,6 +98,122 @@ struct LegacyImportFileWrite {
     source: BookSource,
 }
 
+fn dir_size_blocking(path: &Path) -> io::Result<u64> {
+    let metadata = match std_fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(0),
+        Err(err) => return Err(err),
+    };
+    if metadata.is_file() {
+        return Ok(metadata.len());
+    }
+
+    let mut total = 0;
+    for entry in std_fs::read_dir(path)? {
+        let entry = entry?;
+        total += dir_size_blocking(&entry.path())?;
+    }
+    Ok(total)
+}
+
+fn clear_dir_blocking(path: &Path) -> io::Result<u64> {
+    let size = dir_size_blocking(path)?;
+    match std_fs::remove_dir_all(path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err),
+    }
+    std_fs::create_dir_all(path)?;
+    Ok(size)
+}
+
+fn clean_ext(value: &str) -> Option<String> {
+    let ext = value.trim().trim_start_matches('.').to_ascii_lowercase();
+    if ext.is_empty() || ext.len() > 5 || !ext.chars().all(|ch| ch.is_ascii_alphanumeric()) {
+        return None;
+    }
+    let normalized = match ext.as_str() {
+        "jpeg" => "jpg",
+        "jpg" | "png" | "webp" | "gif" | "bmp" | "avif" | "svg" => ext.as_str(),
+        _ => return None,
+    };
+    Some(normalized.to_string())
+}
+
+fn image_ext_from_content_type(content_type: Option<&str>) -> Option<String> {
+    let content_type = content_type?.split(';').next()?.trim().to_ascii_lowercase();
+    let ext = match content_type.as_str() {
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/png" => "png",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        "image/bmp" => "bmp",
+        "image/avif" => "avif",
+        "image/svg+xml" => "svg",
+        _ => return None,
+    };
+    Some(ext.to_string())
+}
+
+fn image_ext_from_url(url: &str) -> Option<String> {
+    let path = reqwest::Url::parse(url)
+        .ok()
+        .map(|parsed| parsed.path().to_string())
+        .unwrap_or_else(|| url.split('?').next().unwrap_or(url).to_string());
+    let ext = path.rsplit('.').next()?;
+    clean_ext(ext)
+}
+
+async fn cached_cover_file_path(cache_dir: &Path, base_name: &str) -> Option<PathBuf> {
+    for ext in COVER_CACHE_EXTS {
+        let candidate = cache_dir.join(format!("{base_name}.{ext}"));
+        if fs::metadata(&candidate)
+            .await
+            .map(|metadata| metadata.is_file())
+            .unwrap_or(false)
+        {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+async fn read_limited_cover_body(response: reqwest::Response) -> Result<Vec<u8>, ReaderCoreError> {
+    if response
+        .content_length()
+        .is_some_and(|len| len > COVER_CACHE_MAX_BYTES as u64)
+    {
+        return Err(ReaderCoreError::Message(format!(
+            "cover image exceeds {} bytes",
+            COVER_CACHE_MAX_BYTES
+        )));
+    }
+
+    let initial_capacity = response
+        .content_length()
+        .unwrap_or(0)
+        .min(COVER_CACHE_MAX_BYTES as u64) as usize;
+    let mut body = Vec::with_capacity(initial_capacity);
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        if body.len().saturating_add(chunk.len()) > COVER_CACHE_MAX_BYTES {
+            return Err(ReaderCoreError::Message(format!(
+                "cover image exceeds {} bytes",
+                COVER_CACHE_MAX_BYTES
+            )));
+        }
+        body.extend_from_slice(&chunk);
+    }
+
+    if body.is_empty() {
+        return Err(ReaderCoreError::Message(
+            "cover response body is empty".to_string(),
+        ));
+    }
+    Ok(body)
+}
+
 fn flatten_legacy_json_value(value: Value) -> Vec<Value> {
     match value {
         Value::Array(items) => items,
@@ -114,6 +234,7 @@ pub struct ReaderCore {
     source_list_cache: Arc<tokio::sync::RwLock<Option<SourceListCache>>>,
     source_text_cache: Arc<tokio::sync::RwLock<HashMap<PathBuf, SourceTextCacheEntry>>>,
     legado_source_cache: Arc<tokio::sync::RwLock<HashMap<String, LegadoSourceCacheEntry>>>,
+    cover_cache_locks: Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     /// 每本书在跑的缓存任务取消令牌：同书新任务自动取消旧任务，
     /// 防止前端调用超时重发导致任务堆积、对书源高频请求。
     prefetch_tasks: Arc<tokio::sync::Mutex<HashMap<String, Arc<AtomicBool>>>>,
@@ -127,6 +248,7 @@ impl ReaderCore {
         fs::create_dir_all(&js_source_dir).await?;
         fs::create_dir_all(&legado_source_dir).await?;
         fs::create_dir_all(reader_dir.join("cache").join("chapters")).await?;
+        fs::create_dir_all(reader_dir.join("cache").join("covers")).await?;
         fs::create_dir_all(reader_dir.join("config")).await?;
 
         let db_path = reader_dir.join("reader.db");
@@ -175,6 +297,7 @@ impl ReaderCore {
             source_list_cache: Arc::new(tokio::sync::RwLock::new(None)),
             source_text_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             legado_source_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            cover_cache_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             prefetch_tasks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         })
     }
@@ -2787,6 +2910,176 @@ impl ReaderCore {
 
     pub async fn sync_client_states_for_domains(&self, domains: &[String]) -> Vec<SyncClientState> {
         self.sync_runtime.client_states_for_domains(domains).await
+    }
+
+    fn cover_cache_dir(&self) -> PathBuf {
+        self.reader_dir.join("cache").join("covers")
+    }
+
+    async fn cover_cache_lock(&self, key: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self.cover_cache_locks.lock().await;
+        locks
+            .entry(key.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    }
+
+    async fn release_cover_cache_lock(&self, key: &str, lock: &Arc<tokio::sync::Mutex<()>>) {
+        let mut locks = self.cover_cache_locks.lock().await;
+        let should_remove = locks
+            .get(key)
+            .map(|current| Arc::ptr_eq(current, lock) && Arc::strong_count(lock) <= 2)
+            .unwrap_or(false);
+        if should_remove {
+            locks.remove(key);
+        }
+    }
+
+    pub async fn cover_cache_size(&self) -> Result<u64, ReaderCoreError> {
+        let cache_dir = self.cover_cache_dir();
+        tokio::task::spawn_blocking(move || dir_size_blocking(&cache_dir))
+            .await
+            .map_err(|err| {
+                ReaderCoreError::Message(format!("cover cache size task failed: {err}"))
+            })?
+            .map_err(ReaderCoreError::from)
+    }
+
+    pub async fn clear_cover_cache(&self) -> Result<u64, ReaderCoreError> {
+        let cache_dir = self.cover_cache_dir();
+        tokio::task::spawn_blocking(move || clear_dir_blocking(&cache_dir))
+            .await
+            .map_err(|err| {
+                ReaderCoreError::Message(format!("cover cache clear task failed: {err}"))
+            })?
+            .map_err(ReaderCoreError::from)
+    }
+
+    pub async fn resolve_cover_cache(
+        &self,
+        url: &str,
+        referer: Option<&str>,
+        headers: Option<&HashMap<String, String>>,
+    ) -> Result<String, ReaderCoreError> {
+        let parsed = reqwest::Url::parse(url.trim())
+            .map_err(|err| ReaderCoreError::Message(format!("invalid cover url: {err}")))?;
+        if !matches!(parsed.scheme(), "http" | "https") {
+            return Err(ReaderCoreError::Message(
+                "cover cache only supports http/https urls".to_string(),
+            ));
+        }
+
+        let cache_dir = self.cover_cache_dir();
+        fs::create_dir_all(&cache_dir).await?;
+        let url = parsed.as_str().to_string();
+        let base_name = md5_hex(&url);
+        if let Some(file_path) = cached_cover_file_path(&cache_dir, &base_name).await {
+            return Ok(file_path.to_string_lossy().to_string());
+        }
+
+        let lock = self.cover_cache_lock(&base_name).await;
+        let guard = lock.lock().await;
+        let result = self
+            .resolve_cover_cache_locked(&cache_dir, &url, &base_name, referer, headers)
+            .await;
+        drop(guard);
+        self.release_cover_cache_lock(&base_name, &lock).await;
+        result
+    }
+
+    async fn resolve_cover_cache_locked(
+        &self,
+        cache_dir: &Path,
+        url: &str,
+        base_name: &str,
+        referer: Option<&str>,
+        headers: Option<&HashMap<String, String>>,
+    ) -> Result<String, ReaderCoreError> {
+        if let Some(file_path) = cached_cover_file_path(cache_dir, base_name).await {
+            return Ok(file_path.to_string_lossy().to_string());
+        }
+
+        let client = reqwest::Client::builder()
+            .gzip(true)
+            .brotli(true)
+            .deflate(true)
+            .timeout(std::time::Duration::from_secs(30))
+            .build()?;
+        let mut builder = client
+            .get(url)
+            .header(
+                reqwest::header::USER_AGENT,
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            )
+            .header(
+                reqwest::header::ACCEPT,
+                "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+            );
+        if let Some(referer) = referer.map(str::trim).filter(|value| !value.is_empty()) {
+            builder = builder.header(reqwest::header::REFERER, referer);
+        }
+        if let Some(headers) = headers {
+            for (name, value) in headers {
+                let name = name.trim();
+                let lower = name.to_ascii_lowercase();
+                if matches!(lower.as_str(), "host" | "content-length") {
+                    continue;
+                }
+                let Ok(header_name) = reqwest::header::HeaderName::from_bytes(name.as_bytes())
+                else {
+                    continue;
+                };
+                let Ok(header_value) = reqwest::header::HeaderValue::from_str(value) else {
+                    continue;
+                };
+                builder = builder.header(header_name, header_value);
+            }
+        }
+
+        let response = builder.send().await?.error_for_status()?;
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        if let Some(content_type) = content_type.as_deref().map(str::trim) {
+            let media = content_type
+                .split(';')
+                .next()
+                .unwrap_or(content_type)
+                .trim()
+                .to_ascii_lowercase();
+            if !media.starts_with("image/") && media != "application/octet-stream" {
+                return Err(ReaderCoreError::Message(format!(
+                    "cover response is not an image: {content_type}"
+                )));
+            }
+        }
+
+        let ext = image_ext_from_content_type(content_type.as_deref())
+            .or_else(|| image_ext_from_url(url))
+            .unwrap_or_else(|| "jpg".to_string());
+        let file_path = cache_dir.join(format!("{base_name}.{ext}"));
+        if fs::metadata(&file_path)
+            .await
+            .map(|metadata| metadata.is_file())
+            .unwrap_or(false)
+        {
+            return Ok(file_path.to_string_lossy().to_string());
+        }
+
+        let body = read_limited_cover_body(response).await?;
+
+        let tmp_path = cache_dir.join(format!("{base_name}.{}.part", uuid::Uuid::new_v4()));
+        fs::write(&tmp_path, &body).await?;
+        if let Err(err) = fs::rename(&tmp_path, &file_path).await {
+            if file_path.exists() {
+                let _ = fs::remove_file(&tmp_path).await;
+            } else {
+                return Err(err.into());
+            }
+        }
+        Ok(file_path.to_string_lossy().to_string())
     }
 
     pub async fn resolve_audio_cache(

@@ -2,7 +2,7 @@
 
 记录各本地测试书源在 Tauri 项目中的兼容状态。
 
-最后实测：2026-06-13（新增中文维基文库经典小说 JS 源；公有领域《三國演義》search → bookInfo → toc → first/final content 全链路实网复测）。
+最后实测：2026-06-18（书旗/七猫/番茄/番茄短剧网络导入新鲜度复查；书旗/七猫本地与 CDN 链路复测）。
 
 实测命令：
 
@@ -20,6 +20,37 @@ cargo test -p reader-core wikisource_classics_public_domain_full_chain -- --igno
 ```
 
 状态枚举：`strict_pass`（mock/fixture）/ `live_network_pass`（实网通过）/ `live_network_ignored`（默认跳过）/ `partial` / `blocked_by_source_rule` / `blocked_by_platform` / `blocked_by_js_api` / `not_verified`。
+
+## 2026-06-18 书源新鲜度复查（SOURCE-FRESHNESS-RECHECK）
+
+复查范围：`E:\Book\书旗书源`、`E:\Book\七猫书源`、`E:\Book\番茄书源`、`E:\Book\番茄短剧`、`E:\Book\猫公子书源`。
+
+元信息结论：
+
+- 书旗 / 七猫 / 番茄本地 JSON 均无 `bookSourceComment` / `updateUrl` 等显式更新备注；`lastUpdateTime` 分别为 2026-01-26、2026-01-26、2026-04-14。
+- 番茄短剧 `lastUpdateTime=0`，有备注 `作者：明月照大江&Distance远方`，网络导入 URL 当前返回 404。
+- 猫公子大包 manifest 为 `猫公子书源-搜索优先修复版`，`generatedAt=2026-06-13T14:45:00Z`，`totalItems=1092`，记录了若初文学、阅友小说、飞卢小说 3 个搜索优先修复项。
+
+CDN 新鲜度：
+
+| 源       | CDN 状态                                                                           | 当前判断                                                                                    |
+| -------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| 书旗     | 200，raw sha256 `a46f80d86c...`，等于本地 `.backup.json`，不等于本地更新版 `.json` | CDN 仍是旧规则；网络导入 search/toc 可用，content 仍 `EMPTY`，需要上游 CDN 更新 ruleContent |
+| 七猫     | 200，raw sha256 `902cd4f57...`，等于本地 `.backup.json`，不等于本地更新版 `.json`  | CDN 仍是旧规则；网络导入 search/toc 可用，content 仍 `EMPTY`，需要上游 CDN 更新 ruleContent |
+| 番茄     | 200，raw sha256 `59e47254a...`，等于本地 `.json`                                   | CDN 与本地一致；导入/列表通过，完整链路仍受 source-side `device_register` 影响              |
+| 番茄短剧 | 404                                                                                | 网络导入入口失效；本地文件仍可作为短剧/文章源后续专项验证                                   |
+
+实网复测：
+
+```powershell
+cargo test -p reader-core --test source_compat_import qimao_source_full_chain -- --ignored --nocapture --test-threads=1
+cargo test -p reader-core --test source_compat_import shuqi_source_full_chain -- --ignored --nocapture --test-threads=1
+cargo test -p reader-core --test source_compat_import shuqi_network_import_full_chain -- --ignored --nocapture --test-threads=1
+cargo test -p reader-core --test source_compat_import qimao_network_import_full_chain -- --ignored --nocapture --test-threads=1
+cargo test -p reader-core --test source_compat_import fanqie_network_import -- --ignored --nocapture --test-threads=1
+```
+
+结果：七猫本地全链路通过；书旗本地首次遇到 `jh.52dns.cc` TLS peer closed connection without `close_notify`，5 秒后重试通过，说明源站链路有短时抖动；书旗/七猫 CDN 网络导入仍能 search/toc，但正文为空，符合 CDN 旧规则判断；番茄网络导入与列表通过。
 
 ## 2026-06-13 中文维基文库经典小说 JS 源（SOURCE-WIKISOURCE-CLASSICS）
 
