@@ -17,6 +17,7 @@ Last updated: 2026-06-19
 - Current 2026-06-19 delivery gate：`reports/gates/2026-06-19-WINDOWS-STARTUP-SOURCE-STABILITY/summary.md`
 - Current 2026-06-19 delivery gate：`reports/gates/2026-06-19-REPOSITORY-REQUEST-PACING/summary.md`
 - Current 2026-06-19 delivery gate: `reports/gates/2026-06-19-ONLINE-SOURCE-SYNC-STATUS/summary.md`
+- Current 2026-06-19 delivery gate: `reports/gates/2026-06-19-REPOSITORY-SOURCEDIR-STABILITY/summary.md`
 
 ## 当前契约基线
 
@@ -59,6 +60,7 @@ node scripts\ci\check-command-contract.mjs --json
 - Windows startup/source stability：已修复 legacy SQLx migration-4 checksum 导致的 Windows 启动 panic/闪退；书源列表前端先完成事件监听再启动 streaming，并增加 80s final-batch timeout；后台 `@updateUrl` 检查降为单并发并间隔 1200ms，避免启动后对 CDN 源短时突发请求。实测 rebuilt Windows release：窗口 916ms 出现、2318ms UI ready、书源管理 2250ms 加载 1068 源、发现页 766ms 加载 957 个发现源。
 - Repository request pacing：在线仓库已安装源一致性检查降为单并发并间隔 1200ms；批量安装/更新下载降为单并发并间隔 1500ms；安装/更新成功后直接标记 synced，避免同一远端文件下载后立刻再下载比较；批量更新结束后只触发一次父级 reload。
 - Online source sync status: restored the installed online-source card status row, normalized repository command errors with `formatRepositoryError()`, and stopped passing source-name identity fallbacks as backend `expectedUuid` values when a manifest omits explicit `uuid`.
+- Repository sourceDir stability: repository install/sync now carries `sourceDir` through frontend, Tauri IPC, Tauri WS, headless dispatch, and `reader-core`; online repository updates for external-directory sources now read and overwrite the matched file instead of creating or comparing against the default source directory.
 
 ## 当前验证命令
 
@@ -71,6 +73,8 @@ cargo test -p reader-core import_legacy_json_texts_skips_bad_item_and_imports_va
 cargo test -p reader-core --test miaogongzi_import_perf miaogongzi_subscription_import_sequential_vs_combined -- --ignored --nocapture
 cargo test -p legado-tauri task_ -- --nocapture
 cargo test -p legado-tauri booksource_import_legacy_json_texts_accepts_request_id_in_ws_router -- --nocapture
+cargo test -p reader-core --test repository -- --nocapture
+cargo test -p legado-tauri --test ws_router repository_commands_are_routed -- --nocapture
 node scripts\ci\check-command-contract.mjs --json
 cargo test -p legado-headless -- --nocapture
 cargo test -p legado-headless repository_ -- --nocapture
@@ -102,6 +106,7 @@ cmd /c pnpm.cmd exec oxfmt --check src/components/booksource/OnlineSourcesTab.vu
 2026-06-19 Windows startup/source stability iteration verified `cmd /c pnpm.cmd lint`, `git diff --check`, `cargo test -p reader-core --test db_migrations -- --nocapture`, `cargo check -p reader-core`, `cargo check -p legado-tauri`, `cmd /c pnpm.cmd build:windows:release`, and Windows desktop smoke against the rebuilt release. The app no longer exits immediately after launch on the repaired migration state.
 2026-06-19 repository request pacing iteration verified `vue-tsc`, targeted `oxfmt`, `git diff --check`, full `cmd /c pnpm.cmd lint`, `cmd /c pnpm.cmd build:windows:release`, and Windows desktop smoke. The rebuilt client launched, source management showed 1068 sources / 1034 enabled, and the online source tab opened in 517ms without UI lockup.
 2026-06-19 online source sync status iteration verified `vue-tsc`, targeted `oxfmt`, full `cmd /c pnpm.cmd lint`, `git diff --check`, `cmd /c pnpm.cmd build:windows:release`, and Windows desktop smoke. The rebuilt client launched in 3716ms, source management showed 1069 sources / 1035 enabled with a local fixture, online repository showed `已安装 1`, and the installed card reached `已同步` without `[object Object]`.
+2026-06-19 repository sourceDir stability iteration verified `cargo test -p reader-core --test repository -- --nocapture`, `cargo test -p legado-tauri --test ws_router repository_commands_are_routed -- --nocapture`, `cargo test -p legado-headless repository_ -- --nocapture`, `cargo check -p legado-tauri`, `cargo check -p legado-headless`, full `cmd /c pnpm.cmd lint`, `git diff --check`, `cmd /c pnpm.cmd build:windows:release`, and Windows desktop smoke. The rebuilt client launched in 3723ms, source management showed 1068 sources / 1034 enabled, and searching `Dragon` filtered to 2 enabled sources in 1229ms.
 
 ## 当前未结工作
 

@@ -312,6 +312,7 @@ async function loadInstalledState(
         existing.fileName,
         targetUrl,
         remoteMeta.uuid,
+        existing.sourceDir,
       );
       if (runId !== loadRunId) {
         return;
@@ -473,8 +474,14 @@ async function performInstall(current: RemoteBookSourcePreview) {
   installing.value = true;
   try {
     const targetFileName = installTargetFileName.value || current.meta.fileName;
+    const targetSourceDir = localSource.value?.sourceDir;
     try {
-      await installFromRepository(current.downloadUrl, targetFileName, current.meta.uuid);
+      await installFromRepository(
+        current.downloadUrl,
+        targetFileName,
+        current.meta.uuid,
+        targetSourceDir,
+      );
     } catch (e: unknown) {
       // 如果目标路径存在另一个 UUID 的文件（可能因 UUID 去重未出现在已安装列表中），
       // 自动改用备用文件名重试一次

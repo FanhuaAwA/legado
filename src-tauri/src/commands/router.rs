@@ -418,22 +418,39 @@ pub async fn dispatch<R: tauri::Runtime>(
             reply(sync_misc::repository_preview_source(state, download_url, expected_uuid).await)
         }
         "repository_install" => {
-            let (download_url, file_name, expected_uuid) = parsed!(raw, {
+            let (download_url, file_name, expected_uuid, source_dir) = parsed!(raw, {
                 download_url: String,
                 file_name: String,
                 expected_uuid: Option<String>,
-            });
-            reply(sync_misc::repository_install(state, download_url, file_name, expected_uuid).await)
-        }
-        "repository_check_source_sync" => {
-            let (file_name, download_url, expected_uuid) = parsed!(raw, {
-                file_name: String,
-                download_url: String,
-                expected_uuid: Option<String>,
+                source_dir: Option<String>,
             });
             reply(
-                sync_misc::repository_check_source_sync(state, file_name, download_url, expected_uuid)
-                    .await,
+                sync_misc::repository_install(
+                    state,
+                    download_url,
+                    file_name,
+                    expected_uuid,
+                    source_dir,
+                )
+                .await,
+            )
+        }
+        "repository_check_source_sync" => {
+            let (file_name, download_url, expected_uuid, source_dir) = parsed!(raw, {
+                file_name: String,
+                download_url: String,
+                expected_uuid: Option<String>,
+                source_dir: Option<String>,
+            });
+            reply(
+                sync_misc::repository_check_source_sync(
+                    state,
+                    file_name,
+                    download_url,
+                    expected_uuid,
+                    source_dir,
+                )
+                .await,
             )
         }
 

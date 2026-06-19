@@ -1309,12 +1309,13 @@ export async function installFromRepository(
   downloadUrl: string,
   fileName: string,
   expectedUuid?: string,
+  sourceDir?: string,
 ): Promise<void> {
   await capabilities.requireCapability("repository");
 
   return invokeWithTimeout<void>(
     "repository_install",
-    { downloadUrl, fileName, expectedUuid: expectedUuid ?? null },
+    { downloadUrl, fileName, expectedUuid: expectedUuid ?? null, sourceDir: sourceDir ?? null },
     35000,
   );
 }
@@ -1338,12 +1339,13 @@ export async function checkRepositorySourceSync(
   fileName: string,
   downloadUrl: string,
   expectedUuid?: string,
+  sourceDir?: string,
 ): Promise<RepoSourceSyncResult> {
   await capabilities.requireCapability("repository");
 
   return invokeWithTimeout<RepoSourceSyncResult>(
     "repository_check_source_sync",
-    { fileName, downloadUrl, expectedUuid: expectedUuid ?? null },
+    { fileName, downloadUrl, expectedUuid: expectedUuid ?? null, sourceDir: sourceDir ?? null },
     35000,
   );
 }

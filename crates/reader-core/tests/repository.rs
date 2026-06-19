@@ -75,7 +75,7 @@ async fn repository_and_source_update_round_trip() {
     );
 
     // 4) install, then the file is on disk with the remote version
-    core.repository_install(&source_url, "demo.js", Some("abc-123"))
+    core.repository_install(&source_url, "demo.js", Some("abc-123"), None)
         .await
         .expect("install should succeed");
     let installed = core.read_source("demo.js", None).await.unwrap();
@@ -83,11 +83,11 @@ async fn repository_and_source_update_round_trip() {
 
     // install must reject a non-.js file name and non-source content
     assert!(core
-        .repository_install(&source_url, "demo.txt", None)
+        .repository_install(&source_url, "demo.txt", None, None)
         .await
         .is_err());
     assert!(
-        core.repository_install(&format!("{base}/repo.json"), "x.js", None)
+        core.repository_install(&format!("{base}/repo.json"), "x.js", None, None)
             .await
             .is_err(),
         "installing a JSON manifest as a source must fail"
@@ -95,13 +95,61 @@ async fn repository_and_source_update_round_trip() {
 
     // 5) consistency check: freshly installed copy matches the remote
     let sync = core
-        .repository_check_source_sync("demo.js", &source_url, Some("abc-123"))
+        .repository_check_source_sync("demo.js", &source_url, Some("abc-123"), None)
         .await
         .expect("sync check should succeed");
     assert!(sync.is_consistent);
     assert_eq!(sync.local_version, "2.0.0");
     assert_eq!(sync.remote_version, "2.0.0");
     assert_eq!(sync.uuid, "abc-123");
+
+    // 5b) consistency check and install must respect external source dirs.
+    let external = tempfile::tempdir().unwrap();
+    let external_dir = external.path().to_str().unwrap();
+    core.add_source_dir(external_dir).await.unwrap();
+    let external_v1 = format!(
+        "// @name        Demo Source\n\
+// @version     1.0.0\n\
+// @uuid        abc-123\n\
+// @url         https://demo.example\n\
+// @updateUrl   {source_url}\n\
+// @enabled     false\n\
+function search() {{ return []; }}\n"
+    );
+    core.save_js_source("external-repo.js", &external_v1, Some(external_dir))
+        .await
+        .unwrap();
+
+    let external_sync = core
+        .repository_check_source_sync(
+            "external-repo.js",
+            &source_url,
+            Some("abc-123"),
+            Some(external_dir),
+        )
+        .await
+        .expect("external sync check should read from the external source dir");
+    assert!(!external_sync.is_consistent);
+    assert_eq!(external_sync.local_version, "1.0.0");
+    assert_eq!(external_sync.remote_version, "2.0.0");
+
+    core.repository_install(
+        &source_url,
+        "external-repo.js",
+        Some("abc-123"),
+        Some(external_dir),
+    )
+    .await
+    .expect("install should overwrite the external source file");
+    let external_updated = core
+        .read_source("external-repo.js", Some(external_dir))
+        .await
+        .unwrap();
+    assert!(external_updated.contains("@version     2.0.0"));
+    assert!(
+        core.read_source("external-repo.js", None).await.is_err(),
+        "repository install with source_dir must not create a default-dir duplicate"
+    );
 
     // 6) @updateUrl auto-update: a local v1 source pointing at the v2 endpoint
     let v1 = format!(

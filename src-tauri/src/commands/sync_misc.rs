@@ -522,10 +522,16 @@ pub async fn repository_install(
     download_url: String,
     file_name: String,
     expected_uuid: Option<String>,
+    source_dir: Option<String>,
 ) -> CommandResult<()> {
     state
         .core
-        .repository_install(&download_url, &file_name, expected_uuid.as_deref())
+        .repository_install(
+            &download_url,
+            &file_name,
+            expected_uuid.as_deref(),
+            source_dir.as_deref(),
+        )
         .await
         .map_err(map_err)
 }
@@ -537,10 +543,16 @@ pub async fn repository_check_source_sync(
     file_name: String,
     download_url: String,
     expected_uuid: Option<String>,
+    source_dir: Option<String>,
 ) -> CommandResult<RepoSourceSync> {
     state
         .core
-        .repository_check_source_sync(&file_name, &download_url, expected_uuid.as_deref())
+        .repository_check_source_sync(
+            &file_name,
+            &download_url,
+            expected_uuid.as_deref(),
+            source_dir.as_deref(),
+        )
         .await
         .map_err(map_err)
 }

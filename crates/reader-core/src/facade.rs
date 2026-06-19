@@ -1202,6 +1202,7 @@ impl ReaderCore {
         download_url: &str,
         file_name: &str,
         expected_uuid: Option<&str>,
+        source_dir: Option<&str>,
     ) -> Result<(), ReaderCoreError> {
         ensure_safe_file_name(file_name)?;
         if !file_name.to_ascii_lowercase().ends_with(".js") {
@@ -1212,7 +1213,7 @@ impl ReaderCore {
         let content = self
             .download_validated_source(download_url, expected_uuid)
             .await?;
-        self.save_js_source(file_name, &content, None).await
+        self.save_js_source(file_name, &content, source_dir).await
     }
 
     /// Compare a locally installed source with the repository copy, ignoring
@@ -1222,8 +1223,9 @@ impl ReaderCore {
         file_name: &str,
         download_url: &str,
         expected_uuid: Option<&str>,
+        source_dir: Option<&str>,
     ) -> Result<RepoSourceSync, ReaderCoreError> {
-        let local = self.read_source(file_name, None).await?;
+        let local = self.read_source(file_name, source_dir).await?;
         let remote = self
             .download_validated_source(download_url, expected_uuid)
             .await?;

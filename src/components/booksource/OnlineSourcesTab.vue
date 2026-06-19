@@ -439,6 +439,7 @@ async function checkSingleSourceSync(src: RepoSourceInfo, runId: number) {
       local.fileName,
       src.downloadUrl,
       sourceExpectedUuid(src),
+      local.sourceDir,
     );
     if (runId !== syncRunId) {
       return;
@@ -825,7 +826,12 @@ async function performRepositoryUpdate(
     if (!local) {
       throw new Error("未找到同一 UUID 的本地书源");
     }
-    await installFromRepository(src.downloadUrl, local.fileName, sourceExpectedUuid(src));
+    await installFromRepository(
+      src.downloadUrl,
+      local.fileName,
+      sourceExpectedUuid(src),
+      local.sourceDir,
+    );
     setSyncState(src, makeSyncedState(src, src.version || local.version));
     if (reloadAfterUpdate) {
       emits("reload");

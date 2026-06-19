@@ -565,7 +565,8 @@ async fn dispatch(state: &AppState, raw: &str, out: &WsOutgoing) -> Option<Strin
             let download_url = arg_str(&args, "downloadUrl").unwrap_or("");
             let file_name = arg_str(&args, "fileName").unwrap_or("");
             let expected_uuid = arg_str(&args, "expectedUuid");
-            core.repository_install(download_url, file_name, expected_uuid)
+            let source_dir = arg_str(&args, "sourceDir");
+            core.repository_install(download_url, file_name, expected_uuid, source_dir)
                 .await
                 .map(|()| Value::Null)
                 .map_err(|e| e.to_string())
@@ -574,7 +575,8 @@ async fn dispatch(state: &AppState, raw: &str, out: &WsOutgoing) -> Option<Strin
             let file_name = arg_str(&args, "fileName").unwrap_or("");
             let download_url = arg_str(&args, "downloadUrl").unwrap_or("");
             let expected_uuid = arg_str(&args, "expectedUuid");
-            core.repository_check_source_sync(file_name, download_url, expected_uuid)
+            let source_dir = arg_str(&args, "sourceDir");
+            core.repository_check_source_sync(file_name, download_url, expected_uuid, source_dir)
                 .await
                 .map(|v| serde_json::to_value(v).unwrap_or_default())
                 .map_err(|e| e.to_string())

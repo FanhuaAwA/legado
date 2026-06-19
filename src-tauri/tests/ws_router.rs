@@ -123,6 +123,40 @@ async fn repository_commands_are_routed() {
         .await
         .expect_err("缺少 url 应报错");
     assert!(err.starts_with("INVALID_ARGS"), "实际: {err}");
+
+    let err = router::dispatch(
+        app.handle(),
+        "repository_install",
+        &json!({
+            "downloadUrl": "not-a-url",
+            "fileName": "demo.js",
+            "expectedUuid": null,
+            "sourceDir": "C:/not-real-source-dir"
+        }),
+    )
+    .await
+    .expect_err("invalid URL should reach repository_install command logic");
+    assert!(
+        !err.starts_with("INVALID_ARGS"),
+        "sourceDir should parse before command logic runs: {err}"
+    );
+
+    let err = router::dispatch(
+        app.handle(),
+        "repository_check_source_sync",
+        &json!({
+            "fileName": "missing.js",
+            "downloadUrl": "http://127.0.0.1/source.js",
+            "expectedUuid": null,
+            "sourceDir": "C:/not-real-source-dir"
+        }),
+    )
+    .await
+    .expect_err("missing local source should reach repository_check_source_sync command logic");
+    assert!(
+        !err.starts_with("INVALID_ARGS"),
+        "sourceDir should parse before command logic runs: {err}"
+    );
 }
 
 #[tokio::test]

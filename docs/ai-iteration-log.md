@@ -4,12 +4,20 @@ Last updated: 2026-06-19
 
 本文件是当前迭代索引，不再保存完整对话式流水。2026-06-15 之前的长历史、旧续办提示和过期命令统计已清理；需要追溯请查看 git history 与 `reports/gates/*/summary.md`。
 
+## 2026-06-19 Repository SourceDir Stability Iteration
+
+- Gate report: `reports/gates/2026-06-19-REPOSITORY-SOURCEDIR-STABILITY/summary.md`
+- Main fixes: carry `sourceDir` through repository install/sync commands across frontend, Tauri IPC, Tauri WS, headless dispatch, and `reader-core`, so online repository updates for external-directory sources read and overwrite the matched local file instead of the default source directory.
+- Validation: reader-core repository test covers external-dir sync/install with no default-dir duplicate; Tauri WS route test covers `sourceDir` argument parsing; headless repository tests, Tauri/headless checks, full `pnpm lint`, `git diff --check`, and `build:windows:release` passed.
+- Windows desktop smoke: rebuilt release launched in 3723ms, source management showed 1068 sources / 1034 enabled, and searching `Dragon` filtered to 2 enabled sources in 1229ms without crashing.
+- Source freshness: local installed-source text scan covered 1076 files; a focused degraded-remark scan matched 40 files / 50 lines, including visible `DragonQuestQB*` remarks that the source is partly degraded and newest chapters cannot be read.
+
 ## 2026-06-19 Online Source Sync Status Iteration
 
 - Gate report: `reports/gates/2026-06-19-ONLINE-SOURCE-SYNC-STATUS/summary.md`
 - Main fixes: restore the installed online-source card sync status row, format repository command errors with `formatRepositoryError()`, and split repository identity fallback from explicit UUID validation so no-UUID manifests no longer send a source name as `expectedUuid`.
 - Windows desktop smoke: rebuilt release launched in 3716ms, source management loaded 1069 sources / 1035 enabled with the local fixture, online repository showed `已安装 1`, and the card status row reached `已同步` without `[object Object]` or a false UUID mismatch.
-- Residual: backend repository sync still reads the local source by file name in the default source directory; a future pass should add `sourceDir` to that command for external source directories.
+- Follow-up: the external `sourceDir` repository sync/update gap identified here is closed by the `Repository SourceDir Stability` iteration above.
 
 ## 2026-06-19 Windows Startup And Source Stability Iteration
 
@@ -119,6 +127,7 @@ Last updated: 2026-06-19
 - `reports/gates/2026-06-19-WINDOWS-STARTUP-SOURCE-STABILITY/summary.md`
 - `reports/gates/2026-06-19-REPOSITORY-REQUEST-PACING/summary.md`
 - `reports/gates/2026-06-19-ONLINE-SOURCE-SYNC-STATUS/summary.md`
+- `reports/gates/2026-06-19-REPOSITORY-SOURCEDIR-STABILITY/summary.md`
 
 ## 当前契约快照
 
