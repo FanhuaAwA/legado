@@ -105,6 +105,11 @@ const syncRunning = ref(false);
 const bulkUpdating = ref(false);
 const bulkForceUpdating = ref(false);
 
+const REPOSITORY_SYNC_CHECK_CONCURRENCY = 1;
+const REPOSITORY_SYNC_CHECK_PAUSE_MS = 1_200;
+const REPOSITORY_BULK_TRANSFER_CONCURRENCY = 1;
+const REPOSITORY_BULK_TRANSFER_PAUSE_MS = 1_500;
+
 const showRepoModal = ref(false);
 const repoForm = ref({ id: "", name: "", url: "", description: "" });
 
@@ -144,6 +149,44 @@ const repoUrlFeedback = computed(() => {
 });
 
 let syncRunId = 0;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function pauseBetweenRepositoryRequests(nextIndex: number, total: number, pauseMs: number) {
+  if (nextIndex < total) {
+    await sleep(pauseMs);
+  }
+}
+
+async function runRepositoryQueue<T>(
+  items: T[],
+  concurrency: number,
+  pauseMs: number,
+  worker: (item: T, index: number) => Promise<void>,
+  shouldContinue: () => boolean = () => true,
+): Promise<void> {
+  let nextIndex = 0;
+
+  const lane = async () => {
+    while (shouldContinue()) {
+      const index = nextIndex++;
+      if (index >= items.length) {
+        return;
+      }
+      await worker(items[index]!, index);
+      if (!shouldContinue()) {
+        return;
+      }
+      await pauseBetweenRepositoryRequests(index + 1, items.length, pauseMs);
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(concurrency, items.length)) }, () => lane()),
+  );
+}
 
 function normalizeRepoUrl(url: string) {
   return url.trim();
@@ -339,6 +382,16 @@ function makeInitialSyncState(src: RepoSourceInfo): RepoSyncState {
   };
 }
 
+function makeSyncedState(src: RepoSourceInfo, localVersion?: string): RepoSyncState {
+  const remoteVersion = src.version ?? "";
+  return {
+    status: "synced",
+    localVersion: localVersion || remoteVersion,
+    remoteVersion,
+    error: "",
+  };
+}
+
 /** 获取在线书源相对于本地安装版本的差异类型。 */
 function getVersionDiff(src: RepoSourceInfo): "upgrade" | "downgrade" | "same" | null {
   const local = getLocalSource(src);
@@ -416,31 +469,22 @@ async function runInstalledSyncChecks(sources: RepoSourceInfo[], announce = fals
     return;
   }
 
+  const initialStates: Record<string, RepoSyncState> = {};
   for (const src of targets) {
-    setSyncState(src, {
-      ...makeInitialSyncState(src),
-      status: "checking",
-    });
+    initialStates[syncKey(src)] = makeInitialSyncState(src);
   }
+  syncStates.value = initialStates;
 
   syncRunning.value = true;
-  const queue = targets.slice();
-  const concurrency = Math.min(4, targets.length);
-
-  const worker = async () => {
-    while (queue.length) {
-      if (runId !== syncRunId) {
-        return;
-      }
-      const current = queue.shift();
-      if (!current) {
-        return;
-      }
-      await checkSingleSourceSync(current, runId);
-    }
-  };
-
-  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  await runRepositoryQueue(
+    targets,
+    REPOSITORY_SYNC_CHECK_CONCURRENCY,
+    REPOSITORY_SYNC_CHECK_PAUSE_MS,
+    async (src) => {
+      await checkSingleSourceSync(src, runId);
+    },
+    () => runId === syncRunId,
+  );
 
   if (runId !== syncRunId) {
     return;
@@ -466,13 +510,6 @@ async function runInstalledSyncChecks(sources: RepoSourceInfo[], announce = fals
     summary.push(`${failed} 个检查失败`);
   }
   showStatusMsg("warning", summary.join("，"));
-}
-
-async function refreshSingleSourceSync(src: RepoSourceInfo) {
-  if (!syncRunId) {
-    syncRunId = 1;
-  }
-  await checkSingleSourceSync(src, syncRunId);
 }
 
 async function fetchOnlineSources(
@@ -682,7 +719,7 @@ function installSource(src: RepoSourceInfo) {
 async function onInstallDialogInstalled(payload: { name: string; fileName: string; uuid: string }) {
   const src = onlineSources.value.find((s) => sourceUuid(s) === payload.uuid);
   if (src) {
-    await refreshSingleSourceSync(src);
+    setSyncState(src, makeSyncedState(src));
   }
   emits("reload");
 }
@@ -732,25 +769,27 @@ async function installAll() {
   // 预先建立"已占用文件名"集合，用于并发安装时避免互相抢占同一备用文件名
   const reservedNames = new Set(props.sources.map((s) => s.fileName));
 
-  const results = await Promise.allSettled(
-    toInstall.map(async (src) => {
+  let ok = 0;
+  const failedMessages: string[] = [];
+  await runRepositoryQueue(
+    toInstall,
+    REPOSITORY_BULK_TRANSFER_CONCURRENCY,
+    REPOSITORY_BULK_TRANSFER_PAUSE_MS,
+    async (src) => {
       installingSet.value.add(src.fileName);
       try {
         const targetFileName = resolveInstallFileName(src.fileName, sourceUuid(src), reservedNames);
         reservedNames.add(targetFileName);
         await installFromRepository(src.downloadUrl, targetFileName, sourceUuid(src));
-        await refreshSingleSourceSync(src);
+        setSyncState(src, makeSyncedState(src));
+        ok++;
+      } catch (e: unknown) {
+        failedMessages.push(e instanceof Error ? e.message : String(e));
       } finally {
         installingSet.value.delete(src.fileName);
       }
-    }),
+    },
   );
-  const ok = results.filter((r) => r.status === "fulfilled").length;
-  const failedMessages = results
-    .filter((r) => r.status === "rejected")
-    .map((r) => (r as PromiseRejectedResult).reason)
-    .map((reason) => (reason instanceof Error ? reason.message : String(reason)))
-    .filter(Boolean);
   emits("reload");
   if (failedMessages.length) {
     message.warning(
@@ -761,7 +800,12 @@ async function installAll() {
   }
 }
 
-async function performRepositoryUpdate(src: RepoSourceInfo, force = false, silent = false) {
+async function performRepositoryUpdate(
+  src: RepoSourceInfo,
+  force = false,
+  silent = false,
+  reloadAfterUpdate = true,
+) {
   if (!ensureRepositoryAvailable()) {
     return false;
   }
@@ -777,8 +821,10 @@ async function performRepositoryUpdate(src: RepoSourceInfo, force = false, silen
       throw new Error("未找到同一 UUID 的本地书源");
     }
     await installFromRepository(src.downloadUrl, local.fileName, sourceUuid(src));
-    await refreshSingleSourceSync(src);
-    emits("reload");
+    setSyncState(src, makeSyncedState(src, src.version || local.version));
+    if (reloadAfterUpdate) {
+      emits("reload");
+    }
     if (!silent) {
       message.success(force ? `已强制更新「${src.name}」` : `已更新「${src.name}」`);
     }
@@ -855,15 +901,21 @@ async function updateAll(force = false) {
   let ok = 0;
   let failed = 0;
   try {
-    const updateResults = await Promise.allSettled(
-      targets.map((src) => performRepositoryUpdate(src, force, true)),
+    await runRepositoryQueue(
+      targets,
+      REPOSITORY_BULK_TRANSFER_CONCURRENCY,
+      REPOSITORY_BULK_TRANSFER_PAUSE_MS,
+      async (src) => {
+        const updated = await performRepositoryUpdate(src, force, true, false);
+        if (updated) {
+          ok++;
+        } else {
+          failed++;
+        }
+      },
     );
-    for (const r of updateResults) {
-      if (r.status === "fulfilled" && r.value) {
-        ok++;
-      } else {
-        failed++;
-      }
+    if (ok) {
+      emits("reload");
     }
   } finally {
     if (force) {

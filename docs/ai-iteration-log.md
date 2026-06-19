@@ -11,6 +11,12 @@ Last updated: 2026-06-19
 - Windows desktop smoke: rebuilt release stayed open; cold launch window appeared in 916ms, UI was ready in 2318ms, source management loaded 1068 sources / 1034 enabled in 2250ms, source filtering responded in 564ms, and discover loaded 957 discover sources in 766ms. Automated scroll-state proof remained inconclusive and is recorded as residual risk, not a pass.
 - Source freshness: qimao/shuqi CDN files still equal local `.backup.json` and differ from refreshed local `.json`; fanqie CDN matches local; fanqie short-drama CDN URL still returns 404. Installed source scan found 77 explicit degraded/expired-style remarks and no `updateUrl` values in the installed Legado JSON set.
 
+## 2026-06-19 Repository Request Pacing Iteration
+
+- Gate report: `reports/gates/2026-06-19-REPOSITORY-REQUEST-PACING/summary.md`
+- Main fixes: online repository installed-source sync checks now run one at a time with 1200ms spacing; bulk repository install/update downloads run one at a time with 1500ms spacing; successful repository installs/updates mark the source synced without immediately re-downloading the same file for comparison; bulk update now emits one parent reload instead of reloading after every source.
+- Validation: `vue-tsc`, targeted `oxfmt`, `git diff --check`, full `pnpm lint`, and `build:windows:release` passed. Windows desktop smoke launched the rebuilt client, opened source management with 1068 sources / 1034 enabled, and opened the online source tab in 517ms without UI lockup.
+
 ## 2026-06-18 Source Stability Iteration
 
 - Gate report: `reports/gates/2026-06-18-PERF-SOURCE-STABILITY/summary.md`
@@ -104,6 +110,7 @@ Last updated: 2026-06-19
 - `reports/gates/2026-06-18-EXTERNAL-OPEN-WRAPPER/summary.md`
 - `reports/gates/2026-06-18-BACKUP-HEADLESS-DATA/summary.md`
 - `reports/gates/2026-06-19-WINDOWS-STARTUP-SOURCE-STABILITY/summary.md`
+- `reports/gates/2026-06-19-REPOSITORY-REQUEST-PACING/summary.md`
 
 ## 当前契约快照
 
