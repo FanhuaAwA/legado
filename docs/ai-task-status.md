@@ -1,6 +1,6 @@
 # AI Task Status
 
-Last updated: 2026-06-18
+Last updated: 2026-06-19
 
 本文件只记录当前维护状态、可继续执行的队列和必须遵守的口径。旧的逐轮流水、未完成提示和过期统计已删除；需要考古时使用 git history 与 `reports/gates/*/summary.md`。
 
@@ -14,6 +14,7 @@ Last updated: 2026-06-18
 - Windows release artifact：
   - `target/x86_64-pc-windows-msvc/release/legado-tauri.exe`
   - `构建结果/windows/legado-tauri.exe`
+- Current 2026-06-19 delivery gate：`reports/gates/2026-06-19-WINDOWS-STARTUP-SOURCE-STABILITY/summary.md`
 
 ## 当前契约基线
 
@@ -53,6 +54,7 @@ node scripts\ci\check-command-contract.mjs --json
 - Prefetch WS events：R-P2-012 已关闭；Tauri WS router 与 headless WS 均可执行 `bookshelf_prefetch_chapters` 并推送 `shelf:prefetch-progress` / `shelf:prefetch-done`。
 - External open wrapper：业务组件已不再直接 import `@tauri-apps/plugin-opener`；外部链接打开统一走 `useExternalOpen.ts`，浏览器/headless 分支已修复 `noopener,noreferrer` 返回 `null` 导致的误报失败。
 - Backup headless data：备份 inspect/create/peek/restore 载荷逻辑已下沉到 `reader-core`；Tauri 与 headless 复用同一实现，浏览器/headless 使用 data-transfer 下载、文件选择、预览与还原链路，headless path 型备份命令明确拒绝服务端路径读写。
+- Windows startup/source stability：已修复 legacy SQLx migration-4 checksum 导致的 Windows 启动 panic/闪退；书源列表前端先完成事件监听再启动 streaming，并增加 80s final-batch timeout；后台 `@updateUrl` 检查降为单并发并间隔 1200ms，避免启动后对 CDN 源短时突发请求。实测 rebuilt Windows release：窗口 916ms 出现、2318ms UI ready、书源管理 2250ms 加载 1068 源、发现页 766ms 加载 957 个发现源。
 
 ## 当前验证命令
 
@@ -80,6 +82,8 @@ cargo check -p legado-headless
 cargo build -p legado-headless
 cmd /c pnpm.cmd build
 cmd /c pnpm.cmd build:windows:release
+cargo test -p reader-core --test db_migrations -- --nocapture
+git diff --check
 ```
 
 2026-06-18 封面缓存迭代已实测通过新增/受影响链路的格式、类型、Rust check、命令契约与路由/缓存测试；旧性能专项命令仍作为后续回归队列保留。Tauri 测试/构建仍可能输出已知 Windows linker stdout warning；当前不作为失败。
@@ -90,6 +94,7 @@ cmd /c pnpm.cmd build:windows:release
 2026-06-18 prefetch WS events iteration verified Tauri WS direct payload routing and Playwright headless raw WebSocket prefetch smoke on `127.0.0.1:7795`; one chapter was cached, progress arrived before done, and console stayed at 0 errors/warnings.
 2026-06-18 external open wrapper iteration verified `@tauri-apps/plugin-opener` is isolated to `useExternalOpen.ts`, `cmd /c pnpm.cmd lint`, `cmd /c pnpm.cmd build`, command contract, and Playwright headless smoke on `127.0.0.1:7796`; installed/online source tabs and service mode loaded with 0 console errors/warnings, and the built wrapper returned `empty=false`, `opened=true`.
 2026-06-18 backup headless data iteration verified shared `reader-core` backup payloads, headless `backup_*_data` dispatch, browser export/download/file-picker preview/restore on `127.0.0.1:7797`, `cmd /c pnpm.cmd lint`, `cargo test -p legado-headless`, `cargo check -p legado-tauri`, command contract, `cmd /c pnpm.cmd build`, and `cargo build -p legado-headless`.
+2026-06-19 Windows startup/source stability iteration verified `cmd /c pnpm.cmd lint`, `git diff --check`, `cargo test -p reader-core --test db_migrations -- --nocapture`, `cargo check -p reader-core`, `cargo check -p legado-tauri`, `cmd /c pnpm.cmd build:windows:release`, and Windows desktop smoke against the rebuilt release. The app no longer exits immediately after launch on the repaired migration state.
 
 ## 当前未结工作
 
@@ -100,6 +105,7 @@ cmd /c pnpm.cmd build:windows:release
 - 形态 B / LAN 严格验收仍需外部设备或可访问局域网环境。
 - 书源兼容：书旗/七猫 CDN 规则新鲜度与通用 `book.bookUrl` 绑定仍需按真实样本继续复查。
 - 2026-06-18 复查结论：书旗/七猫 CDN 仍是旧 `.backup.json` 等价版本，网络导入 content 仍 `EMPTY`，需要上游 CDN 更新；番茄 CDN 与本地一致；番茄短剧网络导入 URL 当前 404。
+- 2026-06-19 source freshness spot-check：qimao/shuqi CDN still match local `.backup.json`, fanqie CDN matches local `.json`, fanqie short-drama CDN URL still returns 404; installed Legado JSON scan found 77 explicit degraded/expired-style remarks and no `updateUrl` values.
 
 ## 文档维护规则
 

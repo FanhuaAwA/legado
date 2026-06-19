@@ -2,7 +2,7 @@
 
 记录各本地测试书源在 Tauri 项目中的兼容状态。
 
-最后实测：2026-06-18（书旗/七猫/番茄/番茄短剧网络导入新鲜度复查；书旗/七猫本地与 CDN 链路复测）。
+最后实测：2026-06-19（Windows 启动修复后低频复查书旗/七猫/番茄/番茄短剧 CDN 新鲜度与已安装书源备注提示）。
 
 实测命令：
 
@@ -20,6 +20,20 @@ cargo test -p reader-core wikisource_classics_public_domain_full_chain -- --igno
 ```
 
 状态枚举：`strict_pass`（mock/fixture）/ `live_network_pass`（实网通过）/ `live_network_ignored`（默认跳过）/ `partial` / `blocked_by_source_rule` / `blocked_by_platform` / `blocked_by_js_api` / `not_verified`。
+
+## 2026-06-19 Windows source freshness spot-check
+
+Gate report: `reports/gates/2026-06-19-WINDOWS-STARTUP-SOURCE-STABILITY/summary.md`
+
+本轮在 Windows 启动修复和客户端实测后，按低频请求复查书源新鲜度：
+
+- qimao CDN 返回 200，SHA `902cd4f57...`，仍等于本地 `.backup.json`，不同于刷新后的本地 `.json`。
+- shuqi CDN 返回 200，SHA `a46f80d86...`，仍等于本地 `.backup.json`，不同于刷新后的本地 `.json`。
+- fanqie CDN 返回 200，SHA `59e47254a...`，等于本地 `.json`。
+- fanqie short-drama CDN URL 返回 404。
+- 已安装 `sources/legado-json` 扫描到 1076 个条目、379 条备注、0 个 `updateUrl`、1073 个 `lastUpdateTime`、1070 个超过 180 天、77 条显式失效/半废/需登录/错误等退化提示。
+
+本轮未对 1000+ 已安装源做大规模实网全链路扫测，因为用户已确认 CDN/代理短时间大量请求可能触发防 DDoS 或临时拉黑。
 
 ## 2026-06-18 书源新鲜度复查（SOURCE-FRESHNESS-RECHECK）
 

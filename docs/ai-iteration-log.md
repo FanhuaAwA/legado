@@ -1,8 +1,15 @@
 # AI Iteration Log
 
-Last updated: 2026-06-18
+Last updated: 2026-06-19
 
 本文件是当前迭代索引，不再保存完整对话式流水。2026-06-15 之前的长历史、旧续办提示和过期命令统计已清理；需要追溯请查看 git history 与 `reports/gates/*/summary.md`。
+
+## 2026-06-19 Windows Startup And Source Stability Iteration
+
+- Gate report: `reports/gates/2026-06-19-WINDOWS-STARTUP-SOURCE-STABILITY/summary.md`
+- Main fixes: repair the known legacy SQLx migration-4 checksum that made Windows launch panic on existing databases, await frontend source-stream listener registration before starting backend streaming, add an 80s source-list final-batch timeout, and throttle background `@updateUrl` checks to one request at a time with 1200ms spacing.
+- Windows desktop smoke: rebuilt release stayed open; cold launch window appeared in 916ms, UI was ready in 2318ms, source management loaded 1068 sources / 1034 enabled in 2250ms, source filtering responded in 564ms, and discover loaded 957 discover sources in 766ms. Automated scroll-state proof remained inconclusive and is recorded as residual risk, not a pass.
+- Source freshness: qimao/shuqi CDN files still equal local `.backup.json` and differ from refreshed local `.json`; fanqie CDN matches local; fanqie short-drama CDN URL still returns 404. Installed source scan found 77 explicit degraded/expired-style remarks and no `updateUrl` values in the installed Legado JSON set.
 
 ## 2026-06-18 Source Stability Iteration
 
@@ -96,6 +103,7 @@ Last updated: 2026-06-18
 - `reports/gates/2026-06-18-PREFETCH-WS-EVENTS/summary.md`
 - `reports/gates/2026-06-18-EXTERNAL-OPEN-WRAPPER/summary.md`
 - `reports/gates/2026-06-18-BACKUP-HEADLESS-DATA/summary.md`
+- `reports/gates/2026-06-19-WINDOWS-STARTUP-SOURCE-STABILITY/summary.md`
 
 ## 当前契约快照
 

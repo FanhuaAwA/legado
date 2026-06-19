@@ -13,7 +13,7 @@ import {
   type UpdateCheckResult,
 } from "@/composables/useBookSource";
 import { useCapabilities } from "@/composables/useCapabilities";
-import { eventListenSync } from "@/composables/useEventBus";
+import { eventListen } from "@/composables/useEventBus";
 import {
   ensureFrontendNamespaceLoaded,
   getFrontendStorageItem,
@@ -39,10 +39,12 @@ const LAST_CHECK_KEY = "lastCheckedAt";
 /** 最短检查间隔：1 小时 */
 const MIN_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const SOURCE_LIST_CACHE_TTL_MS = 30 * 60 * 1000;
+const SOURCE_STREAM_TIMEOUT_MS = 80_000;
 const BACKGROUND_MAINTENANCE_START_DELAY_MS = 250;
 const BACKGROUND_MAINTENANCE_BATCH_PAUSE_MS = 25;
 const CAPABILITY_DETECT_CONCURRENCY = 5;
-const UPDATE_CHECK_CONCURRENCY = 3;
+const UPDATE_CHECK_CONCURRENCY = 1;
+const UPDATE_CHECK_BATCH_PAUSE_MS = 1_200;
 const LS_EXPLORE_KEY = "source-explore-disabled";
 const LS_SEARCH_KEY = "source-search-disabled";
 const EXPLORE_KEY = "exploreDisabled";
@@ -119,6 +121,12 @@ function sleep(ms: number): Promise<void> {
 async function pauseBetweenBackgroundBatches(nextIndex: number, total: number): Promise<void> {
   if (nextIndex < total) {
     await sleep(BACKGROUND_MAINTENANCE_BATCH_PAUSE_MS);
+  }
+}
+
+async function pauseBetweenUpdateChecks(nextIndex: number, total: number): Promise<void> {
+  if (nextIndex < total) {
+    await sleep(UPDATE_CHECK_BATCH_PAUSE_MS);
   }
 }
 
@@ -247,7 +255,51 @@ export const useBookSourceStore = defineStore("bookSource", () => {
 
         // 设置流式事件监听（必须在调用命令前注册，避免错过首批）
         await new Promise<void>((resolve, reject) => {
-          const unlisten = eventListenSync<{
+          let settled = false;
+          let unlisten: (() => void) | null = null;
+          const timer = window.setTimeout(() => {
+            finish(new Error("Book source list loading timed out before the final batch."));
+          }, SOURCE_STREAM_TIMEOUT_MS);
+
+          function finish(error?: Error): void {
+            if (settled) {
+              return;
+            }
+            settled = true;
+            window.clearTimeout(timer);
+            unlisten?.();
+            if (error) {
+              reject(error);
+            } else {
+              resolve();
+            }
+          }
+
+          const startStreaming = () => {
+            listBookSourcesStreaming(requestId, force).catch((err: unknown) => {
+              if (isStreamingListUnsupported(err)) {
+                unlisten?.();
+                listBookSources()
+                  .then((items) => {
+                    const seenKeys = new Set(items.map(getSourceCacheKey));
+                    mergeSourcesBatch(items);
+                    pruneSourcesNotSeen(seenKeys);
+                    sortSourcesByName();
+                    streamingLoaded.value = sources.value.length;
+                    finish();
+                  })
+                  .catch((fallbackErr: unknown) => {
+                    finish(
+                      fallbackErr instanceof Error ? fallbackErr : new Error(String(fallbackErr)),
+                    );
+                  });
+                return;
+              }
+              finish(err instanceof Error ? err : new Error(String(err)));
+            });
+          };
+
+          eventListen<{
             requestId: string;
             items: BookSourceMeta[];
             done: boolean;
@@ -263,7 +315,7 @@ export const useBookSourceStore = defineStore("bookSource", () => {
             // 当前监听器所属请求已过期：只清理自己，不影响新请求。
             if (id !== _streamRequestId) {
               if (done) {
-                unlisten();
+                finish();
               }
               return;
             }
@@ -279,38 +331,24 @@ export const useBookSourceStore = defineStore("bookSource", () => {
             if (done) {
               pruneSourcesNotSeen(freshKeys);
               sortSourcesByName();
-              unlisten();
               if (typeof error === "string" && error.length > 0) {
-                reject(new Error(error));
+                finish(new Error(error));
               } else {
-                resolve();
+                finish();
               }
             }
-          });
-
-          // 启动后端流式扫描（立即返回）
-          listBookSourcesStreaming(requestId, force).catch((err: unknown) => {
-            if (isStreamingListUnsupported(err)) {
-              unlisten();
-              listBookSources()
-                .then((items) => {
-                  const seenKeys = new Set(items.map(getSourceCacheKey));
-                  mergeSourcesBatch(items);
-                  pruneSourcesNotSeen(seenKeys);
-                  sortSourcesByName();
-                  streamingLoaded.value = sources.value.length;
-                  resolve();
-                })
-                .catch((fallbackErr: unknown) => {
-                  reject(
-                    fallbackErr instanceof Error ? fallbackErr : new Error(String(fallbackErr)),
-                  );
-                });
-              return;
-            }
-            unlisten();
-            reject(err instanceof Error ? err : new Error(String(err)));
-          });
+          })
+            .then((fn) => {
+              if (settled) {
+                fn();
+                return;
+              }
+              unlisten = fn;
+              startStreaming();
+            })
+            .catch((err: unknown) => {
+              finish(err instanceof Error ? err : new Error(String(err)));
+            });
         });
 
         // 加载完书源列表后自动触发能力检测与更新检查（非阻塞，后台跑）
@@ -659,7 +697,7 @@ export const useBookSourceStore = defineStore("bookSource", () => {
             results.push(r.value);
           }
         }
-        await pauseBetweenBackgroundBatches(i + UPDATE_CHECK_CONCURRENCY, targets.length);
+        await pauseBetweenUpdateChecks(i + UPDATE_CHECK_CONCURRENCY, targets.length);
       }
       pendingUpdates.value = results;
     })();
