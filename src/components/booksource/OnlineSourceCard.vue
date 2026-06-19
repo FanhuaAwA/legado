@@ -3,12 +3,17 @@ import { computed } from "vue";
 import { formatVersion } from "@/utils/versionUtils";
 import type { RepoSourceInfo } from "../../composables/useBookSource";
 
+type SyncTagType = "default" | "success" | "warning" | "error" | "info";
+
 const props = defineProps<{
   src: RepoSourceInfo;
   defaultLogoUrl: string;
   installed: boolean;
   versionDiff: "upgrade" | "downgrade" | "same" | null;
   localVersion: string | undefined;
+  syncLabel: string;
+  syncType: SyncTagType;
+  syncHint: string;
   bulkBusy: boolean;
   deleting: boolean;
 }>();
@@ -177,14 +182,17 @@ const sourceExternalUrl = computed(() => normalizeExternalHttpUrl(props.src.url)
       </div>
     </div>
 
-    <!-- DISABLED: 同步检查功能暂时关闭，书源卡片同步状态行已隐藏。恢复时取消注释。
-    <div v-if="installed" class="src-card__status-row">
-      <n-tag size="tiny" :bordered="false">
+    <div v-if="installed" class="src-card__status-row" :title="syncHint">
+      <n-tag size="tiny" :bordered="false" :type="syncType">
+        {{ syncLabel }}
       </n-tag>
-      <span class="src-card__status-text">
+      <span
+        class="src-card__status-text"
+        :class="{ 'src-card__status-text--error': syncType === 'error' }"
+      >
+        {{ syncHint }}
       </span>
     </div>
-    -->
 
     <div v-if="props.src.tags.length > 1 || props.src.fileSize" class="src-card__chips">
       <n-tag

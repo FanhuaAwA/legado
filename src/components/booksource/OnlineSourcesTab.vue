@@ -354,6 +354,10 @@ function sourceUuid(src: RepoSourceInfo) {
   return getBookSourceIdentity(src);
 }
 
+function sourceExpectedUuid(src: RepoSourceInfo) {
+  return hasExplicitBookSourceUuid(src) ? src.uuid?.trim() || undefined : undefined;
+}
+
 function syncKey(src: RepoSourceInfo) {
   return sourceUuid(src) || src.downloadUrl || src.fileName;
 }
@@ -434,7 +438,7 @@ async function checkSingleSourceSync(src: RepoSourceInfo, runId: number) {
     const result: RepoSourceSyncResult = await checkRepositorySourceSync(
       local.fileName,
       src.downloadUrl,
-      sourceUuid(src),
+      sourceExpectedUuid(src),
     );
     if (runId !== syncRunId) {
       return;
@@ -454,7 +458,7 @@ async function checkSingleSourceSync(src: RepoSourceInfo, runId: number) {
     setSyncState(src, {
       ...initialState,
       status: "error",
-      error: e instanceof Error ? e.message : String(e),
+      error: formatRepositoryError(e),
     });
   }
 }
@@ -667,8 +671,6 @@ function getSyncTagLabel(src: RepoSourceInfo) {
       return "待检查";
   }
 }
-// used in template; void reference prevents noUnusedLocals false positive
-void getSyncTagLabel;
 
 function getSyncTagType(src: RepoSourceInfo) {
   const status = getSyncState(src)?.status ?? "idle";
@@ -685,8 +687,6 @@ function getSyncTagType(src: RepoSourceInfo) {
       return "default";
   }
 }
-// used in template; void reference prevents noUnusedLocals false positive
-void getSyncTagType;
 
 function getSyncHint(src: RepoSourceInfo) {
   const state = getSyncState(src) ?? makeInitialSyncState(src);
@@ -703,8 +703,6 @@ function getSyncHint(src: RepoSourceInfo) {
       return `尚未检查，当前本地 ${formatVersion(state.localVersion)}，远端 ${formatVersion(state.remoteVersion)}`;
   }
 }
-// used in template; void reference prevents noUnusedLocals false positive
-void getSyncHint;
 
 function installSource(src: RepoSourceInfo) {
   if (!ensureRepositoryAvailable()) {
@@ -712,12 +710,19 @@ function installSource(src: RepoSourceInfo) {
   }
 
   installDialogUrl.value = src.downloadUrl;
-  installDialogExpectedUuid.value = sourceUuid(src);
+  installDialogExpectedUuid.value = sourceExpectedUuid(src) ?? "";
   showInstallDialog.value = true;
 }
 
 async function onInstallDialogInstalled(payload: { name: string; fileName: string; uuid: string }) {
-  const src = onlineSources.value.find((s) => sourceUuid(s) === payload.uuid);
+  const payloadName = payload.name.trim();
+  const payloadUuid = payload.uuid.trim();
+  const src = onlineSources.value.find(
+    (s) =>
+      sourceUuid(s) === payloadUuid ||
+      sourceExpectedUuid(s) === payloadUuid ||
+      (!hasExplicitBookSourceUuid(s) && s.name.trim() === payloadName),
+  );
   if (src) {
     setSyncState(src, makeSyncedState(src));
   }
@@ -780,11 +785,11 @@ async function installAll() {
       try {
         const targetFileName = resolveInstallFileName(src.fileName, sourceUuid(src), reservedNames);
         reservedNames.add(targetFileName);
-        await installFromRepository(src.downloadUrl, targetFileName, sourceUuid(src));
+        await installFromRepository(src.downloadUrl, targetFileName, sourceExpectedUuid(src));
         setSyncState(src, makeSyncedState(src));
         ok++;
       } catch (e: unknown) {
-        failedMessages.push(e instanceof Error ? e.message : String(e));
+        failedMessages.push(formatRepositoryError(e));
       } finally {
         installingSet.value.delete(src.fileName);
       }
@@ -820,7 +825,7 @@ async function performRepositoryUpdate(
     if (!local) {
       throw new Error("未找到同一 UUID 的本地书源");
     }
-    await installFromRepository(src.downloadUrl, local.fileName, sourceUuid(src));
+    await installFromRepository(src.downloadUrl, local.fileName, sourceExpectedUuid(src));
     setSyncState(src, makeSyncedState(src, src.version || local.version));
     if (reloadAfterUpdate) {
       emits("reload");
@@ -831,9 +836,7 @@ async function performRepositoryUpdate(
     return true;
   } catch (e: unknown) {
     if (!silent) {
-      message.error(
-        `${force ? "强制更新" : "更新"}失败: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      message.error(`${force ? "强制更新" : "更新"}失败: ${formatRepositoryError(e)}`);
     }
     return false;
   } finally {
@@ -1110,6 +1113,9 @@ void loadRepoConfig();
           :installed="isInstalled(src)"
           :version-diff="getDisplayVersionDiff(src)"
           :local-version="getLocalSource(src)?.version"
+          :sync-label="getSyncTagLabel(src)"
+          :sync-type="getSyncTagType(src)"
+          :sync-hint="getSyncHint(src)"
           :bulk-busy="bulkUpdating || bulkForceUpdating || repositoryDisabled"
           :deleting="deletingSet.has(src.fileName)"
           @install="installSource(src)"

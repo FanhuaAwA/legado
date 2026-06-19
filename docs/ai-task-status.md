@@ -16,6 +16,7 @@ Last updated: 2026-06-19
   - `构建结果/windows/legado-tauri.exe`
 - Current 2026-06-19 delivery gate：`reports/gates/2026-06-19-WINDOWS-STARTUP-SOURCE-STABILITY/summary.md`
 - Current 2026-06-19 delivery gate：`reports/gates/2026-06-19-REPOSITORY-REQUEST-PACING/summary.md`
+- Current 2026-06-19 delivery gate: `reports/gates/2026-06-19-ONLINE-SOURCE-SYNC-STATUS/summary.md`
 
 ## 当前契约基线
 
@@ -57,6 +58,7 @@ node scripts\ci\check-command-contract.mjs --json
 - Backup headless data：备份 inspect/create/peek/restore 载荷逻辑已下沉到 `reader-core`；Tauri 与 headless 复用同一实现，浏览器/headless 使用 data-transfer 下载、文件选择、预览与还原链路，headless path 型备份命令明确拒绝服务端路径读写。
 - Windows startup/source stability：已修复 legacy SQLx migration-4 checksum 导致的 Windows 启动 panic/闪退；书源列表前端先完成事件监听再启动 streaming，并增加 80s final-batch timeout；后台 `@updateUrl` 检查降为单并发并间隔 1200ms，避免启动后对 CDN 源短时突发请求。实测 rebuilt Windows release：窗口 916ms 出现、2318ms UI ready、书源管理 2250ms 加载 1068 源、发现页 766ms 加载 957 个发现源。
 - Repository request pacing：在线仓库已安装源一致性检查降为单并发并间隔 1200ms；批量安装/更新下载降为单并发并间隔 1500ms；安装/更新成功后直接标记 synced，避免同一远端文件下载后立刻再下载比较；批量更新结束后只触发一次父级 reload。
+- Online source sync status: restored the installed online-source card status row, normalized repository command errors with `formatRepositoryError()`, and stopped passing source-name identity fallbacks as backend `expectedUuid` values when a manifest omits explicit `uuid`.
 
 ## 当前验证命令
 
@@ -99,6 +101,7 @@ cmd /c pnpm.cmd exec oxfmt --check src/components/booksource/OnlineSourcesTab.vu
 2026-06-18 backup headless data iteration verified shared `reader-core` backup payloads, headless `backup_*_data` dispatch, browser export/download/file-picker preview/restore on `127.0.0.1:7797`, `cmd /c pnpm.cmd lint`, `cargo test -p legado-headless`, `cargo check -p legado-tauri`, command contract, `cmd /c pnpm.cmd build`, and `cargo build -p legado-headless`.
 2026-06-19 Windows startup/source stability iteration verified `cmd /c pnpm.cmd lint`, `git diff --check`, `cargo test -p reader-core --test db_migrations -- --nocapture`, `cargo check -p reader-core`, `cargo check -p legado-tauri`, `cmd /c pnpm.cmd build:windows:release`, and Windows desktop smoke against the rebuilt release. The app no longer exits immediately after launch on the repaired migration state.
 2026-06-19 repository request pacing iteration verified `vue-tsc`, targeted `oxfmt`, `git diff --check`, full `cmd /c pnpm.cmd lint`, `cmd /c pnpm.cmd build:windows:release`, and Windows desktop smoke. The rebuilt client launched, source management showed 1068 sources / 1034 enabled, and the online source tab opened in 517ms without UI lockup.
+2026-06-19 online source sync status iteration verified `vue-tsc`, targeted `oxfmt`, full `cmd /c pnpm.cmd lint`, `git diff --check`, `cmd /c pnpm.cmd build:windows:release`, and Windows desktop smoke. The rebuilt client launched in 3716ms, source management showed 1069 sources / 1035 enabled with a local fixture, online repository showed `已安装 1`, and the installed card reached `已同步` without `[object Object]`.
 
 ## 当前未结工作
 
